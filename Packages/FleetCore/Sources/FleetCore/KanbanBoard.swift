@@ -174,18 +174,75 @@ public struct KanbanEventBatch: Sendable, Equatable {
 
 // MARK: - Seam
 
+/// Why a gateway refused to serve the Kanban board. A definitive answer: the
+/// app must not retry it in a loop (a manual re-check is the only retry).
+public enum KanbanBoardAccessIssue: Sendable, Equatable {
+    /// HTTP 403 with the Fleet connector's `out_of_scope` body: the gateway's
+    /// connector does not allow this route for paired phones.
+    case outOfScope
+    /// HTTP 403 without the connector's `out_of_scope` marker.
+    case forbidden
+    /// HTTP 404: the route is not present on this gateway.
+    case routeNotFound
+    /// HTTP 401: the phone is signed out / its credential was rejected.
+    case signedOut
+
+    /// Classify a non-2xx status. `errorCode` is the decoded `"error"` field
+    /// of a JSON body, when present. Returns nil for statuses that are not a
+    /// definitive access answer (e.g. 5xx — those stay retryable).
+    public static func classify(status: Int, errorCode: String?) -> KanbanBoardAccessIssue? {
+        switch status {
+        case 401: return .signedOut
+        case 403: return errorCode == "out_of_scope" ? .outOfScope : .forbidden
+        case 404: return .routeNotFound
+        default: return nil
+        }
+    }
+}
+
 /// Errors surfaced by a board watcher. Non-secret (spec §29 discipline).
 public enum KanbanBoardError: Error, Sendable, Equatable, LocalizedError {
     /// The board fetch returned a non-2xx status (detail is the bare status).
     case httpStatus(Int)
+    /// The gateway definitively refused a board route (`route` is the bare
+    /// request path, no query/credentials).
+    case accessRefused(KanbanBoardAccessIssue, status: Int, route: String)
     /// The response body was not the expected shape.
     case malformedResponse(String)
     /// The event stream dropped and could not be re-established.
     case streamDropped(String)
 
+    /// The definitive access answer carried by this error, if any (also maps
+    /// a bare 401/403/404 `httpStatus`).
+    public var accessIssue: KanbanBoardAccessIssue? {
+        switch self {
+        case .accessRefused(let issue, _, _): return issue
+        case .httpStatus(let code): return KanbanBoardAccessIssue.classify(status: code, errorCode: nil)
+        default: return nil
+        }
+    }
+
+    /// Redaction-safe one-liner for the diagnostics recorder.
+    public var diagnosticDetail: String {
+        switch self {
+        case .accessRefused(let issue, let status, let route):
+            let label: String
+            switch issue {
+            case .outOfScope: label = "refused by connector (out_of_scope)"
+            case .forbidden: label = "forbidden"
+            case .routeNotFound: label = "route not found"
+            case .signedOut: label = "unauthorized"
+            }
+            return "GET \(route) \(label), HTTP \(status)"
+        default:
+            return errorDescription ?? "kanban board error"
+        }
+    }
+
     public var errorDescription: String? {
         switch self {
         case .httpStatus(let code): return "kanban board: HTTP \(code)"
+        case .accessRefused(_, let status, _): return "kanban board: HTTP \(status)"
         case .malformedResponse(let detail): return "kanban board: malformed response (\(detail))"
         case .streamDropped(let detail): return "kanban event stream dropped: \(detail)"
         }

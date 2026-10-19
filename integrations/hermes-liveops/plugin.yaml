@@ -1,5 +1,5 @@
 name: fleet-liveops
-version: 0.2.0
-description: Read-only live session reporting for Hermes Fleet across Desktop backend processes.
+version: 0.3.0
+description: Live session reporting for Hermes Fleet across Desktop backend processes, plus opt-in end-to-end encrypted push notifications (off by default).
 kind: standalone
 platforms: []

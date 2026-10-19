@@ -38,13 +38,34 @@ public enum ConversationFindPolicy {
     /// transcript order, ONE match per row (the first occurrence) — every
     /// stop is a row the transcript can scroll to.
     public static func matches(rows: [ConversationRow], query: String) -> [Match] {
+        let searchable = rows.filter(isSearchable).map { SearchableText(id: $0.id, text: $0.text) }
+        return matches(searchable: searchable, query: query)
+    }
+
+    /// One already-classified searchable unit: a transcript row id and its
+    /// literal visible text. Callers decide which units are conversation
+    /// content (the group transcript passes only message entries).
+    public struct SearchableText: Equatable, Sendable {
+        public let id: String
+        public let text: String
+
+        public init(id: String, text: String) {
+            self.id = id
+            self.text = text
+        }
+    }
+
+    /// The shared matching core: case/diacritic-insensitive, first occurrence
+    /// per unit, in the order given. `matches(rows:query:)` is this over the
+    /// 1:1 row taxonomy; the group transcript reuses it directly.
+    public static func matches(searchable: [SearchableText], query: String) -> [Match] {
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         var out: [Match] = []
-        for row in rows where isSearchable(row) {
-            let text = row.text
+        for unit in searchable {
+            let text = unit.text
             guard !text.isEmpty else { continue }
             guard let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
-            out.append(Match(rowID: row.id, snippet: snippet(in: text, around: range)))
+            out.append(Match(rowID: unit.id, snippet: snippet(in: text, around: range)))
         }
         return out
     }

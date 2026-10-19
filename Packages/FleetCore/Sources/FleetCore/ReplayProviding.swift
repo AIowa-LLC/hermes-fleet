@@ -32,6 +32,19 @@ public protocol ReplayProviding: Sendable {
     ///
     /// Returns the outcome per affected session (empty when nothing to do).
     func replayAfterReconnect() async throws -> [ReplayOutcome]
+
+    /// Live gaps: places where the event stream may have lost events while the
+    /// connection stayed up (backlog overflow, refused oversized frame,
+    /// evicted watermark). Owners of the affected session must refetch
+    /// authoritative history, rate-limited by `GapRecoveryGovernor`. Each call
+    /// returns a fresh stream; the default is an empty, finished stream.
+    func subscribeToGaps() -> AsyncStream<EventGap>
+}
+
+extension ReplayProviding {
+    public func subscribeToGaps() -> AsyncStream<EventGap> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// Errors the replay seam surfaces (self-contained; the seam stays free of

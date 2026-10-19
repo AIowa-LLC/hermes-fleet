@@ -45,8 +45,12 @@ struct GatewayAuthSheet: View {
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
                         Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
                         Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
+                        if strategy == .deviceCredential {
+                            Text("Fleet Device (managed)").tag(GatewayAuthConfiguration.Strategy.deviceCredential)
+                        }
                     }
                     .accessibilityIdentifier("fleet.gateways.auth.strategy")
+                    .disabled(strategy == .deviceCredential)
 
                     LabeledContent("Credential stored") {
                         Text(credentialStored ? "Yes" : "No")
@@ -82,7 +86,11 @@ struct GatewayAuthSheet: View {
                             .disabled(usernameText.isEmpty || passwordText.isEmpty || isBusy)
                             .accessibilityIdentifier("fleet.gateways.auth.save-username-password")
                     }
-                    if credentialStored {
+                    if credentialStored && strategy == .deviceCredential {
+                        Text("This phone credential is managed by Fleet owner enrollment.")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                    } else if credentialStored {
                         Button("Clear Stored Credential", role: .destructive) { clearCredential() }
                             .disabled(isBusy)
                             .accessibilityIdentifier("fleet.gateways.auth.clear-token")
@@ -95,7 +103,7 @@ struct GatewayAuthSheet: View {
                             .font(.caption)
                             .foregroundStyle(FleetTheme.statusDestructive)
                     } header: {
-                        Text("Error")
+                        Text("Couldn't update sign-in")
                             .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
@@ -121,7 +129,7 @@ struct GatewayAuthSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .deviceCredential: return false
         }
     }
 

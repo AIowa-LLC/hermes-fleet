@@ -662,17 +662,13 @@ public struct FleetRosterView: View {
 
     // MARK: States
 
+    /// Cold load (no roster snapshot yet): skeleton rows, not a spinner.
     private var refreshing: some View {
-        ContentUnavailableView {
-            Label {
-                Text("Loading Roster")
-            } icon: {
-                ProgressView()
-            }
-        } description: {
-            Text("Refreshing every gateway's profiles…")
+        List {
+            FleetSkeletonList(identifier: "fleet.roster.loading")
         }
-        .accessibilityIdentifier("fleet.roster.loading")
+        .listStyle(.plain)
+        .background(theme.background.ignoresSafeArea())
     }
 
     private var emptyFleet: some View {
@@ -698,7 +694,7 @@ public struct FleetRosterView: View {
                     .foregroundStyle(theme.textSecondary)
             }
         } description: {
-            Text("No profiles reported. Refresh to re-probe every gateway.")
+            Text("No gateway reported any bots. Refresh to check every gateway again.")
         }
         .accessibilityIdentifier("fleet.roster.no-bots")
     }
@@ -1037,7 +1033,8 @@ struct RoomAvatar: View {
                     let h = geo.size.height / CGFloat(rows)
                     ForEach(Array(chips.enumerated()), id: \.offset) { i, name in
                         Text(FleetDashboardFormatting.avatarInitials(from: name))
-                            .font(.system(size: 9, weight: .bold, design: .default))
+                            .font(.caption2.weight(.bold))
+                            .dynamicTypeSize(...DynamicTypeSize.large)
                             .foregroundStyle(theme.highlight)
                             .frame(width: w, height: h)
                             .position(

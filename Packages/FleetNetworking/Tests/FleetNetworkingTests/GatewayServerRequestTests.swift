@@ -17,6 +17,39 @@ final class GatewayServerRequestTests: XCTestCase {
 
     private let sid = "abc12345"
 
+    func testStalledServerRequestSubscriberIsBoundedAndTerminatedOnOverflow() async throws {
+        let box = ServerRequestBox()
+        let (stream, continuation) = AsyncStream<ServerRequest>.makeStream(
+            of: ServerRequest.self,
+            bufferingPolicy: .bufferingOldest(ServerRequestBox.maxOpen))
+        _ = box.subscribe(continuation)
+
+        // Settle each batch to allow more than maxOpen requests over time
+        // while the consumer remains stalled. The stream must finish once its
+        // bounded buffer fills, allowing a resubscription to replay open work.
+        for batch in 0..<2 {
+            for index in 0..<ServerRequestBox.maxOpen {
+                let id = "srq-overflow-\(batch)-\(index)"
+                let request = ServerRequest(
+                    id: id,
+                    sessionID: sid,
+                    kind: .sudo(SudoPrompt(sessionID: sid, command: "true")))
+                guard case .admitted = box.admit(.init(wireID: .string(id), request: request)) else {
+                    return XCTFail("request should be admitted after the previous one settled")
+                }
+                box.settle(id)
+            }
+        }
+
+        var iterator = stream.makeAsyncIterator()
+        for _ in 0..<ServerRequestBox.maxOpen {
+            let next = await iterator.next()
+            XCTAssertNotNil(next)
+        }
+        let finished = await iterator.next()
+        XCTAssertNil(finished, "overflow is surfaced by finishing the bounded stream")
+    }
+
     private func makeTransport(
         serverPort: UInt16, advertises: Bool = true
     ) -> GatewayWebSocketTransport {

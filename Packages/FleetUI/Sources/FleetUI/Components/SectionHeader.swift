@@ -50,27 +50,49 @@ public struct SectionHeader<D: Hashable>: View {
     }
 
     public var body: some View {
-        HStack {
-            Text(title)
-                .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(theme.textSecondary)
-            Spacer()
-            if let linkDestination {
-                NavigationLink(value: linkDestination) {
-                    Text(actionTitle)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(theme.highlight)
-                }
-                .accessibilityLabel("\(actionTitle) \(title)")
-            } else if let action {
-                Button(action: action) {
-                    Text(actionTitle)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(theme.highlight)
-                }
-                .accessibilityLabel("\(actionTitle) \(title)")
+        // Long titles or actions (large Dynamic Type, long localized labels)
+        // must wrap rather than clip: prefer one row, fall back to stacking.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                titleView
+                Spacer(minLength: FleetTheme.spacingSm)
+                actionView
+            }
+            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                titleView
+                actionView
             }
         }
+    }
+
+    private var titleView: some View {
+        Text(title)
+            .font(FleetTheme.sectionHeaderFont)
+            .foregroundStyle(theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    @ViewBuilder
+    private var actionView: some View {
+        if let linkDestination {
+            NavigationLink(value: linkDestination) {
+                actionLabel
+            }
+            .accessibilityLabel("\(actionTitle) \(title)")
+        } else if let action {
+            Button(action: action) {
+                actionLabel
+            }
+            .accessibilityLabel("\(actionTitle) \(title)")
+        }
+    }
+
+    private var actionLabel: some View {
+        Text(actionTitle)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(theme.highlight)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     #Preview("SectionHeader") {

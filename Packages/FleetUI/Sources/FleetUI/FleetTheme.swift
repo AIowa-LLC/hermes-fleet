@@ -235,6 +235,10 @@ public enum FleetTheme {
 
     // MARK: - Typography (SPEC §14: system SF default design, Dynamic Type)
 
+    /// Rule: no fixed point sizes for text or glyphs. Use text styles
+    /// (`.headline`, `.callout`, ...) or `@ScaledMetric(relativeTo:)` for glyph
+    /// frames. Enforced by `scripts/font_style_audit.sh`.
+
     /// Screen titles: system large title, default design (rounded-bold is
     /// retired by SPEC §14).
     public static let titleFont: Font = .system(.largeTitle, design: .default, weight: .bold)

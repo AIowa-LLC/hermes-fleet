@@ -1,25 +1,26 @@
 import SwiftUI
 import FleetCore
+import CryptoKit
 #if os(iOS)
 import UIKit
 import VisionKit
 import AVFoundation
 #endif
 
-/// F2 — QR pairing scanner sheet for the Add-Gateway flow.
+/// QR scanner shared by first-server invitation pairing and Advanced Gateway setup.
 ///
 /// Presents the system camera QR barcode scanner (VisionKit
 /// `DataScannerViewController`). Each recognized barcode payload goes through
 /// the SAME decode + apply path a simulated scan uses, so the deterministic
 /// test hook exercises production logic:
 ///
-///     camera frame ──┐
-///                    ├─▶ PairingPayload.decode ─▶ GatewayFormDraftStore.apply
-///     simulated tap ─┘
+///     camera frame ─┬─▶ invitation callback (first-server pairing)
+///                   └─▶ PairingPayload.decode ─▶ GatewayFormDraftStore.apply (Advanced)
+///     simulated tap ────────────────────────────┘
 ///
-/// The sheet is presentation-only: no secret is stored here (the decoded
-/// credential lands in the root-owned draft store exactly as if it had been
-/// typed), and raw scan text is never logged.
+/// The sheet is presentation-only: it never stores or logs scan text. In the
+/// first-server route the invitation passes directly to the coordinator; the
+/// Advanced route keeps its existing JSON draft decoder.
 ///
 /// SECURITY (F2 card): the QR encodes a short-lived scoped credential. The
 /// camera preview is live-only — nothing is retained beyond the decoded
@@ -27,8 +28,12 @@ import AVFoundation
 /// re-scannable from a lingering screen.
 struct GatewayPairingScannerView: View {
     @Environment(\.fleetTheme) private var theme
-    @Bindable private var draftStore: GatewayFormDraftStore
+    @ScaledMetric(relativeTo: .largeTitle) private var heroGlyphSize: CGFloat = 44
+    private let draftStore: GatewayFormDraftStore?
+    private let onInvitation: ((String) -> Void)?
+    @State private var didReceiveInvitation = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     #if os(iOS)
     /// Whether the camera scanner is running (for the stop/start control).
@@ -49,6 +54,14 @@ struct GatewayPairingScannerView: View {
 
     init(draftStore: GatewayFormDraftStore) {
         self.draftStore = draftStore
+        self.onInvitation = nil
+    }
+
+    /// First-server invitation intake. Raw text is handed off immediately and
+    /// isn't retained by this view.
+    init(onInvitation: @escaping (String) -> Void) {
+        self.draftStore = nil
+        self.onInvitation = onInvitation
     }
 
     var body: some View {
@@ -65,6 +78,11 @@ struct GatewayPairingScannerView: View {
         }
         .background(theme.background.ignoresSafeArea())
         .tint(theme.highlight)
+        .onChange(of: scenePhase) { _, phase in
+            // Backgrounding cancels intake; only a visible foreground scan
+            // may hand an invitation to the pairing coordinator.
+            if phase == .background { dismiss() }
+        }
     }
 
     @ViewBuilder
@@ -87,7 +105,10 @@ struct GatewayPairingScannerView: View {
                 ZStack {
                     PairingCameraScanner(
                         onRaw: handleRaw,
-                        onCameraError: { scanError = $0; isScanning = false }
+                        onCameraError: { message in
+                            scanError = message
+                            isScanning = false
+                        }
                     )
                     .ignoresSafeArea(edges: .bottom)
                     statusOverlay
@@ -99,7 +120,7 @@ struct GatewayPairingScannerView: View {
                 // resolves. Brief non-spinner placeholder while TCC runs.
                 VStack(spacing: FleetTheme.spacingLg) {
                     Image(systemName: "camera.aperture")
-                        .font(.system(size: 44))
+                        .font(.system(size: min(heroGlyphSize, 88)))
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityHidden(true)
                     Text("Checking camera access…")
@@ -141,10 +162,12 @@ struct GatewayPairingScannerView: View {
     private var deniedBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "video.slash")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityHidden(true)
-            Text("Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below.")
+            Text(onInvitation == nil
+                 ? "Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below."
+                 : "Camera access is off.\nAllow camera access in Settings to scan the invitation QR code.")
                 .font(.callout)
                 .foregroundStyle(theme.textPrimary)
                 .multilineTextAlignment(.center)
@@ -179,14 +202,23 @@ struct GatewayPairingScannerView: View {
         VStack {
             Spacer()
             if let scanError {
-                Label(scanError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .padding(.horizontal, FleetTheme.spacingLg)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.7), in: Capsule())
-                    .overlay(Capsule().strokeBorder(FleetTheme.statusDestructive, lineWidth: 1))
-                    .accessibilityIdentifier("fleet.gateways.scan.error")
+                VStack(spacing: FleetTheme.spacingSm) {
+                    Label(scanError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .padding(.horizontal, FleetTheme.spacingLg)
+                        .padding(.vertical, 10)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .overlay(Capsule().strokeBorder(FleetTheme.statusDestructive, lineWidth: 1))
+                        .accessibilityIdentifier("fleet.gateways.scan.error")
+                    Button("Retry scanning") {
+                        self.scanError = nil
+                        cameraPermission = .undetermined
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(theme.highlight)
+                    .accessibilityIdentifier("fleet.gateways.scan.retry")
+                }
             } else {
                 Label(
                     "Point the camera at the gateway's pairing QR code",
@@ -213,10 +245,12 @@ struct GatewayPairingScannerView: View {
     private var fallbackBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
-            Text("Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually.")
+            Text(onInvitation == nil
+                 ? "Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually."
+                 : "Live camera scanning isn't available on this device.\nOpen this setup on an iPhone or iPad with a camera.")
                 .font(.callout)
                 .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -267,6 +301,17 @@ struct GatewayPairingScannerView: View {
     /// The single entry point for ANY scanned string (camera or simulated):
     /// decode, apply to the draft, dismiss on success.
     private func handleRaw(_ raw: String) {
+        if let onInvitation {
+            guard scenePhase == .active, !didReceiveInvitation else { return }
+            didReceiveInvitation = true
+            onInvitation(raw)
+            dismiss()
+            return
+        }
+        guard let draftStore else {
+            scanError = "Pairing could not start. Cancel and try again."
+            return
+        }
         do {
             try draftStore.applyPairing(raw)
             // Success: leave the scanner so the QR on the Mac screen is not
@@ -289,7 +334,7 @@ struct GatewayPairingScannerView: View {
     /// raw QR text, set via the `HERMES_FLEET_PAIRING_SIMULATED_SCAN` launch
     /// environment. Nil in release builds and when not opted in.
     static var simulatedPayload: String? {
-        #if DEBUG
+        #if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.environment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"]
         #else
         nil
@@ -300,7 +345,7 @@ struct GatewayPairingScannerView: View {
     /// via `HERMES_FLEET_PAIRING_CAMERA_DENIED=1` so the denied recovery UI
     /// is testable on the simulator. Nil/false in release builds.
     static var forceDeniedForUITest: Bool {
-        #if DEBUG
+        #if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.environment["HERMES_FLEET_PAIRING_CAMERA_DENIED"] == "1"
         #else
         false
@@ -407,7 +452,7 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
         private let onRaw: (String) -> Void
         private let onCameraError: (String) -> Void
         /// Same payload re-recognized frame after frame — deliver each once.
-        private var seen: Set<String> = []
+        private var seen: Set<SHA256.Digest> = []
 
         init(onRaw: @escaping (String) -> Void, onCameraError: @escaping (String) -> Void) {
             self.onRaw = onRaw
@@ -439,7 +484,7 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
             for case .barcode(let barcode) in addedItems {
                 guard let raw = barcode.payloadStringValue?
                     .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
-                    seen.insert(raw).inserted else { continue }
+                    seen.insert(SHA256.hash(data: Data(raw.utf8))).inserted else { continue }
                 onRaw(raw)
             }
         }

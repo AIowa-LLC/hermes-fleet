@@ -1,0 +1,436 @@
+import Foundation
+import Observation
+
+/// What the UI shows for one approval's most recent action.
+public enum ApprovalActionState: Equatable {
+    case sending(WatchApprovalDecision)
+    case settled(WatchApprovalOutcome)
+    /// Never reached the phone: link was down. Nothing happened.
+    case notSent(String)
+}
+
+@MainActor
+@Observable
+public final class WatchStore {
+    // MARK: Observed state
+    public private(set) var snapshot: WatchSnapshot?
+    public private(set) var link: WatchLinkState
+    public private(set) var now: Date
+    public private(set) var approvalStates: [String: ApprovalActionState] = [:]
+    public private(set) var outbox: WatchMessageOutbox
+    public private(set) var isRefreshing = false
+    /// True when the most recent refresh got no snapshot back. The data on
+    /// screen is then whatever was last received, and is labelled as such.
+    public private(set) var lastRefreshFailed = false
+    /// Set when the outbox could not be written. A message that can't be
+    /// recorded is never queued or sent (fail closed); this explains why.
+    public private(set) var outboxPersistenceError: String?
+    public var selection: WatchContextSelection { didSet { persistSelection() } }
+    /// Avatar thumbnails by digest that are ready to draw.
+    public private(set) var avatarImages: [String: Data] = [:]
+    /// Bumped each time a snapshot brings an approval the Watch hasn't seen
+    /// before (not on launch), so the UI can tap the wrist once per arrival.
+    public private(set) var approvalArrivalCount = 0
+
+    public let flavor: WatchAppFlavor = .dev
+    private let transport: any WatchTransport
+    private let defaults: UserDefaults
+    private let outboxURL: URL
+    private let clock: () -> Date
+    @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var flushing = false
+    @ObservationIgnored private var refreshesInFlight = 0
+    @ObservationIgnored private let avatarCache: WatchAvatarCache
+    @ObservationIgnored private var avatarsInFlight: Set<String> = []
+    /// Digests the phone couldn't supply this session; not asked for again
+    /// until the snapshot advertises a different digest.
+    @ObservationIgnored private var avatarsUnavailable: Set<String> = []
+    @ObservationIgnored private var seenApprovalIDs: Set<String> = []
+
+    public init(transport: any WatchTransport, defaults: UserDefaults = .standard,
+         outboxURL: URL = WatchStore.defaultOutboxURL(),
+         avatarCache: WatchAvatarCache = WatchAvatarCache(directory: WatchAvatarCache.defaultDirectory()),
+         clock: @escaping () -> Date = Date.init) {
+        self.avatarCache = avatarCache
+        self.transport = transport
+        self.defaults = defaults
+        self.outboxURL = outboxURL
+        self.clock = clock
+        self.now = clock()
+        self.link = transport.linkState
+        self.selection = Self.loadSelection(defaults)
+        var box = Self.loadOutbox(outboxURL)
+        box.recoverAfterRelaunch(now: clock())
+        self.outbox = box
+        persistOutbox()
+    }
+
+    public var isFixture: Bool { transport.isFixture || snapshot?.isFixture == true }
+
+    public func start() {
+        transport.onSnapshot = { [weak self] in self?.ingest($0) }
+        transport.onLinkChange = { [weak self] in self?.simulateLinkChange($0) }
+        transport.activate()
+        link = transport.linkState
+        tickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                guard let self else { return }
+                self.now = self.clock()
+            }
+        }
+        Task { await refresh(); await flushQueuedMessages() }
+    }
+
+    // MARK: Snapshot
+
+    private func ingest(_ incoming: WatchSnapshot) {
+        // Drop out-of-order contexts; never move backwards.
+        if let current = snapshot, incoming.generation < current.generation,
+           incoming.builtAt <= current.builtAt { return }
+        let hadSnapshot = snapshot != nil
+        snapshot = incoming
+        now = clock()
+        // A resolved approval is gone from the snapshot: forget its UI state.
+        let live = Set(incoming.approvals.map(\.id))
+        approvalStates = approvalStates.filter { live.contains($0.key) }
+        noteApprovalArrivals(live, hadSnapshot: hadSnapshot)
+        loadCachedAvatars(incoming)
+    }
+
+    private func noteApprovalArrivals(_ live: Set<String>, hadSnapshot: Bool) {
+        let fresh = live.subtracting(seenApprovalIDs)
+        if hadSnapshot, !fresh.isEmpty { approvalArrivalCount += 1 }
+        seenApprovalIDs.formUnion(live)
+        if seenApprovalIDs.count > 500 { seenApprovalIDs = live }
+    }
+
+    // MARK: Bots and avatars
+
+    /// Every bot in the snapshot with its machine, in the phone's order.
+    public var botEntries: [WatchBotEntry] {
+        (snapshot?.gateways ?? []).flatMap { gateway in gateway.bots.map { WatchBotEntry(gateway: gateway, bot: $0) } }
+    }
+
+    public func bot(gatewayID: String, profileSlug: String?) -> WatchBot? {
+        guard let profileSlug else { return nil }
+        return snapshot?.gateways.first { $0.id == gatewayID }?.bots.first { $0.ref.profileSlug == profileSlug }
+    }
+
+    /// Points the destination at this bot: its Main chat when the iPhone
+    /// reported one, otherwise the bot overview. Never invents a chat.
+    public func select(_ bot: WatchBot) {
+        selection = .init(gatewayID: bot.ref.gatewayID, profileSlug: bot.ref.profileSlug, conversationID: bot.mainChat?.id)
+    }
+
+    /// Short replies offered under the message field. Tapping one only fills
+    /// the field; sending still takes an explicit Send with the destination shown.
+    public static let quickReplies = ["Continue", "Looks good", "Stop for now", "What's the status?"]
+
+    /// Pending approvals that came from this exact bot.
+    public func approvals(for bot: WatchBot) -> [WatchApproval] {
+        (snapshot?.approvals ?? []).filter { $0.gatewayID == bot.ref.gatewayID && $0.profileSlug == bot.ref.profileSlug }
+    }
+
+    /// Thumbnail bytes for the bot's current avatar, when already on the Watch.
+    public func avatarData(for bot: WatchBot?) -> Data? {
+        guard let digest = bot?.avatar?.imageDigest else { return nil }
+        return avatarImages[digest]
+    }
+
+    private func loadCachedAvatars(_ snapshot: WatchSnapshot) {
+        // A hidden (locked) snapshot carries no bots; it says nothing about
+        // which avatars are still in use, so it never prunes.
+        if snapshot.contentVisible {
+            let advertised = Set(snapshot.gateways.flatMap { $0.bots.compactMap(\.avatar?.imageDigest) })
+            avatarCache.prune(keeping: advertised)
+            avatarImages = avatarImages.filter { advertised.contains($0.key) }
+        }
+        for gateway in snapshot.gateways {
+            for bot in gateway.bots {
+                guard let digest = bot.avatar?.imageDigest, avatarImages[digest] == nil,
+                      let data = avatarCache.load(digest) else { continue }
+                avatarImages[digest] = data
+            }
+        }
+    }
+
+    /// Fetches the bot's thumbnail from the phone once, if the Watch doesn't
+    /// have it. Never retried for the same digest after the phone said no.
+    public func loadAvatar(for bot: WatchBot) async {
+        guard let digest = bot.avatar?.imageDigest, avatarImages[digest] == nil,
+              !avatarsInFlight.contains(digest), !avatarsUnavailable.contains(digest) else { return }
+        if let data = avatarCache.load(digest) {
+            avatarImages[digest] = data
+            return
+        }
+        guard link == .reachable else { return }
+        avatarsInFlight.insert(digest)
+        defer { avatarsInFlight.remove(digest) }
+        let request = WatchAvatarRequest(gatewayID: bot.ref.gatewayID, profileSlug: bot.ref.profileSlug, digest: digest)
+        guard let reply = try? await transport.send(.avatar(request, flavor: flavor)) else { return }
+        guard case .avatar(let image) = reply, image.digest == digest, image.isValid, let data = image.data else {
+            avatarsUnavailable.insert(digest)
+            return
+        }
+        avatarCache.store(image)
+        avatarImages[digest] = data
+    }
+
+    public func refresh() async {
+        refreshesInFlight += 1
+        isRefreshing = true
+        defer {
+            refreshesInFlight -= 1
+            isRefreshing = refreshesInFlight > 0
+            now = clock()
+        }
+        guard let reply = try? await transport.send(.refresh(flavor: flavor, pinned: selectionPin)), case .snapshot(let s) = reply else {
+            lastRefreshFailed = true
+            return
+        }
+        lastRefreshFailed = false
+        ingest(s)
+    }
+
+    /// The selected conversation, sent with refreshes so the phone keeps it in
+    /// the capped snapshot while it still exists.
+    var selectionPin: WatchConversationPin? {
+        guard let g = selection.gatewayID, let b = selection.profileSlug, let c = selection.conversationID else { return nil }
+        return WatchConversationPin(gatewayID: g, profileSlug: b, conversationID: c)
+    }
+
+    public var resolution: WatchContextResolution {
+        guard let snapshot else { return .unselected }
+        return WatchContextResolver.resolve(selection, in: snapshot)
+    }
+
+    public var contextLabel: String { WatchContextResolver.label(for: resolution) }
+
+    /// How recently the iPhone SENT the Watch a snapshot. This says nothing
+    /// about how fresh the fleet data inside it is; use the per-source states.
+    public var syncFreshness: WatchFreshness {
+        WatchFreshnessPolicy.freshness(observedAt: snapshot?.builtAt, now: clock())
+    }
+
+    public func rosterState(_ gateway: WatchGateway) -> WatchSourceState {
+        WatchSourcePolicy.state(observedAt: gateway.rosterObservedAt, gatewayStatus: gateway.status, now: clock())
+    }
+
+    public func conversationsState(_ gateway: WatchGateway) -> WatchSourceState {
+        WatchSourcePolicy.state(observedAt: gateway.conversationsObservedAt, gatewayStatus: gateway.status, now: clock())
+    }
+
+    /// Conversation-list freshness for ONE bot (per-bot, so one bot that was
+    /// never read doesn't make its siblings look unobserved).
+    public func conversationsState(_ bot: WatchBot, on gateway: WatchGateway) -> WatchSourceState {
+        WatchSourcePolicy.state(observedAt: bot.conversationsObservedAt, gatewayStatus: gateway.status, now: clock())
+    }
+
+    public func liveState(_ gateway: WatchGateway) -> WatchSourceState {
+        WatchSourcePolicy.state(observedAt: gateway.observedAt, gatewayStatus: gateway.status, now: clock())
+    }
+
+    /// Why a message to the current selection cannot be composed, or nil.
+    /// Bot overview is a view, not a destination; Main chat must have been
+    /// established (and reported) by the iPhone.
+    public var sendBlockReason: String? {
+        switch resolution {
+        case .unselected: return "Choose a machine, bot and chat first."
+        case .gatewayMissing, .botMissing, .conversationMissing:
+            return "That destination is no longer available. Choose another."
+        case .conversationNotShown(_, _, let omitted):
+            return "That chat isn't in the list the iPhone sent (\(omitted) more than shown). Refresh, or choose it on iPhone. It was not removed."
+        case .resolved(_, let bot, let conversation):
+            guard bot != nil else { return "Choose a bot, then Main chat or a conversation." }
+            guard conversation != nil else {
+                return "Bot overview isn't a chat. Choose Main chat or a conversation."
+            }
+            return nil
+        }
+    }
+
+    /// Why the selected bot has no Main chat to send to (accurate: not set up vs
+    /// can't tell vs list out of date), or nil. Never created from the Watch.
+    public var selectedMainChatGuidance: String? {
+        if case .resolved(let gateway, let bot?, _) = resolution {
+            return bot.mainChatGuidance(rosterState: rosterState(gateway))
+        }
+        return nil
+    }
+
+    public func approvalPresence(_ approval: WatchApproval) -> WatchApprovalPresence {
+        WatchApprovalScope.presence(of: approval, in: snapshot, now: clock())
+    }
+
+    // MARK: Approvals (always bound to the approval's own identity)
+
+    public func affordance(for approval: WatchApproval) -> WatchApprovalAffordance {
+        guard snapshot != nil else { return .none(reason: "No data yet.") }
+        if case .unverifiable(let reason) = approvalPresence(approval) { return .none(reason: reason) }
+        if link != .reachable { return .none(reason: "iPhone not reachable. Nothing can be sent.") }
+        return WatchApprovalPolicy.affordance(for: approval, now: clock())
+    }
+
+    public func decide(_ approval: WatchApproval, _ decision: WatchApprovalDecision) async {
+        let key = approval.id
+        // One action per approval at a time; a settled/uncertain state must be
+        // dismissed (after looking again) before another decision is sent.
+        switch approvalStates[key] {
+        case nil, .notSent: break
+        case .sending, .settled: return
+        }
+        guard let snapshot else { return }
+        switch affordance(for: approval) {
+        case .denyOrApproveOnce: break
+        case .denyOnly: guard decision == .deny else { return }
+        case .none(let reason):
+            approvalStates[key] = .notSent(reason)
+            return
+        }
+        let request = WatchApprovalRequest(
+            gatewayID: approval.gatewayID, sessionID: approval.sessionID, requestID: approval.requestID,
+            commandDigest: approval.commandDigest, decision: decision,
+            snapshotGeneration: snapshot.generation, sentAt: clock())
+        approvalStates[key] = .sending(decision)
+        do {
+            let reply = try await transport.send(.approval(request, flavor: flavor))
+            guard case .approval(let r) = reply, r.requestUUID == request.requestUUID else {
+                approvalStates[key] = .settled(.uncertain(reason: "Unexpected reply. Check iPhone."))
+                return
+            }
+            approvalStates[key] = .settled(r.outcome)
+            switch r.outcome {
+            case .changed, .alreadyResolved, .expired, .staleSnapshot, .duplicate, .uncertain: await refresh()
+            default: break
+            }
+        } catch WatchTransportError.notReachable {
+            approvalStates[key] = .notSent("iPhone not reachable. Nothing was sent.")
+        } catch {
+            approvalStates[key] = .settled(.uncertain(reason: "No reply from iPhone. It may or may not have been applied."))
+            await refresh()
+        }
+    }
+
+    /// Clears a settled/failed state so the user can look again after a refresh.
+    public func dismissApprovalState(_ key: String) { approvalStates[key] = nil }
+
+    // MARK: Messages
+
+    /// Composes and queues an explicitly-sent message to the CURRENT selection.
+    @discardableResult
+    public func send(text: String) -> Bool {
+        guard sendBlockReason == nil,
+              case .resolved(let gateway, let bot?, let conversation?) = resolution else { return false }
+        let request = WatchMessageRequest(
+            gatewayID: gateway.id, profileSlug: bot.ref.profileSlug,
+            target: conversation.isMain ? .mainChat(sessionID: conversation.id) : .conversation(sessionID: conversation.id),
+            text: text, composedAt: clock())
+        guard outbox.enqueue(request, targetLabel: contextLabel, now: clock()) else { return false }
+        guard persistOutbox() else {
+            outbox.remove(request.clientMessageID)
+            outboxPersistenceError = "Couldn't save the message on the Watch, so it wasn't queued."
+            return false
+        }
+        outboxPersistenceError = nil
+        Task { await flushQueuedMessages() }
+        return true
+    }
+
+    public func flushQueuedMessages() async {
+        guard !flushing, link == .reachable else { return }
+        flushing = true
+        defer { flushing = false }
+        for message in outbox.autoTransmittable {
+            guard link == .reachable else { break }
+            outbox.markSent(message.id, now: clock())
+            guard persistOutbox() else {
+                // Can't record "handed to phone": don't transmit; stays queued.
+                outbox.requeueUnsent(message.id, now: clock())
+                outboxPersistenceError = "Couldn't save the outbox on the Watch, so nothing was sent."
+                break
+            }
+            do {
+                let reply = try await transport.send(.message(message.request, flavor: flavor))
+                if case .message(let r) = reply, r.clientMessageID == message.id {
+                    outbox.apply(r, now: clock())
+                } else {
+                    outbox.markUncertain(message.id, reason: "Unexpected reply from iPhone.", now: clock())
+                }
+            } catch WatchTransportError.notReachable {
+                // Verified down before anything was transmitted: still unsent.
+                outbox.requeueUnsent(message.id, now: clock())
+            } catch {
+                outbox.markUncertain(message.id, reason: "No reply from iPhone.", now: clock())
+            }
+            persistOutbox()
+        }
+    }
+
+    public func retry(_ id: String) {
+        guard outbox.userRetry(id, now: clock()) else { return }
+        persistOutbox()
+        Task { await flushQueuedMessages() }
+    }
+
+    public func discard(_ id: String) {
+        outbox.remove(id)
+        persistOutbox()
+    }
+
+    func simulateLinkChange(_ state: WatchLinkState) {
+        link = state
+        if state == .reachable {
+            Task { await refresh(); await flushQueuedMessages() }
+        } else {
+            markInFlightUncertainOnDisconnect()
+        }
+    }
+
+    private func markInFlightUncertainOnDisconnect() {
+        for message in outbox.messages where message.state == .sentToPhone {
+            outbox.markUncertain(message.id, reason: "Link to iPhone dropped.", now: clock())
+        }
+        persistOutbox()
+    }
+
+    // MARK: Persistence
+
+    private static let selectionKey = "fleet.watch.selection.v1"
+
+    private static func loadSelection(_ defaults: UserDefaults) -> WatchContextSelection {
+        guard let data = defaults.data(forKey: selectionKey),
+              let value = try? JSONDecoder().decode(WatchContextSelection.self, from: data) else { return .empty }
+        return value
+    }
+
+    private func persistSelection() {
+        if let data = try? JSONEncoder().encode(selection) { defaults.set(data, forKey: Self.selectionKey) }
+    }
+
+    public static func defaultOutboxURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("FleetWatchDev/outbox.json")
+    }
+
+    private static func loadOutbox(_ url: URL) -> WatchMessageOutbox {
+        guard let data = try? Data(contentsOf: url),
+              let box = try? JSONDecoder().decode(WatchMessageOutbox.self, from: data) else { return WatchMessageOutbox() }
+        return box
+    }
+
+    /// `completeFileProtectionUntilFirstUserAuthentication`: the outbox must stay
+    /// writable for a background wake after the Watch has locked. Returns false
+    /// instead of swallowing the error.
+    @discardableResult
+    private func persistOutbox() -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: outboxURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(outbox).write(
+                to: outboxURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            return true
+        } catch {
+            return false
+        }
+    }
+}

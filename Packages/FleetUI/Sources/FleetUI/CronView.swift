@@ -17,6 +17,7 @@ public struct CronView: View {
     @State private var model: CronDashboardModel?
     @State private var isShowingForm = false
     @State private var pendingDelete: CronJobRecord?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
@@ -101,19 +102,7 @@ public struct CronView: View {
                     .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("cron.attribution")
-                if let notice = model.notice {
-                    FleetNoticeBar(notice, systemImage: "info.circle", id: "cron.notice")
-                }
-                if let error = model.errorMessage, !model.jobs.isEmpty {
-                    FleetNoticeBar(
-                        error,
-                        systemImage: "exclamationmark.triangle.fill",
-                        tone: .error,
-                        id: "cron.error",
-                        actionTitle: "Retry",
-                        actionID: "cron.retry",
-                        action: { Task { await model.refresh(profile: profileScope) } })
-                }
+                FleetNoticeStack(cronNoticeItems(model))
             }
 
             if model.isLoading && model.jobs.isEmpty {
@@ -148,7 +137,9 @@ public struct CronView: View {
         .scrollContentBackground(.hidden)
         .refreshable {
             await model.refresh(profile: profileScope)
+            refreshOutcome.record(failed: model.errorMessage != nil)
         }
+        .fleetRefreshHaptics(refreshOutcome)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -180,6 +171,26 @@ public struct CronView: View {
         }
     }
 
+    /// Severity-ranked notices for a populated dashboard: error (with Retry)
+    /// above the informational notice.
+    private func cronNoticeItems(_ model: CronDashboardModel) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
+        if let error = model.errorMessage, !model.jobs.isEmpty {
+            items.append(FleetNoticeItem(
+                error,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .error,
+                id: "cron.error",
+                actionTitle: "Retry",
+                actionID: "cron.retry",
+                action: { Task { await model.refresh(profile: profileScope) } }))
+        }
+        if let notice = model.notice {
+            items.append(FleetNoticeItem(notice, systemImage: "info.circle", id: "cron.notice"))
+        }
+        return items
+    }
+
     private var emptyContent: some View {
         // FOS-6: inline empty state (SPEC §18 empty-state instruction).
         FleetNoticeBar(
@@ -207,7 +218,7 @@ public struct CronView: View {
         ContentUnavailableView {
             Label("Cron Unavailable", systemImage: "clock.badge.exclamationmark")
         } description: {
-            Text("This gateway has no dashboard cron surface wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to view and manage its cron jobs.")
         }
         .accessibilityIdentifier("cron.unavailable")
     }
@@ -448,7 +459,7 @@ struct CronJobRow: View {
                 Task { await model.triggerJob(job.id, profile: profileScope) }
             } label: {
                 Image(systemName: "play.circle")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.headline.weight(.medium))
                     .foregroundStyle(theme.highlight)
             }
             .buttonStyle(.borderless)
@@ -462,7 +473,7 @@ struct CronJobRow: View {
                 Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
             } label: {
                 Image(systemName: job.enabled ? "pause.circle" : "arrow.up.circle")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.headline.weight(.medium))
                     .foregroundStyle(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
             }
             .buttonStyle(.borderless)

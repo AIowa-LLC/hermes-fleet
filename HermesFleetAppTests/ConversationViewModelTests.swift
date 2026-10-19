@@ -3,6 +3,7 @@ import FleetCore
 import FleetNetworking
 import FleetPersistence
 import FleetUI
+@testable import FleetUI
 
 /// U3 hosted tests — the `ConversationViewModel` (FleetUI) over SCRIPTED
 /// FleetCore seams: full create/resume → prompt.submit → incremental streaming
@@ -388,7 +389,8 @@ final class ConversationViewModelTests: XCTestCase {
 
     private func makeFixture(
         sessionID: String? = nil,
-        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth()
+        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
+        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
     ) async throws -> (ScriptedSession, ConversationViewModel) {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
@@ -402,7 +404,8 @@ final class ConversationViewModelTests: XCTestCase {
             route: route,
             sessionID: sessionID,
             biometrics: biometrics,
-            statusInterval: .milliseconds(10)
+            statusInterval: .milliseconds(10),
+            prepareForegroundRecovery: prepareForegroundRecovery
         )
         return (scripted, viewModel)
     }
@@ -549,6 +552,46 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.appBecameActive()
         XCTAssertEqual(scripted.connectCount, before,
                        "authRequired must not auto-reconnect")
+    }
+
+    func testForegroundRecoveryGateFalsePreventsReconnect() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1",
+            prepareForegroundRecovery: { false })
+        await viewModel.start()
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        let before = scripted.connectCount
+
+        await viewModel.appBecameActive()
+
+        XCTAssertEqual(scripted.connectCount, before,
+                       "a foreground gate refusal must preserve manual recovery intent")
+    }
+
+    func testCanceledForegroundRecoveryGateDoesNotReconnect() async throws {
+        let gate = OneShotGate()
+        var enteredGate = false
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1",
+            prepareForegroundRecovery: {
+                enteredGate = true
+                await gate.wait()
+                return true
+            })
+        await viewModel.start()
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        let before = scripted.connectCount
+
+        let activation = Task { await viewModel.appBecameActive() }
+        while !enteredGate { await Task.yield() }
+        activation.cancel()
+        gate.open()
+        await activation.value
+
+        XCTAssertEqual(scripted.connectCount, before,
+                       "cancellation while app-level recovery is suspended must fence reconnect")
     }
 
     func testStartConnectsAndCreatesSession() async throws {
@@ -978,6 +1021,50 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.start()
         XCTAssertEqual(scripted.createCallCount, 1, "nil sessionID must take the createSession path")
         XCTAssertEqual(scripted.resumeCallCount, 0, "nil sessionID must NEVER call resumeSession")
+    }
+
+    /// DEV14 issue 5: ONE turn-level pending signal (`isWorking`, which the
+    /// view renders as the single "Working" indicator) spans waiting,
+    /// reasoning, streaming; Stop (`phase == .streaming || isStreaming`)
+    /// clears with it on completion, failure, and cancel.
+    func testWorkingSignalAndStopStateAcrossTurnPhases() async throws {
+        func stopShown(_ vm: ConversationViewModel) -> Bool { vm.phase == .streaming || vm.isStreaming }
+
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        // Completion path: waiting -> reasoning -> streaming -> done.
+        await viewModel.send("one")
+        XCTAssertTrue(viewModel.isWorking, "waiting")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.reasoningDelta(sessionID: "s-1", text: "thinking"))
+        await flush()
+        XCTAssertTrue(viewModel.isWorking, "reasoning")
+        XCTAssertTrue(stopShown(viewModel))
+        XCTAssertEqual(viewModel.transcript.last?.detail, "thinking")
+        XCTAssertTrue(viewModel.transcript.last?.text.isEmpty == true)
+        scripted.push(.messageDelta(sessionID: "s-1", text: "hi", rendered: nil))
+        await flush()
+        XCTAssertTrue(viewModel.isWorking, "streaming")
+        scripted.push(.messageComplete(sessionID: "s-1", text: "hi", status: nil, error: nil))
+        await flush()
+        XCTAssertFalse(viewModel.isWorking, "completion clears the indicator")
+        XCTAssertFalse(stopShown(viewModel), "completion clears Stop")
+
+        // Cancel path.
+        await viewModel.send("two")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.reasoningDelta(sessionID: "s-1", text: "again"))
+        await flush()
+        await viewModel.interrupt()
+        XCTAssertFalse(viewModel.isWorking, "cancel clears the indicator")
+        XCTAssertFalse(stopShown(viewModel), "cancel clears Stop")
+
+        // Failure path (rejected submission).
+        scripted.submitError = .rpcFailed("nope")
+        _ = await viewModel.send("three")
+        XCTAssertFalse(viewModel.isWorking, "failure clears the indicator")
+        XCTAssertFalse(stopShown(viewModel), "failure clears Stop")
     }
 
     // MARK: - Interrupt
@@ -1631,15 +1718,15 @@ final class ConversationViewModelTests: XCTestCase {
 
         // Reconnect #2 supersedes and settles a different notice.
         scripted.replayGate = nil
-        scripted.replayOutcomes = .success([.nothingToReplay])
+        scripted.replayOutcomes = .success([.replayed(sessionID: "s-1", count: 1)])
         await viewModel.reconnect()
         XCTAssertEqual(viewModel.phase, .ready)
-        XCTAssertEqual(viewModel.replayNotice, "Reconnected · nothing new")
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · replayed 1 missed event")
 
         // Stale replay lands now — its notice must be dropped.
         gate.open()
         _ = await staleReconnect
-        XCTAssertEqual(viewModel.replayNotice, "Reconnected · nothing new",
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · replayed 1 missed event",
                        "stale replay notice must not overwrite the newer operation's")
     }
 
@@ -1659,6 +1746,106 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
         let assistant = viewModel.transcript.last { $0.kind == .assistant }
         XCTAssertEqual(assistant?.text, "in-order history")
+    }
+
+    // MARK: - DEV14 Issue 3 — routine recovery must not look like a failure
+
+    /// The transport watermarks every session it has ever seen, so one
+    /// reconnect returns one outcome per session. Pre-fix the banner read
+    /// "Reconnected · nothing new, nothing new, ..." until truncated.
+    func testManyNothingToReplayOutcomesShowNoNotice() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        scripted.replayOutcomes = .success(Array(repeating: .nothingToReplay, count: 40))
+        await viewModel.reconnect()
+
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertNil(viewModel.replayNotice, "routine recovery with nothing to replay shows no notice")
+        XCTAssertNil(ConversationViewModel.replayNotice(
+            Array(repeating: .nothingToReplay, count: 40), openSessionID: "s-1"))
+    }
+
+    func testReplayNoticeOnlyDescribesOpenSessionAndCollapsesDuplicates() async throws {
+        let notice = ConversationViewModel.replayNotice([
+            .nothingToReplay, .nothingToReplay,
+            .replayed(sessionID: "other-1", count: 7),
+            .failed(sessionID: "other-2", detail: "boom"),
+            .truncated(sessionID: "other-3"),
+            .replayed(sessionID: "s-1", count: 3),
+            .nothingToReplay,
+        ], openSessionID: "s-1")
+        XCTAssertEqual(notice, "Reconnected · replayed 3 missed events")
+
+        let dupes = ConversationViewModel.replayNotice([
+            .epochChanged(from: "a", to: "b"), .epochChanged(from: "a", to: "b"),
+        ], openSessionID: "s-1")
+        XCTAssertEqual(dupes, "Reconnected · gateway restarted — history refreshed")
+
+        XCTAssertNil(ConversationViewModel.replayNotice([
+            .replayed(sessionID: "other-1", count: 7),
+            .failed(sessionID: "other-2", detail: "boom"),
+        ], openSessionID: "s-1"), "other sessions' outcomes are not this conversation's notice")
+    }
+
+    func testGenuineOpenSessionFailureAndGapRemainVisible() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        scripted.replayOutcomes = .success(
+            Array(repeating: .nothingToReplay, count: 10)
+                + [.failed(sessionID: "s-1", detail: "gap")])
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · replay failed: gap")
+
+        scripted.replayOutcomes = .success([.truncated(sessionID: "s-1"), .nothingToReplay])
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · history refreshed")
+
+        // A later routine recovery clears the sticky notice.
+        scripted.replayOutcomes = .success([.nothingToReplay])
+        await viewModel.reconnect()
+        XCTAssertNil(viewModel.replayNotice)
+
+        // RPC-level failure stays visible.
+        scripted.replayOutcomes = .failure(.notConnected)
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.replayNotice, "Replay unavailable after reconnect.")
+    }
+
+    /// Repeated background/foreground cycles: no extra session opens, no
+    /// duplicated rows from a single live event, transcript retained.
+    func testRepeatedForegroundCyclesKeepOneSessionAndNoDuplicateRows() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        await viewModel.send("hello")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
+        await flush()
+        let opens = scripted.createCallCount + scripted.resumeCallCount
+        let rowsBefore = viewModel.transcript.count
+
+        scripted.replayOutcomes = .success(Array(repeating: .nothingToReplay, count: 25))
+        for _ in 0..<4 {
+            scripted.statusValue = .offline
+            viewModel.forceDisconnectedForTesting()
+            scripted.statusValue = .online
+            await viewModel.appBecameActive()
+            XCTAssertEqual(viewModel.phase, .ready)
+            XCTAssertNil(viewModel.replayNotice)
+        }
+
+        XCTAssertEqual(scripted.createCallCount + scripted.resumeCallCount, opens,
+                       "foreground recovery must not reopen the session")
+        XCTAssertEqual(viewModel.transcript.count, rowsBefore)
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "again", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "again", status: nil, error: nil))
+        await flush()
+        XCTAssertEqual(viewModel.transcript.filter { $0.text == "again" }.count, 1,
+                       "one live event must yield exactly one row (no duplicate subscriptions)")
+        XCTAssertEqual(viewModel.transcript.count, rowsBefore + 1)
     }
 
     // MARK: - H1 history hydration UX (t_01c9d411)
@@ -1828,5 +2015,42 @@ final class ConversationViewModelTests: XCTestCase {
             nextRowID: { counter += 1; return "fresh-\(counter)" }
         )
         XCTAssertEqual(mergedContent.map(\.id), ["row-A", "row-B"])
+    }
+}
+
+/// GitHub #107 (DEV19 L7): the presence decision behind the thinking
+/// placeholder, the working line and the streaming caret. Pure: no model.
+final class ConversationPresenceStateTests: XCTestCase {
+
+    func testIdleWhenNoTurnIsInFlight() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: false, hasAssistantTextThisTurn: false, hasToolActivity: false), .idle)
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: false, hasAssistantTextThisTurn: true, hasToolActivity: true), .idle)
+    }
+
+    func testThinkingBeforeAnyTextOrToolActivity() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: false, hasToolActivity: false), .thinking)
+    }
+
+    func testWorkingWhenToolActivityStartedBeforeText() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: false, hasToolActivity: true), .working)
+    }
+
+    func testStreamingOnceAssistantTextArrives() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: true, hasToolActivity: false), .streaming)
+        // Text wins over tool activity: the row is streaming, not working.
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: true, hasToolActivity: true), .streaming)
+    }
+
+    func testElapsedClockAppearsAtThreeSeconds() {
+        XCTAssertFalse(ConversationPresence.showsElapsed(0))
+        XCTAssertFalse(ConversationPresence.showsElapsed(2))
+        XCTAssertTrue(ConversationPresence.showsElapsed(3))
+        XCTAssertTrue(ConversationPresence.showsElapsed(42))
     }
 }

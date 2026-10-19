@@ -64,6 +64,9 @@ public final class LiveOpsStore {
         case detail(LiveOperationID)
         case setup(GatewayID)
         case gateway(GatewayID)
+        /// The Apple Watch companion bridge (Fleet Dev only). Registered while
+        /// a paired Watch app is installed so the phone observes fresh state.
+        case watch
     }
 
     // MARK: Observable state
@@ -458,7 +461,7 @@ public final class LiveOpsStore {
             actionErrors[id] = nil
             return nil
         } catch {
-            let message = Redaction.safeErrorDescription(error)
+            let message = Redaction.userFacingErrorDescription(error)
             actionErrors[id] = message
             return message
         }
@@ -530,7 +533,7 @@ public final class LiveOpsStore {
             actionErrors[id] = nil
             return nil
         } catch {
-            let message = Redaction.safeErrorDescription(error)
+            let message = Redaction.userFacingErrorDescription(error)
             actionErrors[id] = message
             return message
         }
@@ -568,7 +571,7 @@ public final class LiveOpsStore {
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {
-            return .failure(.rpcFailed(Redaction.safeErrorDescription(error)))
+            return .failure(.rpcFailed(Redaction.userFacingErrorDescription(error)))
         }
     }
 
@@ -582,7 +585,7 @@ public final class LiveOpsStore {
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {
-            return .failure(.rpcFailed(Redaction.safeErrorDescription(error)))
+            return .failure(.rpcFailed(Redaction.userFacingErrorDescription(error)))
         }
     }
 }

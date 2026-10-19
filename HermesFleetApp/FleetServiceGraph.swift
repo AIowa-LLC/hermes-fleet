@@ -29,6 +29,25 @@ enum FleetServiceGraph {
         if ProcessInfo.processInfo.environment["HERMES_FLEET_CONTINUE_RESET"] == "1" {
             try? FileManager.default.removeItem(at: FleetContinueIndexStore.defaultURL())
         }
+        // DEV14 UI-test seed (simulator only): two recent conversations with
+        // the SAME bot on the SAME gateway, so a UI test can prove Home tells
+        // them apart by their own titles. Synthetic, deterministic ids that
+        // match the scripted session list.
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_CONTINUE_SEED"] == "same-bot" {
+            try? FileManager.default.removeItem(at: FleetContinueIndexStore.defaultURL())
+            let route = Route(gatewayID: GatewayID(rawValue: "workstation"), profileSlug: ProfileSlug(rawValue: "default"))
+            let seeds = [("workstation.default.s2", "Replay plan review", -600.0),
+                         ("workstation.default.s1", "Fleet setup", -300.0)]
+            for (sessionID, title, offset) in seeds {
+                let clocked = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL(), now: { Date().addingTimeInterval(offset) })
+                clocked.recordConversationOpen(
+                    route: route, sessionID: sessionID, canonical: false,
+                    title: title, subtitle: "Default · Workstation",
+                    sessionTitle: title, botName: "Default", gatewayName: "Workstation")
+            }
+        }
+        #endif
         // P0-5: the scripted fleet is for the SIMULATOR ONLY — a Debug build
         // running on a physical device is Tony's live-dogfood lane and must
         // get the REAL production graph (real Keychain + live transports).
@@ -37,10 +56,14 @@ enum FleetServiceGraph {
         // user-added gateway reported a healthy-but-empty roster — the app
         // looked "Auth configured" yet never talked to the gateway.
         #if DEBUG && targetEnvironment(simulator)
-        return makeSimulatorEnvironment()
+        let environment = makeSimulatorEnvironment()
         #else
-        return makeProductionEnvironment()
+        let environment = makeProductionEnvironment()
         #endif
+        // The app's own URL scheme lets the pairing flow recognise `<scheme>://pair#…` links
+        // (the /pair web page opens the app with one). Conversation links share the scheme.
+        environment.pairing.appURLScheme = FleetAppIdentity.conversationURLScheme
+        return environment
     }
 
     /// Builds the H1 app-lock controller.
@@ -188,6 +211,11 @@ enum FleetServiceGraph {
         // transport the graph builds so all four connection surfaces (probe,
         // roster, lifecycle, conversation) enforce the SAME pin per gateway.
         let pinStore = KeychainPinStore(keychain: keychain)
+        let ownerEnrollment = OwnerEnrollmentClient(
+            credentialStore: credentialStore,
+            identityStore: KeychainOwnerEnrollmentIdentityStore(keychain: keychain),
+            pinStore: pinStore,
+            approvalStore: pinStore)
 
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
@@ -198,7 +226,8 @@ enum FleetServiceGraph {
             credentials: credentialStore,
             connectionFactory: makeProbeFactory(credentialStore: credentialStore, pinStore: pinStore),
             recordStore: cacheStore,
-            pinStore: pinStore
+            pinStore: pinStore,
+            enrollmentCleanup: ownerEnrollment
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,
@@ -224,6 +253,7 @@ enum FleetServiceGraph {
             cache: cache,
             tlsPinStore: pinStore,
             tlsApprovalStore: pinStore,
+            tlsKeyProbe: TLSPresentedKeyProbe(),
             sessionList: sessionList,
             connectionFactory: makeConnectionFactory(
                 credentialStore: credentialStore, health: health, pinStore: pinStore),
@@ -268,7 +298,9 @@ enum FleetServiceGraph {
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
             launchCache: launchCache,
-            localCacheRecovery: cacheRecovery
+            localCacheRecovery: cacheRecovery,
+            ownerEnrollment: ownerEnrollment,
+            pairingService: GatewayPairingClient()
         )
     }
 
@@ -279,7 +311,7 @@ enum FleetServiceGraph {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("HermesFleetCache", isDirectory: true)
+        return base.appendingPathComponent(FleetAppIdentity.cacheDirectoryName, isDirectory: true)
     }
 
     /// True when an earlier launch of this app already created its cache
@@ -392,6 +424,19 @@ enum FleetServiceGraph {
                     return .sessionTokenHeader(credential.rawValue)
                 }
                 return .none
+            case .deviceCredential:
+                guard let base,
+                      let credential = try? await credentialStore.loadCredential(for: gateway.id) else {
+                    throw KanbanBoardError.malformedResponse("no credential stored")
+                }
+                let handler = PinningTrustHandler(
+                    gatewayID: gateway.id, pinStore: pinStore,
+                    approvalStore: pinStore.firstUseApprovalsOrDenyAll())
+                let cookie = try await FleetServiceGraph.sharedSessionStore.lease(gatewayID: gateway.id) {
+                    try await DeviceLoginClient(
+                        baseURL: base, deviceCredential: credential.rawValue, trustHandler: handler).login()
+                }
+                return .cookie(cookie)
             case .usernamePassword:
                 guard let base,
                       let credential = try? await credentialStore.loadCredential(for: gateway.id),
@@ -441,7 +486,8 @@ enum FleetServiceGraph {
             GatewayArtifactRetrieval.make(
                 gateway: gateway,
                 credentialStore: credentialStore,
-                pinStore: pinStore)
+                pinStore: pinStore,
+                sessionStore: FleetServiceGraph.sharedSessionStore)
         }
     }
 
@@ -467,11 +513,23 @@ enum FleetServiceGraph {
                 // only it — advertises `client.capabilities`.
                 configuration: .conversation
             )
+            // #188: paged latest-first history over the SAME dashboard REST
+            // credential/session construction as the cron client. Used only
+            // when a chat is too long for session.history.
+            let pagingSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
+            let historyPager = DashboardSessionMessagesClient(
+                gatewayID: gateway.id,
+                baseURL: base,
+                httpCredential: makeDashboardHTTPCredential(
+                    gateway: gateway, credentialStore: credentialStore, pinStore: pinStore, urlSession: pagingSession),
+                urlSession: pagingSession
+            )
             return GatewayConversationSession(
                 gatewayID: gateway.id,
                 displayName: gateway.displayName,
                 endpoint: gateway.endpoint,
-                transport: transport
+                transport: transport,
+                historyPager: historyPager
             )
         }
     }
@@ -757,7 +815,7 @@ enum FleetServiceGraph {
             trustHandler: PinningTrustHandler(
                 gatewayID: gateway.id,
                 pinStore: pinStore,
-                approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring))
+                approvalStore: pinStore.firstUseApprovalsOrDenyAll()))
     }
 
     /// Build the gateway-scoped URLSession used by credential-bearing REST
@@ -777,7 +835,7 @@ enum FleetServiceGraph {
         let handler = PinningTrustHandler(
             gatewayID: gateway.id,
             pinStore: pinStore,
-            approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+            approvalStore: pinStore.firstUseApprovalsOrDenyAll())
         let delegate = URLSessionPinningDelegate(trustHandler: handler)
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
@@ -878,6 +936,15 @@ enum FleetServiceGraph {
                 credentialStore: credentialStore,
                 baseURL: base,
                 urlSession: urlSession
+            )
+        case .deviceCredential:
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .deviceCredential,
+                credentialStore: credentialStore,
+                baseURL: base,
+                urlSession: urlSession,
+                sessionStore: sessionStore
             )
         case .usernamePassword:
             return GatewayAuthenticator(

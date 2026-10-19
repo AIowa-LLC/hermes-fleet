@@ -3,6 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import FleetCore
 import FleetPersistence
+import UIKit
 
 /// B87 follow-up ("Cannot open chat"): what `ConversationView.body` should
 /// render for a given (VM presence, fleet hydration, gateway registration)
@@ -75,6 +76,9 @@ public struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
+    /// GitHub #107: bumps once per turn when the first assistant text lands;
+    /// drives the single `.selection` haptic for that turn.
+    @State private var firstTokenCounter = 0
     @State private var showingTimeline = false
     @State private var followingLatest = true
     /// Dogfood top-space fix: bumped by the toolbar/menu "Latest" action;
@@ -141,7 +145,11 @@ public struct ConversationView: View {
     @State private var newChatTargetSessionID: String?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoPicker = false
     @State private var showingFileImporter = false
+    @State private var showingAddActions = false
+    @State private var pendingAddPresentation: PendingAddPresentation?
+    @State private var isResolvingPickedAttachment = false
     @FocusState private var composerFocused: Bool
     /// Dogfood r6 (G1): the focus signal driving the pill→card morph. (The
     /// composer's adaptive glass + shadow no longer read the color scheme
@@ -198,6 +206,11 @@ public struct ConversationView: View {
     private struct OpenTrigger: Equatable {
         let hydrationPhase: AppEnvironment.HydrationPhase
         let gatewayPresent: Bool
+    }
+
+    private enum PendingAddPresentation {
+        case photo
+        case file
     }
 
     private var openTrigger: OpenTrigger {
@@ -297,6 +310,8 @@ public struct ConversationView: View {
             #endif
         }
         .onDisappear {
+            pendingAddPresentation = nil
+            showingAddActions = false
             viewModel?.teardown()
             environment.conversationDrafts.flush()
         }
@@ -305,8 +320,13 @@ public struct ConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             // Active also retries a protected-file write deferred while locked.
             environment.conversationDrafts.flush()
+            if phase != .active {
+                pendingAddPresentation = nil
+                showingAddActions = false
+            }
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
+        .fleetHaptic(.send, trigger: sendPulse)
+        .fleetHaptic(.failure, trigger: viewModel?.errorMessage != nil) { _, failed in failed }
         .background(theme.background.ignoresSafeArea())
     }
 
@@ -376,6 +396,66 @@ public struct ConversationView: View {
                 ContextBreakdownSheet(model: toolingModel)
             }
         }
+        // Keep system pickers and action dialogs attached to the stable
+        // conversation canvas. Menu content is transient and SwiftUI can
+        // dismiss it before a nested presentation request is delivered.
+        .confirmationDialog("Add to message", isPresented: $showingAddActions, titleVisibility: .visible) {
+            Button("Photo…", systemImage: "photo") {
+                pendingAddPresentation = .photo
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.photo")
+            Button("File or PDF…", systemImage: "doc") {
+                pendingAddPresentation = .file
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.file")
+            let previousPrompts = model.transcript
+                .filter { $0.kind == .user && !$0.text.isEmpty }
+                .suffix(10)
+            ForEach(previousPrompts.reversed()) { row in
+                Button("Reuse: \(String(row.text.prefix(64)))") {
+                    composerText = row.text
+                    composerFocused = true
+                }
+                .accessibilityIdentifier("fleet.conversation.reusePrompt.\(row.id)")
+            }
+            Button {
+                Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
+            } label: {
+                Label(
+                    model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
+                    systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
+                )
+            }
+            .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: showingAddActions) { _, isPresented in
+            if !isPresented { presentPendingAddPresentation() }
+        }
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhoto, matching: .images)
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            selectedPhoto = nil
+            isResolvingPickedAttachment = true
+            Task { await loadPickedPhoto(item, model: model) }
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
+            switch result {
+            case .success(let url):
+                isResolvingPickedAttachment = true
+                Task { await loadPickedFile(url, model: model) }
+            case .failure(let error):
+                let nsError = error as NSError
+                guard nsError.domain != NSCocoaErrorDomain || nsError.code != CocoaError.userCancelled.rawValue else {
+                    return
+                }
+                Task {
+                    await model.stageAttachment(
+                        name: "file", mime: nil, byteCount: 0,
+                        loadBytes: { throw error })
+                }
+            }
+        }
         // R9-T4: navigate to a successfully forked session.
         .onChange(of: model.forkedSession?.storedSessionID ?? model.forkedSession?.sessionID) { _, newID in
             guard let newID, newID != forkTargetSessionID else { return }
@@ -427,6 +507,25 @@ public struct ConversationView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingJumpToLatest)
     }
 
+    /// Consume the attachment action only after the Add dialog has closed.
+    /// Keeping this as pending state avoids competing system presentations;
+    /// disappearance or backgrounding clears it before a picker can appear.
+    private func presentPendingAddPresentation() {
+        guard scenePhase == .active else {
+            pendingAddPresentation = nil
+            return
+        }
+        guard let pending = pendingAddPresentation else { return }
+        pendingAddPresentation = nil
+        switch pending {
+        case .photo:
+            selectedPhoto = nil
+            showingPhotoPicker = true
+        case .file:
+            showingFileImporter = true
+        }
+    }
+
     /// Floating jump-to-latest chevron — zero permanent chrome: it renders
     /// ONLY while the user has scrolled away from the live bottom (same
     /// condition the old toolbar item used), overlaid on the transcript's
@@ -439,7 +538,7 @@ public struct ConversationView: View {
                 scrollPulse += 1
             } label: {
                 Image(systemName: "chevron.down.circle.fill")
-                    .font(.system(size: 30, weight: .medium))
+                    .font(.system(size: min(latestChevronSize, 60), weight: .medium))
                     .foregroundStyle(theme.highlight, theme.surface)
             }
             .buttonStyle(.fleetPressable)
@@ -512,9 +611,10 @@ public struct ConversationView: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -525,9 +625,10 @@ public struct ConversationView: View {
                 openDrawer?()
             } label: {
                 Image(systemName: "sidebar.leading")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -569,7 +670,7 @@ public struct ConversationView: View {
                 }
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -607,6 +708,9 @@ public struct ConversationView: View {
         .frame(minHeight: 44)
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, 4)
+        // DEV19 AX5: header chrome stops growing past accessibility XL (the
+        // size its UI test pins) so the identity never collapses at AX4/AX5.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
         .background(theme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -687,7 +791,7 @@ public struct ConversationView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
                 TextField("Find in conversation", text: $findQuery)
@@ -717,7 +821,7 @@ public struct ConversationView: View {
                 advanceFind(direction: -1)
             } label: {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -731,7 +835,7 @@ public struct ConversationView: View {
                 advanceFind(direction: 1)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -745,7 +849,7 @@ public struct ConversationView: View {
                 closeFind()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -791,6 +895,11 @@ public struct ConversationView: View {
             }
     }
 
+    /// DEV14: a toolbelt chip never grows past this (full value remains in
+    /// its accessibility value / popover) so one long model, folder or
+    /// profile name cannot push its neighbours off screen.
+    private static let toolbeltChipMaxWidth: CGFloat = 150
+
     /// Working-project-folder chip: folder glyph + the LAST path component
     /// (full path in the tap popover — phone-width chips must not truncate).
     /// Hidden honestly when the gateway reports no cwd.
@@ -810,7 +919,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -857,7 +968,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -917,6 +1030,21 @@ private struct WorkingDots: View {
     }
 }
 
+/// GitHub #107: the thinking placeholder glyph. A gentle SF Symbol pulse while
+/// the turn has produced nothing yet; static under Reduce Motion.
+private struct ThinkingGlyph: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: "sparkle")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Header chip string helpers.
 enum ConversationHeaderChips {
     /// Last path component of a working directory ("/a/b/hermes-fleet" ->
@@ -951,8 +1079,9 @@ enum ConversationHeaderChips {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .frame(maxWidth: Self.toolbeltChipMaxWidth)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
             .background(theme.background, in: Capsule())
         }
         .buttonStyle(.fleetPressable)
@@ -1002,7 +1131,8 @@ enum ConversationHeaderChips {
             replayNotice: model.replayNotice,
             hydratedFromCache: model.hydratedFromCache,
             historyLoadError: model.historyLoadError,
-            errorMessage: model.errorMessage
+            errorMessage: model.errorMessage,
+            historyMayBeIncomplete: model.historyMayBeIncomplete
         ) {
             HStack(spacing: 12) {
                 bannerBody(banner)
@@ -1087,24 +1217,51 @@ enum ConversationHeaderChips {
     private func workingIndicator(_ model: ConversationViewModel) -> some View {
         TimelineView(.periodic(from: model.turnStartedAt ?? .now, by: 1)) { timeline in
             let elapsed = Int(timeline.date.timeIntervalSince(model.turnStartedAt ?? timeline.date))
-            HStack(spacing: 6) {
-                if reduceMotion {
-                    Image(systemName: "ellipsis")
-                        .font(.caption.weight(.semibold))
+            if model.conversationPresence == .thinking {
+                thinkingRow(elapsed: elapsed)
+            } else {
+                HStack(spacing: 6) {
+                    if reduceMotion {
+                        Image(systemName: "ellipsis")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        WorkingDots()
+                    }
+                    Text("Working for \(Self.workingDuration(elapsed))")
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
-                } else {
-                    WorkingDots()
+                        .monospacedDigit()
                 }
-                Text("Working for \(Self.workingDuration(elapsed))")
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
+                .accessibilityIdentifier("fleet.conversation.working")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
-            .accessibilityIdentifier("fleet.conversation.working")
         }
+    }
+
+    /// GitHub #107: the pre-text placeholder, in the assistant's position
+    /// (flat, leading-aligned, like an assistant row). A breathing sparkle plus
+    /// "Thinking", with the clock once 3s have elapsed. Shares the working
+    /// identifier so the one-indicator-per-turn contract holds.
+    private func thinkingRow(elapsed: Int) -> some View {
+        let spoken = ConversationPresence.showsElapsed(elapsed)
+            ? "Thinking, \(Self.workingSpoken(elapsed))"
+            : "Thinking"
+        return HStack(spacing: 6) {
+            ThinkingGlyph()
+            Text(ConversationPresence.showsElapsed(elapsed)
+                 ? "Thinking · \(Self.workingDuration(elapsed))"
+                 : "Thinking…")
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+        .accessibilityIdentifier("fleet.conversation.working")
     }
 
     /// 7s / 1m 05s — compact elapsed format.
@@ -1197,6 +1354,50 @@ enum ConversationHeaderChips {
         !model.transcript.suffix(3).contains { !($0.artifacts ?? []).isEmpty }
     }
 
+    /// #188: "Load earlier messages" at the top of a paged transcript. The
+    /// oldest visible row is captured before the request and kept at the top
+    /// edge after the older rows prepend, so the reading position holds.
+    @ViewBuilder
+    private func olderHistoryControl(_ model: ConversationViewModel, proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 6) {
+            if let notice = model.pagedHistoryNotice, model.olderHistoryError == nil {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            if model.isLoadingOlderHistory {
+                ProgressView()
+                    .accessibilityLabel("Loading earlier messages")
+            } else {
+                if let error = model.olderHistoryError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                Button(model.olderHistoryError == nil ? "Load earlier messages" : "Try again") {
+                    let anchor = ToolActivityGrouping.group(model.transcript).first?.id
+                    Task {
+                        await model.loadOlderHistory()
+                        guard let anchor else { return }
+                        // Re-anchor only after the prepended rows have laid
+                        // out: in the same update the lazy stack still keeps
+                        // the content offset at the top, so the reader would
+                        // land on the oldest NEW row instead of their place.
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(80))
+                        proxy.scrollTo(anchor, anchor: .top)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("fleet.conversation.load-earlier")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1210,6 +1411,12 @@ enum ConversationHeaderChips {
                 // itself and always render as their own live row below.
                 let blocks = ToolActivityGrouping.group(model.transcript)
                 LazyVStack(spacing: 12) {
+                    // #188: paged chats load older messages on demand, from
+                    // the top of the transcript.
+                    if model.isPagedHistory,
+                       model.hasOlderHistory || model.isLoadingOlderHistory || model.olderHistoryError != nil {
+                        olderHistoryControl(model, proxy: proxy)
+                    }
                     ForEach(blocks) { block in
                         switch block {
                         case .row(let row):
@@ -1250,6 +1457,8 @@ enum ConversationHeaderChips {
                     if model.isWorking {
                         workingIndicator(model)
                     }
+                    // GitHub #107 — the transcript's last row is the streaming
+                    // row; the caret inside ConversationBubbleView marks it.
                     // H1 (t_01c9d411): while an EXISTING session's history is
                     // still in flight and no row has rendered yet, show a
                     // HIG-native loading placeholder — never a bare blank
@@ -1265,6 +1474,13 @@ enum ConversationHeaderChips {
                 // count — the display window caps, P2-8) so it only fires
                 // when rows actually arrive.
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.transcript.last?.id)
+                .onChange(of: model.conversationPresence) { old, new in
+                    // Once per turn: the first streamed text moves the turn
+                    // into `.streaming` (it only leaves that state when the
+                    // turn ends, so this fires exactly once per turn).
+                    if new == .streaming, old != .streaming { firstTokenCounter += 1 }
+                }
+                .fleetHaptic(.selection, trigger: firstTokenCounter)
             }
             .accessibilityIdentifier("fleet.conversation.transcript")
             // B87 round 2 (ported from RoomChatView's FOS-8 follow pattern):
@@ -1543,46 +1759,22 @@ enum ConversationHeaderChips {
                 // gateway queues attaches for the NEXT submit; allowing
                 // mid-stream picks invites orphaned uploads).
                 if model.phase == .ready {
-                    Menu {
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                            Label("Photo…", systemImage: "photo")
-                        }
-                        Button {
-                            showingFileImporter = true
-                        } label: {
-                            Label("File or PDF…", systemImage: "doc")
-                        }
-                        let previousPrompts = model.transcript.filter { $0.kind == .user && !$0.text.isEmpty }.suffix(10)
-                        if !previousPrompts.isEmpty {
-                            Menu("Reuse a prompt", systemImage: "clock.arrow.circlepath") {
-                                ForEach(previousPrompts.reversed()) { row in
-                                    Button(String(row.text.prefix(80))) { composerText = row.text }
-                                }
-                            }
-                        }
-                        // R10-T4: voice-mode toggle rides the "+" menu. ON =
-                        // assistant replies spoken via local TTS; turning
-                        // OFF cuts speech immediately.
-                        Button {
-                            Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
-                        } label: {
-                            Label(
-                                model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
-                                systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
-                            )
-                        }
-                        .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+                    Button {
+                        showingAddActions = true
                     } label: {
                         // r6: bare glyph inside the pill (the pill is the
                         // surface; 44pt target via the frame).
                         Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+                            .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Attach")
+                    .disabled(isResolvingPickedAttachment || model.isUploadingAttachment)
+                    .accessibilityLabel("Add to message")
                     .accessibilityIdentifier("fleet.conversation.attach")
                 }
 
@@ -1622,9 +1814,11 @@ enum ConversationHeaderChips {
                         Task { await model.toggleMic() }
                     } label: {
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
-                            .frame(width: 36, height: 36)
+                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+                            .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
@@ -1640,9 +1834,9 @@ enum ConversationHeaderChips {
                         // DESTRUCTIVE — bright red glyph on a dimmed red
                         // circle (the mic-stop pattern), not a neutral chip.
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(FleetTheme.statusDestructive)
-                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .frame(width: sendButtonSide, height: sendButtonSide)
                             .background(Circle().fill(FleetTheme.statusDestructive.opacity(0.18)))
                             .overlay(Circle().strokeBorder(FleetTheme.statusDestructive.opacity(0.45), lineWidth: 1))
                     }
@@ -1661,10 +1855,13 @@ enum ConversationHeaderChips {
                         // r6: the accent ORB rides inside the pill —
                         // the single interactive accent (ChatGPT's send).
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.callout.weight(.bold))
                             .foregroundStyle(theme.onHighlight)
-                            .frame(width: 30, height: 30)
+                            .frame(width: min(sendGlyphSide, Self.maxChromeGlyph), height: min(sendGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
                             .background(Circle().fill(theme.highlight))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
                     .disabled(model.phase != .ready || (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
@@ -1688,32 +1885,20 @@ enum ConversationHeaderChips {
             // Scrollable chip zone: model · working folder · profile ·
             // context — the r9 TOOLBELT, docked UNDER the composer (moved
             // from the header in r9; actions live next to the input they
-            // affect). Overflow scrolls (never truncates). Hidden at
-            // accessibility sizes (the ⋯ menu carries model + context
-            // there — established policy).
-            if !dynamicTypeSize.isAccessibilitySize {
-                toolbeltZone(model)
-            }
+            // affect). DEV14: chips cap + truncate (full values stay in the
+            // accessibility value) and the strip scrolls from the LEADING
+            // edge when it still overflows. The zone is no longer hidden at
+            // accessibility sizes — the ⋯ menu never carried model/folder/
+            // profile, so hiding it made them unreachable; instead the
+            // chips' own type size is capped (see `toolbeltZone`).
+            toolbeltZone(model)
         }
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
         .background(theme.background.ignoresSafeArea())
-        // R10-T1: pickers.
-        .onChange(of: selectedPhoto) { _, item in
-            guard let item else { return }
-            selectedPhoto = nil
-            Task { await loadPickedPhoto(item, model: model) }
-        }
         .onChange(of: composerText) { _, newValue in
             model.updateSlashSuggestions(for: newValue)
             persistDraft(newValue)
-        }
-        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
-            guard case .success(let url) = result else {
-                // User-cancelled picker: not an error.
-                return
-            }
-            Task { await loadPickedFile(url, model: model) }
         }
     }
 
@@ -1732,11 +1917,16 @@ enum ConversationHeaderChips {
                 }
                 profileChip(model)
             }
-            .padding(.horizontal, FleetTheme.spacingXs)
-            .frame(minHeight: 32)
+            .padding(.horizontal, FleetTheme.spacingMd)
+            .frame(minHeight: 36)
         }
         .frame(maxWidth: .infinity)
-        .defaultScrollAnchor(.center)
+        // DEV14: `.center` clipped BOTH edges whenever the chips overflowed
+        // (long model/profile names). Start at the leading edge instead.
+        .defaultScrollAnchor(.leading)
+        // Accessibility sizes: keep the strip reachable but bounded — the
+        // composer and transcript keep their space.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityIdentifier("fleet.conversation.header.chipzone")
         .scrollBounceBehavior(.basedOnSize)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -2098,12 +2288,17 @@ enum ConversationHeaderChips {
     /// via ImageIO first (the vision pipeline can't read them, cli.py:3954);
     /// unconvertible data fails honestly pre-upload.
     private func loadPickedPhoto(_ item: PhotosPickerItem, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let data: Data
         do {
-            guard let loaded = try await item.loadTransferable(type: Data.self), !loaded.isEmpty else {
-                return // user-cancelled / empty pick — not an error
+            guard let loaded = try await item.loadTransferable(type: PickedAttachmentData.self),
+                  !loaded.data.isEmpty else {
+                await model.stageAttachment(
+                    name: "photo", mime: nil, byteCount: 0,
+                    loadBytes: { throw AttachmentStagingError.rpcFailed("photo could not be read — choose it again") })
+                return
             }
-            data = loaded
+            data = loaded.data
         } catch {
             await model.stageAttachment(
                 name: "photo.bin", mime: nil, byteCount: 0,
@@ -2134,7 +2329,9 @@ enum ConversationHeaderChips {
     /// HEIC/RAW → JPEG via ImageIO (device photos default to HEIC; the
     /// gateway's image pipeline accepts PNG/JPEG/GIF/WebP/BMP only).
     private static func cameraDataAsJPEG(_ data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let size = BoundedImageDecoder.pixelSize(of: data),
+              BoundedImageDecoder.isWithinBudget(width: size.width, height: size.height),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
@@ -2148,19 +2345,29 @@ enum ConversationHeaderChips {
 
     /// Load a picked file URL (PDF or any type) via security-scoped access.
     private func loadPickedFile(_ url: URL, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let gotAccess = url.startAccessingSecurityScopedResource()
         defer { if gotAccess { url.stopAccessingSecurityScopedResource() } }
         let name = url.lastPathComponent
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
         do {
-            // Pre-upload guard on the real size before reading the bytes.
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            // Pre-upload guard on the real size before reading the bytes. An
+            // unreadable size fails closed (it never defaults to "small"), and
+            // the read itself is bounded so a file that grows cannot slip past.
+            let size = try BoundedPickedFile.size(of: url)
             await model.stageAttachment(
                 name: name,
                 mime: mime,
                 byteCount: size,
-                loadBytes: { try Data(contentsOf: url) })
+                loadBytes: {
+                    do {
+                        return try BoundedPickedFile.read(url, limit: AttachmentStagingRules.clientCapBytes)
+                    } catch let error as BoundedPickedFile.TooLarge {
+                        throw AttachmentStagingError.fileTooLarge(
+                            name: name, sizeBytes: error.sizeBytes,
+                            capBytes: AttachmentStagingRules.clientCapBytes)
+                    }
+                })
         } catch {
             await model.stageAttachment(
                 name: name, mime: mime, byteCount: 0,
@@ -2196,7 +2403,15 @@ enum ConversationHeaderChips {
     }
 
     /// Send/stop button side length (pt) — circular, per the hero mock.
-    private static let sendButtonSide: CGFloat = 44
+    @ScaledMetric(relativeTo: .title3) private var sendButtonSide: CGFloat = 44
+    @ScaledMetric(relativeTo: .title3) private var composerGlyphSide: CGFloat = 36
+    @ScaledMetric(relativeTo: .callout) private var sendGlyphSide: CGFloat = 30
+    @ScaledMetric(relativeTo: .callout) private var headerGlyphSide: CGFloat = 32
+    /// DEV19 AX5: chrome glyph frames (header back/menu, composer plus/mic/
+    /// send) scale with Dynamic Type up to this side, so at the largest
+    /// sizes the composer field and header identity keep their room.
+    static let maxChromeGlyph: CGFloat = 56
+    @ScaledMetric(relativeTo: .title) private var latestChevronSize: CGFloat = 30
 
     private func submit(_ model: ConversationViewModel) async {
         guard model.phase == .ready,
@@ -2248,7 +2463,7 @@ enum ConversationHeaderChips {
             }
         } description: {
             Text(isGatewayPresent
-                ? "This gateway has no conversation session wired."
+                ? "Fleet can't open this conversation right now. Reconnect to the gateway and try again."
                 : "This conversation's gateway is no longer in your fleet.")
         } actions: {
             // B87 follow-up: the compact in-canvas header (with its own back
@@ -2315,6 +2530,7 @@ private struct ReasoningDisclosure: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .onAppear {
             // Completed-turn default from the persisted preference; a live
@@ -2426,9 +2642,34 @@ private struct ToolActivityGroupView: View {
 /// magenta-gradient capsules; assistant replies are left-aligned surface
 /// cards; timestamps render under each bubble (caption2 secondary) whenever
 /// the row carries one.
+/// GitHub #107: soft caret marking the actively streaming assistant text. A
+/// 2pt bar at the body line height, fading gently; static under Reduce Motion.
+private struct StreamingCaret: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 20
+    @State private var dimmed = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(theme.textSecondary)
+            .frame(width: 2, height: lineHeight)
+            .opacity(dimmed ? 0.25 : 0.9)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    dimmed = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 private struct ConversationBubbleView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @State private var showingCopyConfirmation = false
+    @State private var copyConfirmationResetTask: Task<Void, Never>?
     let row: ConversationRow
     /// Card D: needed to retrieve/render inline generated-image artifacts on
     /// the row that cited them. Optional so previews/tests that only exercise
@@ -2471,7 +2712,7 @@ private struct ConversationBubbleView: View {
                     // Dogfood r7 (decision 2): the width cap is USER-ONLY
                     // (the capsule stays compact); assistant output spans
                     // the full content width like ChatGPT/Hermex.
-                    .frame(maxWidth: row.kind == .user ? 420 : nil,
+                    .frame(maxWidth: row.kind == .user ? 420 : (row.kind == .assistant ? .infinity : nil),
                            alignment: row.kind == .user ? .trailing : .leading)
                 if let reactions = row.reactions, !reactions.isEmpty {
                     reactionChips(reactions)
@@ -2481,6 +2722,13 @@ private struct ConversationBubbleView: View {
                     Text(timestampText)
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
+                }
+                if showingCopyConfirmation {
+                    Text("Copied")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.conversation.row.\(row.id).copied")
+                        .accessibilityAddTraits(.updatesFrequently)
                 }
                 // Stage 1: action footer on COMPLETED assistant replies only
                 // (policy gate — streaming/failed/empty rows never render
@@ -2513,6 +2761,12 @@ private struct ConversationBubbleView: View {
             // message column can still be exactly as flexible
             // (`.frame(maxWidth: .infinity)`) as their trailing spacer.
             .layoutPriority(1)
+            // DEV14: assistant rows claim the full content width and align
+            // leading in EVERY state (streaming, expanded, collapsed, final,
+            // cancelled). Without this the column shrink-wrapped to the
+            // reasoning block's intrinsic width and the row's position moved
+            // as content streamed in / the block collapsed on completion.
+            .frame(maxWidth: row.kind == .assistant ? .infinity : nil, alignment: .leading)
             if row.kind != .user && row.kind != .assistant { Spacer(minLength: 60) }
         }
         .transition(row.kind == .user ? entrance : .identity)
@@ -2553,6 +2807,14 @@ private struct ConversationBubbleView: View {
     @ViewBuilder
     private var reactionMenu: some View {
         if row.kind == .user || row.kind == .assistant {
+            if !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    copyVisibleMessage()
+                } label: {
+                    Label("Copy Message", systemImage: "doc.on.doc")
+                }
+                .accessibilityIdentifier("fleet.conversation.reaction.copy")
+            }
             ForEach(MessageReactionPalette.standard.emojis, id: \.self) { emoji in
                 Button {
                     react(emoji)
@@ -2570,6 +2832,20 @@ private struct ConversationBubbleView: View {
                 }
                 .accessibilityIdentifier("fleet.conversation.reaction.clear")
             }
+        }
+    }
+
+    private func copyVisibleMessage() {
+        // Copy exactly the visible row's raw text, including Markdown and
+        // intentional surrounding whitespace.
+        UIPasteboard.general.string = row.text
+        withAnimation(reduceMotion ? nil : .easeIn(duration: 0.15)) { showingCopyConfirmation = true }
+        UIAccessibility.post(notification: .announcement, argument: "Message copied")
+        copyConfirmationResetTask?.cancel()
+        copyConfirmationResetTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { showingCopyConfirmation = false }
         }
     }
 
@@ -2645,28 +2921,21 @@ private struct ConversationBubbleView: View {
                         .foregroundStyle(FleetTheme.statusDestructive)
                         .textSelection(.enabled)
                 } else if row.text.isEmpty, row.isStreaming {
-                    Text("…")
-                        .font(.body)
-                        .foregroundStyle(theme.textPrimary)
+                    // DEV14: no in-row placeholder or dots. The turn-level
+                    // "Working for Ns" indicator (`workingIndicator`) is the
+                    // ONE pending-operation indicator for the whole turn;
+                    // a second set of dots under Reasoning duplicated it.
+                    EmptyView()
                 } else {
                     AssistantRichTextView(
                         markdown: row.text,
                         isStreaming: row.isStreaming,
                         identity: row.id)
-                }
-                if row.isStreaming {
-                    // P2-7: decorative streaming dots — hidden from assistive
-                    // tech (the row's accessibilityValue already announces
-                    // "Streaming").
-                    HStack(spacing: 4) {
-                        ForEach(0..<3, id: \.self) { i in
-                            Circle()
-                                .fill(theme.highlight)
-                                .frame(width: 5, height: 5)
-                                .opacity(0.6)
-                        }
+                    // GitHub #107: trailing soft caret on the streaming row
+                    // only; removed with `isStreaming` when the turn ends.
+                    if row.isStreaming {
+                        StreamingCaret()
                     }
-                    .accessibilityHidden(true)
                 }
             }
             // Dogfood r7 (decision 1, ChatGPT/Hermex parity): the assistant

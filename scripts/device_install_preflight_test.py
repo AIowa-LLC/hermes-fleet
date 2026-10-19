@@ -36,6 +36,14 @@ class DeviceInstallPreflightTests(unittest.TestCase):
     def test_upgrade_keeps_existing_install(self):
         self.assertIn("82 → 83", self.check())
 
+    def test_dev_target_settings_do_not_override_production_version(self):
+        self.project.write_text(
+            "settings:\n  base:\n    CURRENT_PROJECT_VERSION: 83\n    MARKETING_VERSION: 0.2.0\n"
+            "packages:\n  FleetCore:\n    path: Packages/FleetCore\n"
+            "targets:\n  HermesFleetDev:\n    settings:\n      base:\n"
+            "        CURRENT_PROJECT_VERSION: 3\n        MARKETING_VERSION: 0.1.0\n")
+        self.assertIn("82 → 83", self.check())
+
     def test_downgrade_is_blocked(self):
         self.device_build("84")
         with self.assertRaisesRegex(ValueError, "downgrade blocked"):

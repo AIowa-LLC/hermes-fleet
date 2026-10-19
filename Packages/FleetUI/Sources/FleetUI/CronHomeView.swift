@@ -19,6 +19,7 @@ public struct CronHomeView: View {
     /// and never an empty sheet: the sheet itself resolves the scope and names
     /// anything that blocks it.
     @State private var createTarget: CronCreateRequest?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -28,9 +29,9 @@ public struct CronHomeView: View {
         Group {
             if environment.gateways.isEmpty {
                 ContentUnavailableView {
-                    Label("No gateways", systemImage: "server.rack")
+                    Label("No Gateways", systemImage: "server.rack")
                 } description: {
-                    Text("Register a Hermes gateway to manage its cron jobs.")
+                    Text("Add a gateway to view and manage its cron jobs.")
                 }
                 .accessibilityIdentifier("cron.home.empty")
             } else {
@@ -102,7 +103,9 @@ public struct CronHomeView: View {
         .scrollContentBackground(.hidden)
         .refreshable {
             await CronSectionCache.shared.refreshAll()
+            refreshOutcome.record(failed: false)
         }
+        .fleetRefreshHaptics(refreshOutcome)
     }
 }
 
@@ -482,27 +485,35 @@ struct CronGatewayJobs: View {
         // descendant and REPLACES the per-button profile ids above.
     }
 
+    /// Error (with Retry) ranks above the informational notice.
+    private func jobsNoticeItems(model: CronDashboardModel, profile: ProfileSlug) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
+        if let error = model.errorMessage, !model.jobs.isEmpty {
+            items.append(FleetNoticeItem(
+                error,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .error,
+                id: "cron.error",
+                actionTitle: "Retry",
+                actionID: "cron.retry",
+                action: { Task { await model.refresh(profile: profile.rawValue) } }))
+        }
+        if let notice = model.notice {
+            items.append(FleetNoticeItem(notice, systemImage: "info.circle", id: "cron.notice"))
+        }
+        return items
+    }
+
     private func jobsList(model: CronDashboardModel, profile: ProfileSlug) -> some View {
         Group {
             // Notice/error live IN the model-owning view (the legacy pane's
             // contract); rendering them from a parent's List-section closure
             // escapes observation tracking and never updates.
-            if let notice = model.notice {
-                FleetNoticeBar(notice, systemImage: "info.circle", id: "cron.notice")
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
-            // The bar carries the message for a populated list; the branches
-            // below render it as the section's own state (never both).
-            if let error = model.errorMessage, !model.jobs.isEmpty {
-                FleetNoticeBar(
-                    error,
-                    systemImage: "exclamationmark.triangle.fill",
-                    tone: .error,
-                    id: "cron.error",
-                    actionTitle: "Retry",
-                    actionID: "cron.retry",
-                    action: { Task { await model.refresh(profile: profile.rawValue) } })
+            // The bars carry the message for a populated list, error first;
+            // the branches below render it as the section's own state (never both).
+            let notices = jobsNoticeItems(model: model, profile: profile)
+            if !notices.isEmpty {
+                FleetNoticeStack(notices)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }

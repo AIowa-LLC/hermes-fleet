@@ -147,7 +147,7 @@ public struct CreateBotSheet: View {
             dismiss()
             onCreated(created, gatewayID)
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 }
@@ -597,7 +597,7 @@ public struct EditBotSheet: View {
                 dismiss()
             }
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -639,7 +639,7 @@ public struct EditBotSheet: View {
                 dismiss()
             }
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 }
@@ -785,7 +785,7 @@ public struct SectionsManagementSheet: View {
             try await environment.botManagement.saveSections(sections, on: gateway.id)
             errorMessage = nil
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
             await load()
         }
     }
@@ -888,7 +888,7 @@ public struct BotActionsMenu: View {
             _ = try await environment.botManagement.duplicateBot(bot, occupiedNames: occupied)
             await environment.refreshRoster()
         } catch {
-            message = Redaction.safeErrorDescription(error)
+            message = Redaction.userFacingErrorDescription(error)
         }
     }
 }

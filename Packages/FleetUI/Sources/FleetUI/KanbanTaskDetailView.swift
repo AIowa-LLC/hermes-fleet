@@ -14,6 +14,7 @@ public struct KanbanTaskDetailView: View {
     private let boardModel: KanbanBoardViewModel?
     @State private var detail: KanbanTaskDetail?
     @State private var isLoading = true
+    @State private var refreshOutcome = FleetRefreshOutcome()
     @State private var errorMessage: String?
     @State private var showingEdit = false
     @State private var commentText = ""
@@ -143,7 +144,7 @@ public struct KanbanTaskDetailView: View {
             detail = try await boardOperator.fetchTaskDetail(id: taskID)
             errorMessage = nil
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -171,7 +172,11 @@ public struct KanbanTaskDetailView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .refreshable { await load() }
+            .refreshable {
+                await load()
+                refreshOutcome.record(failed: errorMessage != nil)
+            }
+            .fleetRefreshHaptics(refreshOutcome)
             // A confirmed comment is inserted ABOVE the composer — outside
             // the viewport the user is typing in. Reveal the new row so the
             // write is visibly confirmed (mirrors the transcript's

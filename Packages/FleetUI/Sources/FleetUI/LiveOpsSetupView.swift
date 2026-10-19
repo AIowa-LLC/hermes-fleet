@@ -8,7 +8,7 @@ struct LiveOpsSetupView: View {
     let gatewayID: GatewayID
     @State private var checking = false
 
-    static let downloadURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.2.0")!
+    static let downloadURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.3.0")!
 
     var body: some View {
         NavigationStack {
@@ -24,7 +24,7 @@ struct LiveOpsSetupView: View {
                     ShareLink(item: Self.downloadURL) {
                         Label("Share setup link", systemImage: "square.and.arrow.up")
                     }
-                    Text("Download Fleet-Live-Reporting-0.2.0.zip from the release page and extract it on your Hermes computer.")
+                    Text("Download Fleet-Live-Reporting-0.3.0.zip from the release page and extract it on your Hermes computer.")
                 }
                 Section("2. Install and choose profiles") {
                     Text("On Mac, open Setup.command. For Linux or a custom Hermes installation, follow the instructions included in the download. Other platforms use the manual instructions in the bundle.")
@@ -84,7 +84,9 @@ struct LiveOpsReportingStatusView: View {
         switch snapshot.reportingSetup {
         case .required: return "Desktop activity needs Fleet Live Reporting on the Hermes computer."
         case .reporting(let count) where snapshot.coverage.isReporting:
-            return "Live reporting connected · \(count) backend\(count == 1 ? "" : "s")"
+            // A "reporter" is one running Hermes process with the Fleet
+            // live-reporting plugin loaded (it publishes its own session file).
+            return "Live reporting on · \(count) Hermes process\(count == 1 ? "" : "es") reporting"
         case .reporting, .unavailable: return "Live reporting is unavailable. Check that Hermes has restarted and the selected profiles are enabled."
         case .unknown: return snapshot.observationNote ?? "Reporting has not been checked yet."
         }
@@ -94,6 +96,7 @@ struct LiveOpsReportingStatusView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text(status)
                 .font(FleetTheme.secondaryFont)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.liveOpsReporting.status.\(gatewayID.rawValue)")
             if offersSetup {
                 Button(snapshot?.reportingSetup == .required ? "Set up Live Operations" : "Live Operations setup") {

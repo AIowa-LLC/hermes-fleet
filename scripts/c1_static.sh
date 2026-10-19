@@ -40,6 +40,20 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
+# --- Dynamic Type source audit -------------------------------------------------
+if bash scripts/font_style_audit.sh && bash scripts/font_style_audit_test.sh; then
+  ok "font style audit: maintained text uses Dynamic Type"
+else
+  bad "font style audit FAILED"
+fi
+
+# --- extension-safe module boundary --------------------------------------------
+if python3 scripts/extension_boundary_guard.py && bash scripts/extension_boundary_guard_test.sh; then
+  ok "extension boundary: shared kit remains independent of app/UI/networking/persistence"
+else
+  bad "extension boundary validation FAILED"
+fi
+
 # --- cache failure-policy guard (P0.4b) ---------------------------------------
 note "Cache failure policy: no force-try in FleetServiceGraph.swift"
 HITS=$(grep -nE '\btry!|\bfatalError[[:space:]]*\(|\bpreconditionFailure[[:space:]]*\(' HermesFleetApp/FleetServiceGraph.swift 2>/dev/null || true)
@@ -104,6 +118,31 @@ if bash scripts/release_preflight_contract_test.sh >"$STATIC_RESULTS/c1_release_
   ok "release preflight: archive/export/signing contract fails closed"
 else
   bad "release preflight contract tests FAILED"; cat "$STATIC_RESULTS/c1_release_preflight.log"
+fi
+
+# --- private working-directory helper -----------------------------------------
+note "Private working-directory helper"
+if bash scripts/private_dir_lib_test.sh >"$STATIC_RESULTS/c1_private_dir.log" 2>&1; then
+  ok "private dirs: symlink, squatted-dir and concurrent-run cases fail closed"
+else
+  bad "private working-directory tests FAILED"; cat "$STATIC_RESULTS/c1_private_dir.log"
+fi
+
+# --- public-safety private denylist fail-closed ---------------------------------
+note "Public-safety denylist fail-closed"
+if bash scripts/public_safety_guard_denylist_test.sh >"$STATIC_RESULTS/c1_guard_denylist.log" 2>&1; then
+  ok "public-safety guard: malformed, empty, absent and matching denylists fail closed"
+else
+  bad "public-safety denylist tests FAILED"; cat "$STATIC_RESULTS/c1_guard_denylist.log"
+fi
+
+# --- supported workflows reach no predictable shared temp path --------------------
+note "Temp-path surface guard"
+if python3 scripts/temp_path_surface_guard_test.py >"$STATIC_RESULTS/c1_temp_surface_test.log" 2>&1 \
+   && python3 scripts/temp_path_surface_guard.py >"$STATIC_RESULTS/c1_temp_surface.log" 2>&1; then
+  ok "temp paths: scripts reachable from Makefile/CI/current docs use no predictable shared temp path"
+else
+  bad "temp-path surface guard FAILED"; cat "$STATIC_RESULTS/c1_temp_surface_test.log" "$STATIC_RESULTS/c1_temp_surface.log"
 fi
 
 # --- package runner fail-closed contract ------------------------------------

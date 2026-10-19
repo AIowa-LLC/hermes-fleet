@@ -17,7 +17,10 @@ concurrency:
 jobs:
   ui-shard:
     name: Full UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     # Deep validation retains a generous independent ceiling. Measure its
     # actual runtime separately from the focused merge path.
     timeout-minutes: 150
@@ -31,6 +34,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Verify released Xcode toolchain
+        run: |
+          actual_xcode="$(xcodebuild -version)"
+          printf '%s\n' "$actual_xcode"
+          test "$actual_xcode" = $'Xcode 27.0\nBuild version 27A266a'
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "27.0"
+      - name: Prepare isolated UI simulator
+        run: |
+          simulator_id="$(bash scripts/lane_simulator.sh ensure iphone --boot)"
+          xcrun simctl bootstatus "$simulator_id" -b
       - name: Run full deterministic UI shard
         run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
       - name: Upload xcresults and xcodebuild logs

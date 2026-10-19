@@ -89,7 +89,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=600)
+    # Match c1_ui_matrix.sh: Xcode's simulator-diagnostics cleanup can take
+    # its full 600s timeout after tests finish, so allow a bounded 60s exit
+    # margin while still failing a genuinely stalled invocation.
+    parser.add_argument("--timeout", type=float, default=660)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command

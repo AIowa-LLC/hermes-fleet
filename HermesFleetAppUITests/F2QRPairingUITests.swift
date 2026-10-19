@@ -1,5 +1,21 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    // Additional servers default to the QR-first sheet; the manual form is a
+    // secondary path under Advanced setup.
+    let scan = app.buttons["fleet.add-gateway.scan"]
+    XCTAssertTrue(scan.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
+    let advanced = app.buttons["fleet.add-gateway.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    let manual = app.buttons["fleet.add-gateway.advanced.manual"]
+    XCTAssertTrue(manual.waitForExistence(timeout: 10), "manual setup should be listed under Advanced")
+    manual.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// F2 — QR-code gateway pairing: one scan fills the Add-Gateway form.
 ///
 /// Deterministic on the simulator (and CI): VisionKit's live scanner reports
@@ -31,6 +47,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))
@@ -64,6 +81,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))
@@ -94,6 +112,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15), "Add Gateway toolbar button should appear")
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "Add-Gateway form should appear")
@@ -130,6 +149,14 @@ final class F2QRPairingUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["127.0.0.1"].waitForExistence(timeout: 15),
                       "saved gateway row should appear in the list")
+        let ownerAddress = app.buttons["fleet.add-gateway.scan"]
+        let ownerFlowDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: ownerAddress)
+        XCTAssertEqual(XCTWaiter.wait(for: [ownerFlowDismissed], timeout: 10), .completed,
+                       "saving Advanced setup from Add Gateway should return to the fleet")
+        XCTAssertTrue(app.buttons["fleet.gateways.add"].isHittable,
+                      "the fleet should be usable after the manual server is added")
         attachScreenshotF2(of: app, name: "f2-paired-gateway-row")
     }
 
@@ -142,6 +169,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))

@@ -1,5 +1,21 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    // Additional servers default to the QR-first sheet; the manual form is a
+    // secondary path under Advanced setup.
+    let scan = app.buttons["fleet.add-gateway.scan"]
+    XCTAssertTrue(scan.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
+    let advanced = app.buttons["fleet.add-gateway.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    let manual = app.buttons["fleet.add-gateway.advanced.manual"]
+    XCTAssertTrue(manual.waitForExistence(timeout: 10), "manual setup should be listed under Advanced")
+    manual.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// L1 live gateway dogfood — PHASE 2 + 3.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
@@ -40,6 +56,7 @@ final class L1LiveGatewayUITests: XCTestCase {
 
         // Step 2/Phase 2: add the REAL gateway via the U2 add-gateway sheet.
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")

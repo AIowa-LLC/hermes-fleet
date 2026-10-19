@@ -375,6 +375,6 @@ public final class ApprovalViewModel {
     // MARK: helpers
 
     nonisolated private static func nonSecret(_ error: Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }

@@ -69,12 +69,51 @@ public struct UnsupportedBotModeChat: BotModeChatProviding {
     }
 }
 
+/// Which step of canonical Bot Chat resolution failed. Lookup and creation
+/// are different failures with different safety implications (a failed lookup
+/// must never lead to creation), so they are reported separately.
+public enum BotChatFailureStage: String, Sendable, Hashable {
+    case seamUnavailable
+    case lookup
+    case malformedRegistry
+    case unconfirmed
+    case create
+}
+
 /// Retryable canonical-chat open failure. Carries a user-facing message;
 /// the caller shows it and offers retry — NEVER creates or forks a chat.
+/// `stage` and `errorCategory` are safe diagnostics: a stage name and a Swift
+/// error case name, never a token, URL, payload or message content.
 public struct BotChatUnavailable: Error, Sendable, Hashable {
     public let message: String
+    public let stage: BotChatFailureStage?
+    public let errorCategory: String?
 
-    public init(message: String) {
+    public init(message: String, stage: BotChatFailureStage? = nil, errorCategory: String? = nil) {
         self.message = message
+        self.stage = stage
+        self.errorCategory = errorCategory
+    }
+
+    /// One-line diagnostic such as "lookup: BotModeProfileError.unsupportedMethod".
+    public var diagnostic: String? {
+        guard let stage else { return nil }
+        return errorCategory.map { "\(stage.rawValue): \($0)" } ?? stage.rawValue
+    }
+}
+
+/// Reduces an error to a diagnostic category that cannot carry secrets or
+/// content: the type name plus, for enums, the case name — never the
+/// associated payload (which may hold gateway text).
+public enum SafeErrorCategory {
+    public static func of(_ error: Error) -> String {
+        let type = String(describing: Swift.type(of: error))
+        let mirror = Mirror(reflecting: error)
+        if mirror.displayStyle == .enum {
+            if let label = mirror.children.first?.label { return "\(type).\(label)" }
+            return "\(type).\(String(describing: error))"
+        }
+        if let url = error as? URLError { return "URLError.\(url.code.rawValue)" }
+        return type
     }
 }

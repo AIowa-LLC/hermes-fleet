@@ -97,6 +97,7 @@ public struct ContextMeterView: View {
 /// R9-T3 — context breakdown sheet: per-category token rows (UPPERCASE-KEY
 /// mono, the Health dashboard pattern) + the usage summary.
 public struct ContextBreakdownSheet: View {
+    @State private var refreshOutcome = FleetRefreshOutcome()
     @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
 
@@ -123,9 +124,9 @@ public struct ContextBreakdownSheet: View {
                     list(breakdown)
                 } else {
                     ContentUnavailableView {
-                        Label("No Breakdown", systemImage: "chart.bar")
+                        Label("No Breakdown Yet", systemImage: "chart.bar")
                     } description: {
-                        Text("Send a message first — the context breakdown needs a built session.")
+                        Text("Send a message first. The context breakdown appears once the conversation has a session.")
                     }
                 }
             }
@@ -146,7 +147,9 @@ public struct ContextBreakdownSheet: View {
             .refreshable {
                 await model.loadBreakdown()
                 await model.refreshUsage()
+                refreshOutcome.record(failed: false)
             }
+            .fleetRefreshHaptics(refreshOutcome)
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("context.breakdown.sheet")

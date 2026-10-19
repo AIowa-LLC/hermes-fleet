@@ -50,7 +50,7 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
         let noBots = app.staticTexts["No Bots"]
         XCTAssertTrue(noBots.waitForExistence(timeout: 10),
                       "P2-5: all-healthy zero-bot roster must show the No Bots state")
-        XCTAssertTrue(app.staticTexts["No profiles reported. Refresh to re-probe every gateway."].exists,
+        XCTAssertTrue(app.staticTexts["No gateway reported any bots. Refresh to check every gateway again."].exists,
                       "P2-5: the No Bots empty state should include its description")
         attachScreenshot(of: app, name: "rt4-p2-5-zero-bots-no-bots-state")
     }

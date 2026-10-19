@@ -16,6 +16,7 @@ struct CronJobDetailView: View {
 
     @State private var isShowingEdit = false
     @State private var isConfirmingDelete = false
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     private var profileScope: String { profile.rawValue }
 
@@ -66,7 +67,11 @@ struct CronJobDetailView: View {
         .background(theme.background)
         .navigationTitle(model.detail?.name ?? "Job")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await model.refreshDetail(id: jobID, profile: profileScope) }
+        .refreshable {
+            await model.refreshDetail(id: jobID, profile: profileScope)
+            refreshOutcome.record(failed: model.detailError != nil)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .task(id: jobID) {
             await model.refreshDetail(id: jobID, profile: profileScope)
         }
@@ -282,7 +287,10 @@ struct CronJobDetailView: View {
                     error,
                     systemImage: "exclamationmark.triangle.fill",
                     tone: .error,
-                    id: "cron.detail.runs.error")
+                    id: "cron.detail.runs.error",
+                    actionTitle: "Retry",
+                    actionID: "cron.detail.runs.retry",
+                    action: { Task { await model.loadRuns(id: jobID, profile: profileScope) } })
             } else if model.detailRuns.isEmpty {
                 // Honest empty state: script jobs short-circuit before the
                 // session store, so they have NO run sessions by design.

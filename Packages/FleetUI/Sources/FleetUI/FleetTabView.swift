@@ -9,6 +9,7 @@ extension EnvironmentValues {
 struct FleetDrawerMenu: ToolbarContent {
     @Environment(\.openFleetDrawer) private var openDrawer
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var drawerGlyphSide: CGFloat = 34
     /// Dogfood r4: the unread aggregate (menu-button badge), supplied by
     /// the OWNING view (FleetTabView holds the AppEnvironment; there is no
     /// environment-object injection on this shell).
@@ -26,8 +27,8 @@ struct FleetDrawerMenu: ToolbarContent {
                 // which is not a valid SF Symbol name).
                 Button(action: openDrawer) {
                     Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .font(.headline)
+                        .frame(width: drawerGlyphSide, height: drawerGlyphSide)
                         .contentShape(Rectangle())
                         .overlay(alignment: .topTrailing) {
                             // Dogfood r4: unread badge (ChatGPT parity) — a
@@ -136,6 +137,7 @@ public struct FleetTabView: View {
                     FirstRunSetupView(environment: environment)
                 case .configured:
                     tabShell
+                        .pairingLinkPresenter(environment.pairing)
                 }
             }
         }
@@ -505,7 +507,7 @@ public struct FleetTabView: View {
            !screen.isDeviceLocalRoom,
            !environment.gateways.contains(where: { $0.id == id }),
            screen != .gatewayConnection(id) {
-            ContentUnavailableView("Gateway unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer registered."))
+            ContentUnavailableView("Gateway Unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer in your fleet."))
         } else {
         switch screen {
         case .bots(let gatewayID):
@@ -520,7 +522,7 @@ public struct FleetTabView: View {
             if let room = environment.room(for: id) {
                 RoomChatView(room: room, environment: environment)
             } else {
-                ContentUnavailableView("Group unavailable", systemImage: "person.3", description: Text("This exact group has not been resolved. Refresh its gateway to try again."))
+                ContentUnavailableView("Group Unavailable", systemImage: "person.3", description: Text("Fleet couldn't find this group on its gateway. Refresh the gateway and try again."))
             }
         case .conversation(let route, let sessionID, _):
             ConversationView(environment: environment, route: route, sessionID: sessionID)

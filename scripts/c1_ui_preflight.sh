@@ -100,12 +100,13 @@ SetupPrompt => C2SetupPrompt
 Settings|Accent|Theme|Appearance|Density => FleetSettingsAccent FOS6ComponentDensity
 Roster => RT4RosterEmptyState FOS4TruthfulHome
 Dashboard|Activity => U4Dashboard FOS4TruthfulHome
-Pairing|Scanner|Onboarding => F2QRPairing F3Onboarding
+Pairing|Scanner|Onboarding => F2QRPairing F3Onboarding UniversalLogin
 GatewayForm|GatewayAuth|GatewayFailure|GatewaysView => S3CleartextWarning RT2RemovalAndEndpointSanitization P2GatewayFormDraft RT4FormSaveFailure U7GatewayQrLockSettings
 Gateway => FOS2GatewayDetail U7GatewayQrLockSettings
 Splash|Launch => Splash
 Tab|Screen|Navigation|Destination => U3TabNavigation FOS3FourRootShell
 Accessib => FOS8Accessibility
+LongChat|SessionHistoryPaging|DashboardSessionMessages => LongChatPaging
 RULES
 
 # Validate CORE and every rule suite against the canonical inventory.

@@ -34,15 +34,22 @@ the v0.1 document deferred or excluded.
 - [`groups-tab.md`](groups-tab.md) - Groups destination and room ownership
 - [`settings-and-about-tabs.md`](settings-and-about-tabs.md) - Settings and About surfaces
 - [`unread-indicators-and-read-state.md`](unread-indicators-and-read-state.md) - device-local conversation read state
-- [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
+- [`universal-login.md`](universal-login.md) - the shared app and connector contract for connecting a phone (ask Hermes for a link, approve the code)
+- [`universal-login-app.md`](universal-login-app.md) - how the app implements it: screens, states, diagnosis, simulator testing
+- [`gateway-pairing.md`](gateway-pairing.md) - phone enrollment, manual entry, and legacy QR setup
+- [`qr-first-onboarding.md`](qr-first-onboarding.md) - first-server onboarding (current flow and the legacy v1 QR route)
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
+- [`push-relay-self-host.md`](push-relay-self-host.md) - self-hosting the content-blind push relay (relay service: [`integrations/hermes-push-relay`](../integrations/hermes-push-relay/README.md))
+- [`extension-kit.md`](extension-kit.md) - extension-safe kit, App Group and shared keychain capability switch, and maintainer enablement steps
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
+- [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
+- [`upstream-proposals/`](upstream-proposals/README.md) - draft upstream Hermes proposals (app-scheme OAuth redirect, signed approvals, pairing tokens, push observer hooks); drafts only, nothing is filed upstream
 - [`adr/`](adr/) - architectural decision records
 
 ## Historical milestone files
 
-Files with names such as `M*`, `U*`, `R*`, `H*`, `L*`, `F*`, `T*`, and `X*` are retained as stable historical references because source comments, old links, or external discussions may still point to those paths.
+Files with names such as `M*`, `U*`, `R*`, `H*`, `L*`, `F*`, `T*`, and `X*` now live in [`archive/`](archive/README.md) (along with the milestone screenshots, `screenshots-r9/`, and the R11 plan). They are retained as historical references. Five files that source comments or scripts still cite (`L1-fix.md`, `L1-live-dogfood.md`, `M0-foundation.md`, `R10-pocket-parity-ii.md`, `U4-dogfood.md`) keep one-line redirect stubs at their old `docs/` paths.
 
 They are **not current release notes, QA dashboards, visual specifications, or distribution status**. Detailed internal execution logs have been removed from the public documentation surface. Use the current source, this documentation index, and the ADRs for present behavior.
 
@@ -66,3 +73,6 @@ The versioned physical-device/live-Hermes gate is [`release/RC-ACCEPTANCE-v1.md`
 The repository-side release procedure is [`release-preflight.md`](release-preflight.md). Release records for distributed builds (commit + tag per build) live in [`../RELEASES.md`](../RELEASES.md). The draft App Store Connect package is [`release/BETA-METADATA.md`](release/BETA-METADATA.md), and the reviewer environment design is [`release/REVIEWER-ENVIRONMENT.md`](release/REVIEWER-ENVIRONMENT.md). [`release/SYNC-HANDOFF.md`](release/SYNC-HANDOFF.md) is a historical Issue #50 synchronization checklist, not current release status. The dated readiness audit and PR #46 disposition are historical records in [`release/READINESS-AUDIT-2026-09-18.md`](release/READINESS-AUDIT-2026-09-18.md) and [`release/PR-46-REVIEW.md`](release/PR-46-REVIEW.md).
 
 Release environmental UI prerequisites are in [release-live-ui.md](release-live-ui.md).
+
+The completed DEV19 releases are documented in [DEV19 release notes](release/DEV19-RELEASE-NOTES.md),
+with [local reproduction instructions](release/DEV19-BUILD.md).

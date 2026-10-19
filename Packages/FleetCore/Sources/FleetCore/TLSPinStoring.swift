@@ -100,4 +100,8 @@ public protocol SynchronousPinStoring: Sendable {
     func syncSavePin(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws
     func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint?
     func syncDeletePin(for gatewayID: GatewayID) throws
+    /// Compare-and-set: store the pin only when none exists. Returns false
+    /// (without overwriting) when a pin was already present, so a first-use
+    /// approval can never replace an established pin.
+    func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool
 }

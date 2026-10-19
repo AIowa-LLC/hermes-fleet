@@ -35,6 +35,20 @@ public protocol ConversationProviding: Sendable {
     ///   it. Send it on EVERY subscribe/reconnect, not just after drops.
     func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession
 
+    /// #188: resume the session, optionally WITHOUT its message projection
+    /// (`omit_messages: true` on `session.resume`). With the flag the gateway's
+    /// too-long guard counts only the tip segment, the result carries
+    /// `messages: []`, and the transcript is loaded through
+    /// `SessionHistoryPaging` instead. `omitMessages == false` is exactly
+    /// `resumeSession(sessionID:lastEventID:profile:)`.
+    ///
+    /// The default implementation ignores the flag and forwards to the
+    /// three-argument resume, so conformers and test doubles that predate
+    /// paging keep compiling and keep their current behavior.
+    func resumeSession(
+        sessionID: String, lastEventID: Int?, profile: String?, omitMessages: Bool
+    ) async throws -> ConversationSession
+
     /// Submit a prompt via `prompt.submit` (returns `{"status": "streaming"}`
     /// immediately; the turn's events arrive on `events`).
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission
@@ -61,6 +75,16 @@ public protocol ConversationProviding: Sendable {
     func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent]
 }
 
+public extension ConversationProviding {
+    func resumeSession(
+        sessionID: String, lastEventID: Int?, profile: String?, omitMessages: Bool
+    ) async throws -> ConversationSession {
+        // Pre-paging conformers ignore the flag (the gateway ignores unknown
+        // params too, so the wire result is the same full resume).
+        try await resumeSession(sessionID: sessionID, lastEventID: lastEventID, profile: profile)
+    }
+}
+
 /// Errors thrown by the conversation path (self-contained to the seam).
 public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
     /// The transport is not connected to the gateway.
@@ -84,6 +108,11 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
     /// and surface the loss to the user — never continue as if nothing was
     /// missed.
     case gapUnrecoverable(sessionID: String, afterEventID: Int)
+    /// #188: the gateway refused `session.resume` (JSON-RPC 4130) because the
+    /// session's lineage exceeds its reload limit. `messageCount` is the
+    /// lineage size the gateway reported, when it was parseable. Recoverable by
+    /// resuming with `omitMessages: true` and paging history.
+    case sessionTooLongToReload(messageCount: Int?)
 
     public var errorDescription: String? {
         switch self {
@@ -95,6 +124,9 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
         case .invalidSessionKey(let s): return "invalid session key: \(s)"
         case .gapUnrecoverable(let sid, let after):
             return "event history no longer retained for \(sid) after event \(after); refetching authoritative history"
+        case .sessionTooLongToReload(let count):
+            if let count { return "session too long to reload (\(count) messages)" }
+            return "session too long to reload"
         }
     }
 }

@@ -32,6 +32,9 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
     public let gateways: [DiagnosticsGatewaySection]
     /// Recent faults, oldest-first (bounded by the recorder).
     public let recentEvents: [DiagnosticsEvent]
+    /// What the user said happened, typed in the report form. Redacted at
+    /// render time; nil or blank renders no section.
+    public let userDescription: String?
 
     public init(
         generatedAt: Date,
@@ -42,8 +45,10 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
         deviceModel: String,
         surfaceContext: String? = nil,
         gateways: [DiagnosticsGatewaySection] = [],
-        recentEvents: [DiagnosticsEvent] = []
+        recentEvents: [DiagnosticsEvent] = [],
+        userDescription: String? = nil
     ) {
+        self.userDescription = userDescription
         self.generatedAt = generatedAt
         self.reportID = reportID
         self.appVersion = appVersion
@@ -53,6 +58,18 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
         self.surfaceContext = surfaceContext
         self.gateways = gateways
         self.recentEvents = recentEvents
+    }
+}
+
+extension DiagnosticsReportInput {
+    /// The same report facts with a different user description. Lets the UI
+    /// keep the id, timestamp, and device facts stable while the user types.
+    public func withUserDescription(_ description: String?) -> DiagnosticsReportInput {
+        DiagnosticsReportInput(
+            generatedAt: generatedAt, reportID: reportID, appVersion: appVersion,
+            appBuild: appBuild, osVersion: osVersion, deviceModel: deviceModel,
+            surfaceContext: surfaceContext, gateways: gateways, recentEvents: recentEvents,
+            userDescription: description)
     }
 }
 
@@ -116,6 +133,11 @@ public enum DiagnosticsReport {
     /// render-side guarantee).
     public static let eventLineLimit = 30
 
+    /// Shown when no app errors were recorded. Deliberately does not imply the
+    /// app is bug-free: the recorder only sees faults the app itself noticed.
+    public static let noEventsText =
+        "No app errors were recorded. This doesn't rule out a problem — please describe what you saw."
+
     /// A greppable report identity: `DF-<yyMMdd-HHmmss>-<4 uppercase alnum>`.
     ///
     /// The `suffix` is normalized (uppercased, non-ASCII-alphanumeric dropped,
@@ -128,7 +150,7 @@ public enum DiagnosticsReport {
     /// Render the structured plain-text report.
     ///
     /// Section content is honest about absence: "No gateways configured." and
-    /// "No recent errors." are real sentences, never an empty section.
+    /// "No app errors were recorded." are real sentences, never an empty section.
     public static func render(_ input: DiagnosticsReportInput) -> String {
         var lines: [String] = []
 
@@ -137,6 +159,15 @@ public enum DiagnosticsReport {
         lines.append("Report ID: \(Redaction.safeDiagnosticReportText(input.reportID))")
         lines.append("Generated: \(iso8601(input.generatedAt))")
         lines.append("")
+
+        let description = Redaction.safeReportDescription(input.userDescription ?? "")
+        if !description.isEmpty {
+            lines.append("WHAT HAPPENED")
+            for line in description.components(separatedBy: .newlines) {
+                lines.append(line.isEmpty ? "" : "  \(line)")
+            }
+            lines.append("")
+        }
 
         lines.append("DEVICE")
         lines.append("  OS: \(Redaction.safeDiagnosticReportText(input.osVersion))")
@@ -170,7 +201,7 @@ public enum DiagnosticsReport {
         let events = Array(input.recentEvents.suffix(eventLineLimit))
         lines.append("RECENT EVENTS")
         if events.isEmpty {
-            lines.append("  No recent errors.")
+            lines.append("  \(noEventsText)")
         } else {
             for event in events {
                 lines.append("  \(clock(event.at))  \(Redaction.safeDiagnosticReportText(event.category)) — \(Redaction.safeDiagnosticReportText(event.detail))")

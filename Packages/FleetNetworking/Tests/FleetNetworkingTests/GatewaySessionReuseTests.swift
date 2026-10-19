@@ -5,6 +5,12 @@ import FleetCore
 /// The auth session is shared; the ticket is not. These tests pin the
 /// launch-burst fix without persisting or inspecting any secret material.
 final class GatewaySessionReuseTests: XCTestCase {
+    private final class LoginCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func next() -> Int { lock.lock(); defer { lock.unlock() }; count += 1; return count }
+        func value() -> Int { lock.lock(); defer { lock.unlock() }; return count }
+    }
     private final class AuthURLProtocol: URLProtocol, @unchecked Sendable {
         private static let lock = NSLock()
         nonisolated(unsafe) static var logins = 0
@@ -270,6 +276,26 @@ final class GatewaySessionReuseTests: XCTestCase {
         XCTAssertFalse(cookie.description.contains("secret-cookie"))
         XCTAssertFalse(String(describing: store).contains("secret-cookie"))
         XCTAssertFalse(String(describing: store).contains("pw-123"))
+    }
+
+    func testExpiredSessionLeaseIsDiscardedAndRefreshed() async throws {
+        let store = GatewaySessionStore()
+        let counter = LoginCounter()
+        _ = try await store.lease(gatewayID: gateway) {
+            _ = counter.next()
+            return SessionCookie(name: "session", value: "expired", expiresAt: Date().addingTimeInterval(-1))
+        }
+        let refreshed = try await store.lease(gatewayID: gateway) {
+            _ = counter.next()
+            return SessionCookie(name: "session", value: "fresh", expiresAt: Date().addingTimeInterval(3600))
+        }
+        let cached = try await store.lease(gatewayID: gateway) {
+            _ = counter.next()
+            return SessionCookie(name: "session", value: "unexpected")
+        }
+        XCTAssertEqual(refreshed.value, "fresh")
+        XCTAssertEqual(cached.value, "fresh")
+        XCTAssertEqual(counter.value(), 2)
     }
 
     func testInvalidatedInFlightLoginCannotReturnOldCookie() async throws {

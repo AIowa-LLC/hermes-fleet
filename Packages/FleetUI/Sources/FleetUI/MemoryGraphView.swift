@@ -17,6 +17,7 @@ public struct MemoryGraphView: View {
     /// equivalent filters and node actions, no pan/pinch/tap-gesture
     /// dependence. Persists for the screen lifetime; defaults to graph.
     @State private var presentation: MemoryPresentation = .graph
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public enum MemoryPresentation: String, CaseIterable, Identifiable {
         case graph
@@ -137,7 +138,9 @@ public struct MemoryGraphView: View {
         .padding(FleetTheme.spacingMd)
         .refreshable {
             await model.reload(profile: profileScope)
+            refreshOutcome.record(failed: model.errorMessage != nil)
         }
+        .fleetRefreshHaptics(refreshOutcome)
     }
 
     /// Chronological groups for the list alternative: the layout's spiral
@@ -397,7 +400,7 @@ public struct MemoryGraphView: View {
         ContentUnavailableView {
             Label("Memory Graph Unavailable", systemImage: "sparkles")
         } description: {
-            Text("This gateway has no learning session wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to explore its memory.")
         }
         .accessibilityIdentifier("memorygraph.unavailable")
     }

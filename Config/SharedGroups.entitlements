@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	F3 extension kit. NOT applied by default: project.yml wires this file into
+	CODE_SIGN_ENTITLEMENTS only when FLEET_SHARED_GROUPS=YES. Enabling it needs
+	the matching App Group and keychain-access-group capabilities on the Apple
+	Developer portal and regenerated provisioning profiles (maintainer-only,
+	see docs/extension-kit.md). Values are build variables resolved by Xcode;
+	no team identifier is stored here.
+	-->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(FLEET_APP_GROUP_ID)</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(FLEET_KEYCHAIN_GROUP)</string>
+	</array>
+</dict>
+</plist>

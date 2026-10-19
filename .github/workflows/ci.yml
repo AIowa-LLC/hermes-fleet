@@ -24,13 +24,21 @@ concurrency:
 jobs:
   static-guards:
     name: Static guards (xcodegen drift, boundaries, safety, gitleaks)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Verify released Xcode toolchain
+        run: |
+          actual_xcode="$(xcodebuild -version)"
+          printf '%s\n' "$actual_xcode"
+          test "$actual_xcode" = $'Xcode 27.0\nBuild version 27A266a'
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "27.0"
       - name: Install tools (xcodegen, gitleaks)
         run: brew install xcodegen gitleaks
       - name: Static phase
@@ -59,10 +67,16 @@ jobs:
         run: python3 scripts/c1_units_contract_test.py
       - name: Release source preservation guard contract tests
         run: python3 scripts/build90_source_check_test.py
+      - name: Unreferenced scripts guard
+        run: bash scripts/unreferenced_scripts_guard.sh
+      - name: Unreferenced scripts guard self-test
+        run: bash scripts/unreferenced_scripts_guard_test.sh
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -82,7 +96,10 @@ jobs:
 
   units:
     name: Hosted unit tests (HermesFleetAppTests)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     timeout-minutes: 40
     steps:
       - name: Checkout
@@ -107,13 +124,20 @@ jobs:
     # candidate. PRs use changed-area preflight; remaining suites stay in the
     # separate full regression workflow.
     if: github.event_name == 'merge_group'
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     timeout-minutes: 45
     steps:
       - name: Checkout merge candidate
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Prepare isolated UI simulator
+        run: |
+          simulator_id="$(bash scripts/lane_simulator.sh ensure iphone --boot)"
+          xcrun simctl bootstatus "$simulator_id" -b
       - name: Run critical UI journeys
         run: bash scripts/c1_critical_smoke.sh
       - name: Upload xcresults and xcodebuild logs
@@ -132,8 +156,14 @@ jobs:
     # PR evidence. Missing/mismatched proof runs fresh UI. Critical smoke
     # always executes on the exact merge-group candidate.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: macos-latest
-    timeout-minutes: 75
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
+    # The released Xcode 27 image needs more fresh-build and simulator time
+    # than the historical runtime weights. Keep every selected test, the
+    # per-process progress watchdog, and the same deep-lane recovery ceiling.
+    timeout-minutes: 150
     strategy:
       fail-fast: true
       max-parallel: 6
@@ -146,6 +176,10 @@ jobs:
           # The selector diffs against the base commit, so the full history is
           # needed for both pull requests and merge-group candidates.
           fetch-depth: 0
+      - name: Prepare isolated UI simulator
+        run: |
+          simulator_id="$(bash scripts/lane_simulator.sh ensure iphone --boot)"
+          xcrun simctl bootstatus "$simulator_id" -b
       - name: Run focused UI preflight (changed-area selection)
         env:
           GH_TOKEN: ${{ github.token }}

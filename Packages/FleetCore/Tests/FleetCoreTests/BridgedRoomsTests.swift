@@ -18,6 +18,23 @@ final class BridgedRoomsTests: XCTestCase {
         super.tearDown()
     }
 
+    func testStoreIsExcludedFromBackupAfterWriteAndOnLoad() async throws {
+        let store = BridgedRooms.Store(url: storeURL)
+        try await store.upsert(BridgedRooms.RoomRecord(
+            roomKey: "fleet-bridged-1", name: "Crew", members: [], createdAt: 1))
+        XCTAssertTrue(BackupExclusion.isExcluded(storeURL), "atomic write must re-apply the exclusion")
+
+        // A store written before the exclusion existed is repaired on load.
+        var url = storeURL!
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = false
+        try url.setResourceValues(values)
+        XCTAssertFalse(BackupExclusion.isExcluded(url))
+        let reloaded = BridgedRooms.Store(url: storeURL)
+        _ = await reloaded.record(roomKey: "fleet-bridged-1")
+        XCTAssertTrue(BackupExclusion.isExcluded(storeURL))
+    }
+
     func testStoreRoundTripsRecordsAndEvents() async throws {
         let store = BridgedRooms.Store(url: storeURL)
         let member = BridgedRooms.MemberRef(

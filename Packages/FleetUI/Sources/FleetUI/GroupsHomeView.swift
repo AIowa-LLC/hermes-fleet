@@ -8,10 +8,12 @@ import FleetCore
 /// floating menu).
 struct GroupsHomeView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var fabSide: CGFloat = 48
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
     @State private var showingGroupCompose = false
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     // MARK: Room lists
 
@@ -61,16 +63,21 @@ struct GroupsHomeView: View {
             }
             if groups.isEmpty && archiveRooms.isEmpty {
                 Section {
-                    ContentUnavailableView(
-                        hasActiveFilter ? "No matching groups" : "No groups yet",
-                        systemImage: "person.3",
-                        description: Text(
-                            hasActiveFilter
-                                ? "Clear the search or gateway filter to see every group in the fleet."
-                                : "Groups you create or join appear here, across every connected gateway."
+                    if !query.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                            .accessibilityIdentifier("fleet.groups.empty")
+                    } else {
+                        ContentUnavailableView(
+                            hasActiveFilter ? "No Matching Groups" : "No Groups Yet",
+                            systemImage: "person.3",
+                            description: Text(
+                                hasActiveFilter
+                                    ? "Clear the gateway filter to see groups from every connected gateway."
+                                    : "Groups you create or join appear here, across every connected gateway."
+                            )
                         )
-                    )
-                    .accessibilityIdentifier("fleet.groups.empty")
+                        .accessibilityIdentifier("fleet.groups.empty")
+                    }
                 }
             } else if !groups.isEmpty {
                 Section("Groups") {
@@ -132,7 +139,11 @@ struct GroupsHomeView: View {
         }
         .navigationTitle("Groups")
         .searchable(text: $query, prompt: "Search groups and members")
-        .refreshable { await environment.loadRooms() }
+        .refreshable {
+            await environment.loadRooms()
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .task { await environment.loadRooms() }
     }
 
@@ -143,9 +154,9 @@ struct GroupsHomeView: View {
             showingGroupCompose = true
         } label: {
             Image(systemName: "person.3")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.headline)
                 .foregroundStyle(theme.textPrimary)
-                .frame(width: 48, height: 48)
+                .frame(width: fabSide, height: fabSide)
                 .contentShape(Circle())
         }
         .buttonStyle(.fleetPressable)

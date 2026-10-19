@@ -51,6 +51,7 @@ public struct KeychainInstallHygiene {
         KeychainCredentialStore.serviceName,
         KeychainTokenStore.serviceName,
         KeychainPinStore.serviceName,
+        KeychainOwnerEnrollmentIdentityStore.serviceName,
     ]
 
     /// `UserDefaults` key recording that this install has been reconciled with

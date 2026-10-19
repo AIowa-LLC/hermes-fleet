@@ -16,7 +16,7 @@ The app has eight top-level destinations — **Bots, Chats, Groups, Scheduled, K
 - multi-gateway roster aggregation
 - bot and session discovery
 - per-gateway health information
-- QR-assisted gateway pairing
+- Owner-authenticated phone enrollment with advanced manual/legacy QR setup
 - **Gateway Detail** — per-machine cockpit: identity, contextual connection controls, current work, the machine's Needs You item, and dense resource rows (Bots, Groups, Projects, Kanban, Schedules, Skills, Memory, Connection)
 
 ## Fleet Home and coverage honesty
@@ -34,7 +34,31 @@ Fleet Home observes operations and Needs You approvals across reporting gateways
 Operation Detail shows one operation, its subagent tree, and timeline. Approval
 actions use the same presence gate (Face ID with passcode fallback); child controls require verified session
 attachment. Desktop reporting requires the optional Hermes reporting plugin;
-see [setup and coverage](../integrations/hermes-liveops/README.md).
+see [setup and coverage](../integrations/hermes-liveops/README.md). Since plugin
+0.3.0 the same plugin can also send end-to-end encrypted push notifications
+(approval, clarify, turn end, cron) through the content-blind relay. This is off
+by default and needs the app's device registration (a separate work item); see
+[Push notifications](../integrations/hermes-liveops/README.md#push-notifications).
+
+## Code blocks in assistant replies
+
+Top-level fenced code (opening fence in column 0) renders in a Fleet-owned opaque
+card; fences nested in lists or quotes keep the renderer's card, restyled with the
+same palette. The card shows:
+
+- a language label taken verbatim from the fence info string (`python title=x`
+  shows `python`); no label when the fence declares none, and the language is
+  never guessed
+- a Copy button (44 pt target, VoiceOver label "Copy code", identifier
+  `fleet.conversation.code.copy`) that copies the exact text received so far,
+  is disabled while the block is empty, plays a success haptic, and briefly
+  shows a check (no symbol animation under Reduce Motion). The copy is
+  device-local (`localOnly`) and expires after 5 minutes
+- horizontal scrolling instead of wrapping, with edge fades only while the line
+  overflows; selection stays enabled
+- syntax colors chosen from the card itself (dark-card or light-card palette),
+  corrected to 4.5:1 (7:1 under Increase Contrast) against the card, with a
+  monochrome fallback when no token color can meet the gate
 
 ## Conversations
 
@@ -149,7 +173,7 @@ gateway; failed writes do not appear as successful local changes.
 
 ## Settings and About
 
-Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and the agent setup prompt. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
+Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and server connection setup. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
 
 ## Voice
 

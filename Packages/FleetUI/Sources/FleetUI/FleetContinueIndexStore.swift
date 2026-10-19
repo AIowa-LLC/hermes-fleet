@@ -43,6 +43,13 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
         public let title: String
         public let subtitle: String
         public let openedAt: Date
+        /// DEV14: real conversation title captured at record time (the
+        /// session's own title/preview), bot display name, and gateway name.
+        /// OPTIONAL so entries persisted by older builds (where `title` was
+        /// the profile slug) still decode; nil means "legacy entry".
+        public let sessionTitle: String?
+        public let botName: String?
+        public let gatewayName: String?
 
         public init(
             id: String,
@@ -54,8 +61,14 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
             roomKey: String? = nil,
             title: String,
             subtitle: String,
-            openedAt: Date
+            openedAt: Date,
+            sessionTitle: String? = nil,
+            botName: String? = nil,
+            gatewayName: String? = nil
         ) {
+            self.sessionTitle = sessionTitle
+            self.botName = botName
+            self.gatewayName = gatewayName
             self.id = id
             self.kind = kind
             self.gatewayIDRaw = gatewayIDRaw
@@ -86,6 +99,7 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
     public init(url: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.url = url
         self.now = now
+        BackupExclusion.apply(to: url) // stores written before the exclusion existed
         if let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([Entry].self, from: data) {
             cache = decoded
@@ -120,7 +134,10 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
         sessionID: String,
         canonical: Bool,
         title: String,
-        subtitle: String
+        subtitle: String,
+        sessionTitle: String? = nil,
+        botName: String? = nil,
+        gatewayName: String? = nil
     ) {
         let id = Self.conversationID(route: route, sessionID: sessionID)
         record(Entry(
@@ -131,7 +148,10 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
             sessionID: sessionID,
             title: title,
             subtitle: subtitle,
-            openedAt: now()))
+            openedAt: now(),
+            sessionTitle: sessionTitle,
+            botName: botName,
+            gatewayName: gatewayName))
     }
 
     /// Record an open of an EXACT room.
@@ -212,6 +232,7 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
         cache = entries
         if let data = try? JSONEncoder().encode(entries) {
             try? data.write(to: url, options: [.atomic, .completeFileProtection])
+            BackupExclusion.apply(to: url)
         }
     }
 }

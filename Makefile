@@ -58,5 +58,7 @@ release-preflight:
 	@test -n "$(SHA)" || (echo "usage: make release-preflight SHA=$$(git rev-parse HEAD)" >&2; exit 2)
 	bash scripts/release_preflight.sh --sha "$(SHA)"
 
+## Remove regenerable caches in this checkout only; keep release evidence and the tracked project.
+## Run only when this checkout has no active build or test.
 clean:
-	rm -rf build $(PROJECT).xcodeproj Packages/*/.build
+	rm -rf build/DerivedData Packages/*/.build

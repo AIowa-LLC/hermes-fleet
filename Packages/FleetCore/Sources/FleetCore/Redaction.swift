@@ -81,19 +81,53 @@ public enum Redaction {
     }
 
     /// Concise, display-safe text for a failure shown to the user. Unlike
-    /// `safeErrorDescription`, a URL-loading or Cocoa `NSError` is described by
-    /// its `localizedDescription` ("The Internet connection appears to be
-    /// offline.") instead of `String(describing:)`, which dumps the whole
-    /// `userInfo` — failing URL, request identifiers — into the UI. Every other
-    /// error keeps `safeErrorDescription`'s behavior.
+    /// `safeErrorDescription` (logs and diagnostics), this never falls back to
+    /// `String(describing:)` of an arbitrary error, which renders a raw Swift
+    /// dump (`connectionClosed(reason: …)`, a whole `NSError.userInfo`) in the
+    /// UI. In order:
+    /// - a `LocalizedError`'s non-empty `errorDescription`;
+    /// - cancellation and decoding failures, as plain sentences;
+    /// - a system `NSError` (URL loading, Cocoa, POSIX, OSStatus, CFNetwork),
+    ///   by its `localizedDescription` ("The Internet connection appears to
+    ///   be offline.");
+    /// - an authored `CustomStringConvertible` Swift error, by its description;
+    /// - otherwise a generic sentence naming only the error's type.
+    /// Every result passes through `safeText`.
     public static func userFacingErrorDescription(_ error: any Error) -> String {
-        if !(error is LocalizedError) {
-            let nsError = error as NSError
-            if nsError.domain == NSURLErrorDomain || nsError.domain == NSCocoaErrorDomain {
-                return safeText(nsError.localizedDescription)
-            }
+        if let text = (error as? LocalizedError)?.errorDescription, !text.isEmpty {
+            return safeText(text)
         }
-        return safeErrorDescription(error)
+        if isCancellation(error) {
+            return "The request was cancelled."
+        }
+        if error is DecodingError {
+            return "The gateway sent a response Fleet couldn't read."
+        }
+        let nsError = error as NSError
+        if systemErrorDomains.contains(nsError.domain) {
+            return safeText(nsError.localizedDescription)
+        }
+        // A Swift error type that authored its own description (not an
+        // NSError subclass, whose description is the userInfo dump).
+        if !(type(of: error) is NSError.Type),
+           let described = error as? CustomStringConvertible {
+            let text = described.description
+            if !text.isEmpty { return safeText(text) }
+        }
+        return genericFailureText(for: error)
+    }
+
+    /// Error domains whose `localizedDescription` is system-authored copy.
+    static let systemErrorDomains: Set<String> = [
+        NSURLErrorDomain, NSCocoaErrorDomain, NSPOSIXErrorDomain,
+        NSOSStatusErrorDomain, NSMachErrorDomain, "kCFErrorDomainCFNetwork",
+    ]
+
+    /// The last-resort user-facing sentence. Only the error's TYPE name is
+    /// included (never its payload), so support can still tell failures apart.
+    static func genericFailureText(for error: any Error) -> String {
+        let typeName = String(describing: type(of: error))
+        return safeText("Something went wrong (\(typeName)). Try again.")
     }
 
     /// Redact credential-shaped substrings in untrusted diagnostic text and
@@ -132,6 +166,27 @@ public enum Redaction {
     /// URLs, including their host and path, after removing credential shapes.
     public static func safeDiagnosticReportText(_ text: String) -> String {
         let safe = safeDiagnosticText(text)
+        return diagnosticReportURLPatterns[0].stringByReplacingMatches(
+            in: safe,
+            range: NSRange(safe.startIndex..., in: safe),
+            withTemplate: "[ENDPOINT REDACTED]")
+    }
+
+    /// Maximum characters of a user-typed problem description kept in a report.
+    public static let reportDescriptionLimit = 2000
+
+    /// Redact free text the user typed into the Report a Problem form. Same
+    /// credential and endpoint masking as `safeDiagnosticReportText`, but the
+    /// text is capped at `reportDescriptionLimit` (not 512) and newlines are
+    /// preserved so a multi-line description stays readable.
+    public static func safeReportDescription(_ text: String) -> String {
+        var safe = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportDescriptionLimit))
+        for pattern in errorSecretPatterns + diagnosticSecretPatterns {
+            safe = pattern.stringByReplacingMatches(
+                in: safe,
+                range: NSRange(safe.startIndex..., in: safe),
+                withTemplate: "$1[REDACTED]")
+        }
         return diagnosticReportURLPatterns[0].stringByReplacingMatches(
             in: safe,
             range: NSRange(safe.startIndex..., in: safe),

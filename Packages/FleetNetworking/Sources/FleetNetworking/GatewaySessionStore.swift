@@ -24,8 +24,12 @@ public actor GatewaySessionStore {
         gatewayID: GatewayID,
         login: @escaping @Sendable () async throws -> SessionCookie
     ) async throws -> SessionCookie {
+        if let cookie = sessions[gatewayID] {
+            if cookie.isUsable() { return cookie }
+            sessions[gatewayID] = nil
+            generations[gatewayID, default: 0] += 1
+        }
         let generation = generations[gatewayID, default: 0]
-        if let cookie = sessions[gatewayID] { return cookie }
         if let flight = inFlightLogins[gatewayID],
            inFlightGenerations[gatewayID] == generation {
             onSharedFlightWait?()
@@ -71,7 +75,9 @@ public actor GatewaySessionStore {
         guard generations[gatewayID, default: 0] == generation else {
             return try await lease(gatewayID: gatewayID, login: login)
         }
-        sessions[gatewayID] = cookie
+        if cookie.isUsable() {
+            sessions[gatewayID] = cookie
+        }
         return cookie
     }
 

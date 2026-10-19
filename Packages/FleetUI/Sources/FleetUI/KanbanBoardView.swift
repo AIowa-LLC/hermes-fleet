@@ -14,6 +14,7 @@ import FleetCore
 /// degrades to the honest read-only presentation (fail closed).
 public struct KanbanBoardView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .largeTitle) private var emptyGlyphSize: CGFloat = 36
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let initialBoard: String?
@@ -24,6 +25,7 @@ public struct KanbanBoardView: View {
     @State private var selectedTaskIDs: Set<String> = []
     @State private var selectMode = false
     @State private var detailCard: KanbanDetailPresentation?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, board: String? = nil) {
         self.environment = environment
@@ -76,7 +78,8 @@ public struct KanbanBoardView: View {
             let next = KanbanBoardViewModel(
                 watcher: watcher,
                 boardOperator: boardOperator,
-                selectionStore: KanbanBoardSelectionStore(gatewayID: gatewayID))
+                selectionStore: KanbanBoardSelectionStore(gatewayID: gatewayID),
+                diagnostics: environment.diagnosticsRecorder)
             await model?.stop()
             model = next
             await next.start(board: initialBoard)
@@ -241,6 +244,8 @@ public struct KanbanBoardView: View {
                                         })
                                 }
                             }
+                        } else if let issue = model.accessIssue {
+                            accessIssueContent(issue, model: model)
                         } else if let error = model.errorMessage {
                             errorContent(error, model: model)
                         }
@@ -250,7 +255,11 @@ public struct KanbanBoardView: View {
                     }
                     .padding(FleetTheme.spacingLg)
                 }
-                .refreshable { await model.refresh() }
+                .refreshable {
+                    await model.refresh()
+                    refreshOutcome.record(failed: model.errorMessage != nil)
+                }
+                .fleetRefreshHaptics(refreshOutcome)
                 if selectMode && !selectedTaskIDs.isEmpty {
                     bulkActionBar(model)
                         .padding(.horizontal, FleetTheme.spacingLg)
@@ -263,27 +272,33 @@ public struct KanbanBoardView: View {
     }
 
     /// Mutation/auxiliary outcome banners (hidden in select mode).
-    @ViewBuilder
     private func noticeBars(_ model: KanbanBoardViewModel) -> some View {
+        FleetNoticeStack(noticeItems(model))
+    }
+
+    /// Mutation errors rank above the auxiliary outcome note.
+    private func noticeItems(_ model: KanbanBoardViewModel) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
         if let message = model.mutationErrorMessage {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 message,
                 systemImage: "exclamationmark.triangle.fill",
                 tone: .error,
                 id: "kanban.board.mutation-error",
                 actionTitle: "Dismiss",
                 actionID: "kanban.board.mutation-error.dismiss",
-                action: { model.mutationErrorMessage = nil })
+                action: { model.mutationErrorMessage = nil }))
         }
         if let message = model.auxOutcomeMessage {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 message,
                 systemImage: "sparkles",
                 id: "kanban.board.aux-note",
                 actionTitle: "Dismiss",
                 actionID: "kanban.board.aux.dismiss",
-                action: { model.auxOutcomeMessage = nil })
+                action: { model.auxOutcomeMessage = nil }))
         }
+        return items
     }
 
     /// Bulk action bar: move/unassign/archive the selected set.
@@ -406,6 +421,38 @@ public struct KanbanBoardView: View {
         }
     }
 
+    /// A definitive refusal from the gateway: honest explanation plus ONE
+    /// manual re-check (no automatic retries run while this is showing).
+    private func accessIssueContent(
+        _ issue: KanbanBoardAccessIssue, model: KanbanBoardViewModel
+    ) -> some View {
+        let copy = KanbanAccessIssueCopy(issue)
+        return VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            Image(systemName: copy.symbol)
+                .font(.title2)
+                .foregroundStyle(theme.textSecondary)
+                .accessibilityHidden(true)
+            Text(copy.title)
+                .font(.headline)
+                .foregroundStyle(theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(copy.explanation)
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Task { await model.refresh() }
+            } label: {
+                Label(copy.actionTitle, systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("kanban.board.unavailable.check")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("kanban.board.unavailable")
+    }
+
     private func errorContent(_ message: String, model: KanbanBoardViewModel) -> some View {
         FleetNoticeBar(
             message,
@@ -420,7 +467,7 @@ public struct KanbanBoardView: View {
     private var emptyGatewaysContent: some View {
         VStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: "rectangle.stack")
-                .font(.system(size: 36, weight: .light))
+                .font(.system(size: min(emptyGlyphSize, 72), weight: .light))
                 .foregroundStyle(theme.textSecondary)
             Text("No gateways registered.")
                 .font(.body.weight(.semibold))
@@ -475,5 +522,36 @@ public struct KanbanDetailPresentation: Identifiable, Sendable {
     public var id: String { taskID }
     public init(taskID: String) {
         self.taskID = taskID
+    }
+}
+
+/// User-facing copy for a refused Kanban board. Honest about what is known
+/// (the gateway said no) and what is not (whether/when that changes).
+public struct KanbanAccessIssueCopy: Equatable, Sendable {
+    public let title: String
+    public let explanation: String
+    public let actionTitle: String
+    public let symbol: String
+
+    public init(_ issue: KanbanBoardAccessIssue) {
+        actionTitle = "Check again"
+        switch issue {
+        case .outOfScope:
+            title = "This gateway's connector doesn't allow Kanban yet"
+            explanation = "The Fleet connector on this gateway doesn't allow the Kanban board for paired phones. Updating the Fleet connector on the host may be needed. Cards can't be viewed or added until it does."
+            symbol = "lock.slash"
+        case .forbidden:
+            title = "This gateway refused the Kanban board"
+            explanation = "The gateway answered \"forbidden\" (HTTP 403). Whoever runs it may need to allow Kanban for this phone."
+            symbol = "lock.slash"
+        case .routeNotFound:
+            title = "This gateway doesn't offer a Kanban board"
+            explanation = "The Kanban route wasn't found (HTTP 404). The Kanban plugin may not be enabled on this gateway."
+            symbol = "questionmark.folder"
+        case .signedOut:
+            title = "Sign in again to see Kanban"
+            explanation = "The gateway rejected this phone's credentials (HTTP 401). Sign in to the gateway again from its details, then check again."
+            symbol = "person.crop.circle.badge.exclamationmark"
+        }
     }
 }

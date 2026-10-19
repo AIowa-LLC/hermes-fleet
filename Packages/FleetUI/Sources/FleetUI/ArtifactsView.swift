@@ -16,6 +16,7 @@ struct ArtifactsView: View {
 
     @State private var entries: [FleetArtifactLibrary.Entry] = []
     @State private var previewTarget: PreviewTarget?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     /// Entries grouped by gateway, preserving newest-first order.
     private var sections: [(gatewayID: GatewayID, entries: [FleetArtifactLibrary.Entry])] {
@@ -33,9 +34,9 @@ struct ArtifactsView: View {
         List {
             if entries.isEmpty {
                 ContentUnavailableView(
-                    "No artifacts yet",
+                    "No Artifacts Yet",
                     systemImage: "photo.on.rectangle",
-                    description: Text("Images your agents generate in conversations will collect here, with the conversation they came from."))
+                    description: Text("Images your bots generate in conversations appear here, with the conversation they came from."))
                     .accessibilityIdentifier("fleet.artifacts.empty")
             }
             ForEach(sections, id: \.gatewayID) { section in
@@ -57,7 +58,11 @@ struct ArtifactsView: View {
         .navigationTitle("Artifacts")
         .navigationBarTitleDisplayMode(.inline)
         .task { reload() }
-        .refreshable { reload() }
+        .refreshable {
+            reload()
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .sheet(item: $previewTarget) { target in
             ArtifactPreviewSheet(
                 reference: target.reference,

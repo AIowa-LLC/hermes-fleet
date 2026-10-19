@@ -19,10 +19,12 @@ fi
 
 package=${PWD##*/}
 case "$package" in
-  FleetCore) expected=691 ;;
-  FleetNetworking) expected=613 ;;
-  FleetPersistence) expected=58 ;;
-  FleetSecurity) expected=46 ;;
+  FleetCore) expected=767 ;;
+  FleetNetworking) expected=763 ;;
+  FleetPersistence) expected=64 ;;
+  FleetSecurity) expected=60 ;;
+  FleetClientKit) expected=52 ;;
+  FleetWatchKit) expected=96 ;;
   *) echo "unexpected package: $package" >&2; exit 65 ;;
 esac
 
@@ -48,7 +50,7 @@ case "${SWIFT_CASE:-green}" in
       exit 9
     fi
     ;;
-  green) ;;
+  green|swift_testing_partial|swift_testing_missing|swift_testing_failure) ;;
   *) echo "unknown SWIFT_CASE" >&2; exit 66 ;;
 esac
 
@@ -56,6 +58,16 @@ if [ "${SWIFT_CASE:-green}" = green ] && [ "$package" = FleetNetworking ]; then
   printf '\t Executed %s tests, with 2 tests skipped and 0 failures (0 unexpected) in 1.0 seconds\n' "$expected"
 else
   printf '\t Executed %s tests, with 0 failures (0 unexpected) in 1.0 seconds\n' "$expected"
+fi
+if [ "$package" = FleetCore ]; then
+  case "${SWIFT_CASE:-green}" in
+    swift_testing_partial) echo '✔ Test run with 20 tests in 1 suite passed after 0.1 seconds.' ;;
+    swift_testing_missing) : ;;
+    swift_testing_failure) echo '✘ Test run with 21 tests in 1 suite failed after 0.1 seconds.' ;;
+    *) echo '✔ Test run with 21 tests in 1 suite passed after 0.1 seconds.' ;;
+  esac
+else
+  echo '✔ Test run with 0 tests passed after 0.1 seconds.'
 fi
 STUB
 chmod +x "$tmpd/bin/swift"
@@ -77,14 +89,14 @@ check_case() {
   fi
 
   if [ "$expected_status" -eq 0 ]; then
-    if [ "$(printf '%s\n' "$output" | grep -c '^PASS  .* swift test complete')" -eq 4 ]; then
+    if [ "$(printf '%s\n' "$output" | grep -c '^PASS  .* swift test complete')" -eq 6 ]; then
       echo "PASS  $mode"
     else
-      echo "FAIL  $mode (not all four package suites passed)"
+      echo "FAIL  $mode (not all six package suites passed)"
       echo "$output" | tail -12
       FAIL=$((FAIL+1))
     fi
-  elif printf '%s\n' "$output" | grep -q 'FAIL  FleetNetworking swift test incomplete or NOT green'; then
+  elif printf '%s\n' "$output" | grep -Eq 'FAIL  Fleet(Core|Networking) swift test incomplete or NOT green'; then
     echo "PASS  $mode"
   else
     echo "FAIL  $mode (FleetNetworking failure was not reported)"
@@ -98,6 +110,9 @@ check_case partial 1
 check_case no_summary 1
 check_case test_failure 1
 check_case command_failure 1
+check_case swift_testing_partial 1
+check_case swift_testing_missing 1
+check_case swift_testing_failure 1
 
 if [ "$FAIL" -eq 0 ]; then
   echo "PASS: C1 package runner fail-closed contract tests"

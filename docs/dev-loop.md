@@ -64,7 +64,7 @@ Local `make dev-check` gives each worktree its own simulator (`HF-<repo>-<id>`, 
 do not need to take turns. Precedence for every runner, including the focused
 preflight, hosted units, critical smoke and iPad smoke: `HERMES_FLEET_SIM_UDID`
 (explicit device) over `HERMES_FLEET_LANE_SIM=1` (lane simulator, default for
-local `dev-check`, off when `CI=true`) over the unchanged first-available-iPhone
+local `dev-check` and explicitly enabled by the hosted simulator jobs) over the unchanged first-available-iPhone
 selection that hosted CI uses. Runners record the selection and UDID in their
 evidence metadata. Full details, the iPad variant and cleanup commands
 (`shutdown`, `delete`, `gc`) are in
@@ -87,10 +87,22 @@ metadata. Another worker's results are never deleted. CI retains evidence on
 success and failure, including successful retries.
 
 Job ceilings are safety limits, not speed promises: static 15 minutes, packages
-25, units 40, focused partitions 75, critical smoke 45, deep shards 150. Measure
+25, units 40, focused partitions 150, critical smoke 45, deep shards 150. Measure
 actual runtimes before tightening these or changing shard balance. Hosted units
-and simulator startup can still dominate. Xcode/runner pinning requires separate
-validation; provenance records the selected environment.
+and simulator startup can still dominate. CI and the deep UI lane select the `xcode-27` hosted image and the released
+Xcode **27.0 / 27A266a** explicitly, matching DEV19's retained archives and local
+validation. The static/deep lanes reject a different compiler or simulator SDK.
+Simulator jobs use the existing per-checkout lane helper so they create the
+required device instead of depending on the image's pre-created device names.
+UI lanes explicitly boot that device and wait for `simctl bootstatus -b` before
+compilation/test launch. Preparation uses CoreSimulator directly; the selected
+Xcode 27 image does not provide the former `Simulator.app` bundle. An unprepared device
+stalled XCTest while loading Accessibility before any test case began; the
+660-second watchdog correctly failed that invocation. The preparation step
+changes runner startup only and retains all assertions and failure checks.
+Provenance records the selected toolchain, runtime and device. The deployment
+floor remains iOS 26.0; this release-baseline CI run does not establish acceptance
+on every older OS/runtime combination.
 
 ## Hosted unit diagnostics
 
@@ -175,7 +187,7 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 691 core, 613 networking, 58 persistence, and 46
+Package baselines are 709 core, 657 networking, 64 persistence, and 49
 security tests. These include the Live Ops runtime, cold-transport,
 cross-process reporting, structured ownership-refusal, and frozen-clock
 launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
@@ -200,12 +212,20 @@ method-count-balanced partitions assigned 14-15 suites per job; three hit the
 The saved raw logs also contained failed image-test attempts, so timeout is not
 evidence that the remaining product checks would pass.
 
-The revised preflight retains the same 75-minute job limit and complete suite
-selection, but splits the work into twelve runtime-weighted partitions with a
-six-job concurrency cap. Queue time and total suite work still exist. This is
-not a blanket timeout extension or permission to skip unfinished regressions.
+That scheduling correction retained the 75-minute job limit and complete suite
+selection by splitting work into twelve runtime-weighted partitions with a
+six-job concurrency cap. Queue time and total suite work still exist.
 Focused reproduction of the image and deep-history checks remains separate
 from this scheduling correction.
+
+The DEV19 release-baseline run on Xcode 27.0 subsequently reached that
+75-minute limit while partition 3 was running its third of five suites. Its
+first two suites completed, including one explicitly reported recovered retry;
+the unfinished suites did not pass. The released-toolchain preflight now uses
+the same 150-minute ceiling as the deep lane. The twelve partitions, complete
+selection, assertions, retry reporting, fail-fast policy and 660-second process
+progress watchdog remain unchanged. Historical weights remain balancing hints,
+not timing promises; a longer ceiling is not evidence that a test passed.
 
 ## Development speed and exact-tree UI evidence
 
@@ -231,13 +251,15 @@ Partitions use the 60 observed suite runtimes from successful run
 recorded in `ci-runtime-baseline.json`. Weights guide balancing and must be
 re-profiled after harness changes; they are not completion-time guarantees.
 
-Test invocations fail after 600 seconds without XCTest case/suite or XCUI
-step progress. App startup noise does not reset the watchdog. The owned
-process group is stopped, and its original log, partial result bundle, and
-watchdog report are retained. An interrupted invocation is not a pass and is
-not automatically retried. Slow tests with real progress keep running.
+Test invocations fail after 660 seconds without XCTest case/suite or XCUI
+step progress. This includes a 60-second exit margin after Xcode's 600-second
+simulator-diagnostics cleanup timeout, which can begin after all assertions
+pass. App startup noise does not reset the watchdog. The owned process group is
+stopped, and its original log, partial result bundle, and watchdog report are
+retained. An interrupted invocation is not a pass and is not automatically
+retried. Slow tests with real progress keep running.
 `HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS` accepts a finite positive override;
-the hosted default remains 600 seconds.
+the default is 660 seconds.
 
 Each of the twelve required UI jobs either executes its selected suites or
 validates trusted source evidence. Static guards, package suites, hosted
@@ -273,3 +295,28 @@ and xcresult contracts. Rollout additionally requires an actual source-to-
 queue pair proving successful reuse and fresh execution after validation
 changes. A local timing experiment or mocked receipt alone is not rollout
 qualification.
+
+## Temp-path surface guard
+
+`scripts/temp_path_surface_guard.py` (static phase) fails if a script reachable
+from a supported workflow writes to a predictable shared temp path
+(`/tmp/<name>`, `${TMPDIR:-/tmp}/<name>`). Roots: the Makefile, CI workflows,
+the current docs, `project.yml`/xcconfig/`Package.swift`, and any Swift file
+that spawns processes. Reachability follows every script one script names.
+Computed names that keep a meaningful literal part expand to every script they
+could match; names too unspecific to expand (a bare variable plus an extension,
+or a glob over the whole scripts directory) are reported and must be reviewed
+into `UNRESOLVED_ALLOWED` in the guard.
+
+Historical milestone and live-check scripts (`h1_*`, `h2_*`, `fos*`, `rt*`,
+`pet_live_check`, …) still use fixed `/tmp` names and are out of scope because
+nothing reachable mentions them (`--report` lists them). They are kept as
+historical references, not supported entry points.
+
+Remaining limits: names assembled from several run-time string pieces, scripts
+run only by hand, and temp locations that do not literally contain
+`/tmp/<name>` or `$TMPDIR/<name>` (for example a path joined from pieces in Python).
+
+### Dynamic Type font audit
+
+`bash scripts/font_style_audit.sh` rejects fixed point sizes in maintained app/UI sources. Use text styles or a declared `@ScaledMetric`. Reviewed scaled glyphs and the DEV17 match-code metric have narrow, documented exceptions; stale exceptions fail the guard. `scripts/font_style_audit_test.sh` verifies the positive and negative cases.

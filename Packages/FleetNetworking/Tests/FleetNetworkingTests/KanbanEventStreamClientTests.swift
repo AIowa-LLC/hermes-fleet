@@ -85,6 +85,55 @@ final class KanbanEventStreamClientTests: XCTestCase {
         }
     }
 
+    func testSnapshotConnector403OutOfScopeIsTyped() async {
+        let body = #"{"error":"out_of_scope","detail":"Fleet request refused."}"#
+        let client = Self.makeClient(boardBody: Data(body.utf8), status: 403)
+        do {
+            _ = try await client.snapshot()
+            XCTFail("expected error")
+        } catch let error as KanbanBoardError {
+            XCTAssertEqual(
+                error,
+                .accessRefused(.outOfScope, status: 403, route: "/api/plugins/kanban/board"))
+            XCTAssertEqual(error.accessIssue, .outOfScope)
+            XCTAssertFalse(error.diagnosticDetail.contains("Fleet request refused"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
+    func testStatusErrorClassification() {
+        let route = "/api/plugins/kanban/board"
+        XCTAssertEqual(
+            KanbanEventStreamClient.statusError(403, body: Data("nope".utf8), route: route).accessIssue,
+            .forbidden)
+        XCTAssertEqual(
+            KanbanEventStreamClient.statusError(404, body: Data(), route: route).accessIssue,
+            .routeNotFound)
+        XCTAssertEqual(
+            KanbanEventStreamClient.statusError(401, body: Data(), route: route).accessIssue,
+            .signedOut)
+        XCTAssertEqual(
+            KanbanEventStreamClient.statusError(500, body: Data(), route: route),
+            .httpStatus(500))
+        XCTAssertNil(KanbanEventStreamClient.statusError(503, body: Data(), route: route).accessIssue)
+    }
+
+    func testFetchBoardsConnector403IsTyped() async {
+        let client = Self.makeClient(
+            boardBody: Data(),
+            boardsBody: Data(#"{"error":"out_of_scope"}"#.utf8),
+            status: 403)
+        do {
+            _ = try await client.fetchBoards()
+            XCTFail("expected error")
+        } catch let error as KanbanBoardError {
+            XCTAssertEqual(error.accessIssue, .outOfScope)
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
     func testSnapshotMalformedBodyThrows() async {
         let client = Self.makeClient(boardBody: Data("not json".utf8))
         do {

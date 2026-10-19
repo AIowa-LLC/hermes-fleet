@@ -1,0 +1,221 @@
+import Foundation
+import FleetCore
+import FleetUI
+import FleetWatchKit
+
+/// Everything the Watch snapshot is derived from, as plain values so the
+/// mapping is testable without a live `AppEnvironment`.
+struct WatchFleetObservation {
+    var gateways: [FleetGateway]
+    var connectionStates: [GatewayID: GatewayConnectionState]
+    var botsByGateway: [GatewayID: [FleetBot]]
+    var sessionsByRoute: [Route: [SessionSummary]]
+    var liveOps: LiveOpsSnapshot?
+    var liveOpsAttention: [LiveOpsAttentionItem]
+    var fleetAttention: [FleetAttentionItem]
+    var rosterObservedAt: Date?
+    /// Per-gateway time of the last SUCCESSFUL roster read.
+    var rosterObservedAtByGateway: [GatewayID: Date] = [:]
+    /// Per-route time of the last SUCCESSFUL conversation-list read.
+    var sessionsObservedAtByRoute: [Route: Date] = [:]
+    /// Per-bot Main chat knowledge (roster + registry lookup + canonical opens).
+    var mainChatByRoute: [Route: AppEnvironment.MainChatState] = [:]
+    /// The last time each gateway ACTUALLY answered Live Ops. Live Ops stamps a
+    /// failed attempt with the failure time, so the bridge remembers the last
+    /// good one; absent = never observed by this phone session.
+    var lastGoodLiveObservedAt: [GatewayID: Date] = [:]
+    /// Digest of the avatar thumbnail the phone can send, per bot. Absent when
+    /// the bot has no uploaded image or it isn't loaded on the phone yet.
+    var avatarThumbnailDigestByRoute: [Route: String] = [:]
+    var routeForSessionKey: (String, GatewayID) -> Route?
+}
+
+/// Maps Fleet's observed state to the Watch wire model. Observed state only:
+/// a value the phone has not seen is nil/unknown, never inferred.
+enum WatchSnapshotBuilder {
+    static func build(
+        _ obs: WatchFleetObservation, flavor: WatchAppFlavor, generation: Int,
+        now: Date, contentVisible: Bool, isFixture: Bool = false, pinned: WatchConversationPin? = nil
+    ) -> WatchSnapshot {
+        guard contentVisible else { return .hidden(flavor: flavor, generation: generation, builtAt: now) }
+        let names = Dictionary(obs.gateways.map { ($0.id, $0.displayName) }, uniquingKeysWith: { a, _ in a })
+        let gateways = obs.gateways.map { gateway -> WatchGateway in
+            let live = obs.liveOps?.gateways.first { $0.gatewayID == gateway.id }
+            let status = status(for: obs.connectionStates[gateway.id] ?? .idle)
+            let bots = (obs.botsByGateway[gateway.id] ?? []).map { bot(from: $0, obs) }
+            let running = (live?.operations ?? []).filter { $0.status.isActive }.map {
+                WatchRunningWork(id: $0.id.description, gatewayID: gateway.id.rawValue,
+                                 title: clip($0.title, 40), status: $0.status.wireValue)
+            }
+            return WatchGateway(
+                id: gateway.id.rawValue, displayName: clip(gateway.displayName, 40), status: status,
+                coverage: coverage(live),
+                observedAt: liveObservedAt(live) ?? obs.lastGoodLiveObservedAt[gateway.id],
+                bots: bots, running: running,
+                rosterObservedAt: obs.rosterObservedAtByGateway[gateway.id],
+                conversationsObservedAt: conversationsObservedAt(gateway.id, obs))
+        }
+        var attention: [WatchAttention] = obs.fleetAttention.map {
+            WatchAttention(id: $0.id, gatewayID: $0.gatewayID.rawValue, title: clip($0.title, 60),
+                           detail: $0.detail.map { clip($0, 60) })
+        }
+        var approvals: [WatchApproval] = []
+        for item in obs.liveOpsAttention {
+            let gatewayID = item.operation.id.gatewayID
+            guard let request = item.pendingApproval else {
+                attention.append(WatchAttention(
+                    id: "wait|\(item.operation.id)", gatewayID: gatewayID.rawValue,
+                    title: clip(item.operation.title, 60), detail: "Waiting for input"))
+                continue
+            }
+            let route = obs.routeForSessionKey(item.operation.sessionKey, gatewayID)
+            let bot = route.flatMap { r in obs.botsByGateway[gatewayID]?.first { $0.route == r } }
+            let preview = ApprovalCommandPreview(command: request.command)
+            let approval = WatchApproval(
+                gatewayID: gatewayID.rawValue, gatewayName: clip(names[gatewayID] ?? gatewayID.rawValue, 40),
+                profileSlug: route?.profileSlug.rawValue, botName: bot.map { clip(BotRosterPresentation.displayTitle(for: $0), 40) },
+                sessionID: request.sessionID,
+                sessionLabel: clip(ApprovalOrigin.sessionLabel(title: item.operation.title, id: request.sessionID) ?? "unknown", 40),
+                requestID: request.requestID, commandPreview: clip(preview.visibleText, 140),
+                commandDigest: WatchCodec.digest(request.command),
+                requiresFullReview: preview.requiresReview || request.command.count > 140,
+                choices: request.choices,
+                observedAt: liveObservedAt(obs.liveOps?.gateways.first { $0.gatewayID == gatewayID }))
+            approvals.append(approval)
+            attention.append(WatchAttention(
+                id: "approval|\(approval.id)", gatewayID: gatewayID.rawValue,
+                title: "Approval: \(approval.botName ?? approval.gatewayName)", detail: nil, isApproval: true))
+        }
+        return WatchSnapshotBudget.trimmed(WatchSnapshot(
+            flavor: flavor, generation: generation, builtAt: now, contentVisible: true,
+            isFixture: isFixture, gateways: gateways, attention: attention, approvals: approvals,
+            removedPin: removedPin(pinned, in: gateways)), pinned: pinned)
+    }
+
+    /// The pin is "removed" only when its bot is on the phone and the bot's FULL
+    /// (untrimmed) conversation list lacks it. A bot or machine that is itself
+    /// missing is reported by the Watch's own resolver.
+    private static func removedPin(_ pin: WatchConversationPin?, in gateways: [WatchGateway]) -> WatchConversationPin? {
+        guard let pin,
+              let bot = gateways.first(where: { $0.id == pin.gatewayID })?.bots
+                  .first(where: { $0.ref.profileSlug == pin.profileSlug }) else { return nil }
+        return bot.conversations.contains { $0.id == pin.conversationID } ? nil : pin
+    }
+
+    static func status(for state: GatewayConnectionState) -> WatchGatewayStatus {
+        switch state {
+        case .connected: return .online
+        case .connecting: return .connecting
+        case .idle: return .notConnected
+        case .disconnected: return .offline
+        case .failed(let s):
+            switch s {
+            case .online: return .online
+            case .connecting: return .connecting
+            case .degraded: return .degraded
+            case .authenticationRequired: return .authenticationRequired
+            case .offline: return .offline
+            case .unsupported: return .unsupported
+            }
+        }
+    }
+
+    static func coverage(_ live: LiveOpsGatewaySnapshot?) -> WatchCoverage {
+        guard let live else { return .unknown }
+        switch live.coverage {
+        case .reporting: return .reporting
+        case .unsupported: return .limited
+        case .disconnected, .authFailed, .failed: return live.hasEverReported ? .heldOver : .unknown
+        }
+    }
+
+    /// A Live Ops observation counts only when the gateway actually answered.
+    /// Failure snapshots are stamped with the time of the FAILED attempt, so
+    /// using their `observedAt` would make unreachable data look freshly seen.
+    private static func liveObservedAt(_ live: LiveOpsGatewaySnapshot?) -> Date? {
+        guard let live else { return nil }
+        switch live.coverage {
+        case .reporting, .unsupported: return live.observedAt
+        case .disconnected, .authFailed, .failed: return nil
+        }
+    }
+
+    /// The OLDEST conversation-list read among the gateway's bots, so one
+    /// stale bot cannot hide behind a fresh sibling. Nil when any bot has no
+    /// successful read (or the gateway has no bots).
+    private static func conversationsObservedAt(_ gateway: GatewayID, _ obs: WatchFleetObservation) -> Date? {
+        let bots = obs.botsByGateway[gateway] ?? []
+        guard !bots.isEmpty else { return nil }
+        let times = bots.compactMap { obs.sessionsObservedAtByRoute[$0.route] }
+        return times.count == bots.count ? times.min() : nil
+    }
+
+    private static func bot(from bot: FleetBot, _ obs: WatchFleetObservation) -> WatchBot {
+        var chats: [WatchConversation] = []
+        var seen = Set<String>()
+        var status: WatchMainChatStatus
+        var diagnostic: String?
+        var knownIDs: [String] = []
+        switch obs.mainChatByRoute[bot.route] {
+        case .established(let ids)?: status = .established; knownIDs = ids
+        case .notSetUp?: status = .notSetUp
+        case .unknown(let why)?: status = .unknown; diagnostic = why
+        case nil:
+            // Legacy/test observation without a lookup: only the roster is known.
+            if let canonical = bot.canonicalSession {
+                status = .established; knownIDs = [canonical.id, canonical.resolvedID].compactMap { $0 }
+            } else { status = .unknown }
+        }
+        if status == .established {
+            let rosterID = bot.canonicalSession.map { $0.resolvedID ?? $0.id }
+            if let id = rosterID ?? knownIDs.first {
+                chats.append(WatchConversation(id: id, title: "Main chat", isMain: true))
+                seen.insert(id)
+            }
+            seen.formUnion(knownIDs)
+        }
+        for session in (obs.sessionsByRoute[bot.route] ?? []) where !seen.contains(session.id) {
+            let title = session.title.isEmpty ? (session.preview.isEmpty ? "Untitled" : session.preview) : session.title
+            chats.append(WatchConversation(id: session.id, title: clip(title, 40)))
+            seen.insert(session.id)
+        }
+        return WatchBot(ref: WatchBotRef(gatewayID: bot.gatewayID.rawValue, profileSlug: bot.profileSlug.rawValue),
+                        displayName: clip(BotRosterPresentation.displayTitle(for: bot), 40),
+                        activity: bot.activity.rawValue, conversations: chats,
+                        mainChatStatus: status, mainChatDiagnostic: diagnostic,
+                        conversationsObservedAt: obs.sessionsObservedAtByRoute[bot.route],
+                        avatar: avatar(for: bot, imageDigest: obs.avatarThumbnailDigestByRoute[bot.route]))
+    }
+
+    /// The same appearance the iPhone roster draws (`BotAvatar`): server shape
+    /// metadata or the slug-derived default, server color or the route-derived
+    /// identity color. The thumbnail digest is offered only for a bot whose
+    /// roster still reports an uploaded image.
+    static func avatar(for bot: FleetBot, imageDigest: String?) -> WatchBotAvatar {
+        let slug = bot.profileSlug.rawValue
+        let shape: String
+        var seed = slug
+        switch BotAvatarIdentity.face(hasAvatar: false, shape: bot.botModeMetadata?.shape, identityName: slug) {
+        case .shape(let name): shape = name
+        case .blob(let parsed, let kind): shape = "blob"; seed = parsed + (kind ?? "")
+        case .image, .initials: shape = "squircle"
+        }
+        return WatchBotAvatar(shape: shape, seed: seed, colorHex: colorHex(metadata: bot.botModeMetadata?.color, route: bot.route),
+                              imageDigest: bot.hasAvatar ? imageDigest : nil)
+    }
+
+    /// A valid `#RRGGBB` server color wins; anything else falls back to the
+    /// bot's stable identity color (never the user's theme).
+    static func colorHex(metadata: String?, route: Route) -> String {
+        if let metadata, metadata.hasPrefix("#"), metadata.count == 7, UInt32(metadata.dropFirst(), radix: 16) != nil {
+            return metadata.uppercased()
+        }
+        return String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: route))
+    }
+
+    static func clip(_ text: String, _ limit: Int) -> String {
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        guard flat.count > limit else { return flat }
+        return String(flat.prefix(limit - 1)) + "…"
+    }
+}

@@ -47,11 +47,15 @@ extension FleetServiceGraph {
     static func makeSimulatorEnvironment() -> AppEnvironment {
         // Scripted registry: in-memory credential store (no Keychain writes).
         let credentials = InMemoryCredentialStore()
+        let cacheStore = try! SwiftDataCacheStore.makeInMemory()
+        let pins = InMemoryPinStore()
         let baseRegistry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
-            }
+            },
+            recordStore: cacheStore,
+            pinStore: pins
         )
         // P2-6: when the save-fail knob is set, wrap the registry so the
         // add/edit save path throws (the UI test then verifies the form keeps
@@ -76,14 +80,19 @@ extension FleetServiceGraph {
         // Doubles as the health-stats store: scripted connections do not emit
         // transport health events, so the dashboard shows live scripted state
         // with "no data yet" stats — honest for the DEBUG walkthrough.
-        let cacheStore = try! SwiftDataCacheStore.makeInMemory()
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
+        // Scripted TLS trust: an in-memory pin/approval store and a probe that
+        // reports one synthetic key, so the first-use certificate review flow
+        // is exercisable without a network peer.
         let environment = AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
+            tlsPinStore: pins,
+            tlsApprovalStore: pins,
+            tlsKeyProbe: ScriptedTLSKeyProbe(),
             sessionList: sessionList,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
@@ -159,7 +168,9 @@ extension FleetServiceGraph {
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
             // authorization gate and transcript review are walkable
             // deterministically in the simulator + UI tests — no live speech.
-            voiceEngineFactory: { ScriptedVoiceEngine.shared }
+            voiceEngineFactory: { ScriptedVoiceEngine.shared },
+            ownerEnrollment: ScriptedOwnerEnrollment(),
+            pairingService: ScriptedPairingService()
         )
         // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
         // observed-artifact library (gateway + source conversation) so the
@@ -336,6 +347,14 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     private let liveUpdatesEnabled =
         ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] == "1"
 
+    /// UI-test knob: `HERMES_FLEET_KANBAN_REFUSED=1` scripts the connector's
+    /// 403 `out_of_scope` refusal for every board route (the real-gateway
+    /// failure shape), so the unavailable state is walkable.
+    private let refused =
+        ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_REFUSED"] == "1"
+    private static let scriptedRefusal = KanbanBoardError.accessRefused(
+        .outOfScope, status: 403, route: "/api/plugins/kanban/board")
+
     private static let scriptedBoards = KanbanBoardList(
         boards: [
             KanbanBoardSummary(
@@ -348,7 +367,8 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
         current: "hermes-fleet-r10")
 
     func fetchBoards() async throws -> KanbanBoardList {
-        Self.scriptedBoards
+        if refused { throw Self.scriptedRefusal }
+        return Self.scriptedBoards
     }
 
     func pinBoard(_ slug: String?) async {
@@ -356,7 +376,8 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     }
 
     func snapshot() async throws -> KanbanBoardSnapshot {
-        snapshotFromState()
+        if refused { throw Self.scriptedRefusal }
+        return snapshotFromState()
     }
 
     func changeEvents() async -> AsyncStream<KanbanEventBatch> {
@@ -1480,8 +1501,53 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
+/// DEV19 #188 UI fixture (`HERMES_FLEET_LONG_CHAT_FIXTURE=1`): every resumed
+/// conversation is a synthetic 25,000-message lineage. A normal
+/// `session.resume` is refused exactly like the gateway's 4130 guard; the
+/// `omit_messages` resume succeeds and history pages newest-first through
+/// `ScriptedLongChatPager` (offset counts from the newest row; rows return
+/// oldest→newest; durable row ids 1…25000). `HERMES_FLEET_LONG_CHAT_UNSUPPORTED=1`
+/// makes the pager report an older gateway without the paged route.
+enum ScriptedLongChat {
+    static let total = 25_000
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LONG_CHAT_FIXTURE"] == "1"
+    }
+    static var isUnsupported: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LONG_CHAT_UNSUPPORTED"] == "1"
+    }
+
+    static func text(for row: Int) -> String { "Long chat message \(row)" }
+}
+
+struct ScriptedLongChatPager: SessionHistoryPaging {
+    func fetchLatestPage(sessionID: String, profile: String?, offset: Int, limit: Int) async throws -> SessionHistoryPage {
+        if ScriptedLongChat.isUnsupported {
+            throw SessionHistoryPagingError.unsupported("route not found")
+        }
+        let limit = min(max(limit, 1), 500)
+        let upper = max(0, ScriptedLongChat.total - max(0, offset))
+        let lower = max(0, upper - limit)
+        let messages = (lower..<upper).map { index -> SessionMessage in
+            let row = index + 1
+            return SessionMessage(
+                role: row % 2 == 1 ? .user : .assistant,
+                text: ScriptedLongChat.text(for: row),
+                timestamp: 1_757_000_000 + Double(row),
+                rowID: String(row))
+        }
+        // A short, deterministic delay so the loading state is observable.
+        try? await Task.sleep(for: .milliseconds(150))
+        return SessionHistoryPage(messages: messages, offset: offset, limit: limit, returned: messages.count)
+    }
+}
+
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable, SessionHistoryPagingCapable {
     let gatewayID: GatewayID
+    /// DEV19 #188: paged history only under the long-chat fixture.
+    var historyPager: (any SessionHistoryPaging)? {
+        ScriptedLongChat.isEnabled ? ScriptedLongChatPager() : nil
+    }
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
     /// approval banner is fully walkable in the simulator + UI tests).
@@ -1884,7 +1950,28 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         )
     }
 
+    func resumeSession(
+        sessionID: String, lastEventID: Int?, profile: String?, omitMessages: Bool
+    ) async throws -> ConversationSession {
+        if ScriptedLongChat.isEnabled, omitMessages {
+            return ConversationSession(
+                sessionID: sessionID,
+                storedSessionID: "stored-\(sessionID)",
+                messageCount: ScriptedLongChat.total,
+                messages: [],
+                model: "scripted-model",
+                provider: "simulator",
+                profileName: nil
+            )
+        }
+        return try await resumeSession(sessionID: sessionID, lastEventID: lastEventID, profile: profile)
+    }
+
     func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
+        // DEV19 #188: the gateway's 4130 too-long refusal.
+        if ScriptedLongChat.isEnabled {
+            throw ConversationError.sessionTooLongToReload(messageCount: ScriptedLongChat.total)
+        }
         // R10-T2: fixture durable rows (row_id-stamped, one carrying a
         // seeded reaction) so long-press Tapback targets DURABLE rows in
         // the simulator + UI tests — mirroring what a real session.resume
@@ -2122,11 +2209,40 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 for chunk in Self.issue5RichMarkdownChunks {
                     fullMarkdown += chunk
                     streamBox.yield(.messageDelta(sessionID: sessionID, text: chunk, rendered: nil))
+                    // Model a real streamed response rather than enqueueing
+                    // the entire rich document in one zero-gap burst. The UI
+                    // needs a turn to parse and publish each growing snapshot
+                    // before the terminal message.complete event arrives.
+                    try? await Task.sleep(for: .milliseconds(80))
                 }
                 streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
                 streamBox.yield(.messageComplete(
                     sessionID: sessionID,
                     text: fullMarkdown,
+                    status: nil,
+                    error: nil
+                ))
+                return
+            }
+            // DEV14 simulator-only knob: `HERMES_FLEET_REASONING_DEMO=1`
+            // streams reasoning deltas first, then SLOW message deltas, so
+            // UI tests can observe the reasoning block while streaming and
+            // after completion. `_HOLD_MS` (default 700) is the pause
+            // between chunks. Never set in production launches.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_REASONING_DEMO"] == "1" {
+                let holdMs = Int(ProcessInfo.processInfo.environment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] ?? "") ?? 700
+                for chunk in ["Considering the request. ", "Checking the fleet state. "] {
+                    streamBox.yield(.reasoningDelta(sessionID: sessionID, text: chunk))
+                    try? await Task.sleep(for: .milliseconds(holdMs))
+                }
+                for chunk in ["Here is a slowly ", "streamed reply ", "for layout checks."] {
+                    streamBox.yield(.messageDelta(sessionID: sessionID, text: chunk, rendered: nil))
+                    try? await Task.sleep(for: .milliseconds(holdMs))
+                }
+                streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+                streamBox.yield(.messageComplete(
+                    sessionID: sessionID,
+                    text: "Here is a slowly streamed reply for layout checks.",
                     status: nil,
                     error: nil
                 ))
@@ -2170,12 +2286,17 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 // client has no tooling-box reference; the r9 folder-switch
                 // test drives a change through the sheet and asserts the
                 // chip readback before any next-turn fixture fires.
+                // DEV14: `HERMES_FLEET_SESSION_INFO_LONG_NAMES=1` swaps in
+                // long model/folder/profile names to exercise toolbelt
+                // truncation and clipping (simulator-only).
+                let longNames = ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_INFO_LONG_NAMES"] == "1"
                 streamBox.yield(.sessionInfo(
                     sessionID: sessionID,
-                    model: "glm-4.6-flash", provider: "zai",
+                    model: longNames ? "glm-4.6-flash-extended-reasoning-preview-build-2026" : "glm-4.6-flash",
+                    provider: "zai",
                     title: nil,
-                    cwd: "/home/dev/hermes-fleet",
-                    profileName: "default"))
+                    cwd: longNames ? "/home/dev/an-extremely-long-project-folder-name" : "/home/dev/hermes-fleet",
+                    profileName: longNames ? "a-very-long-profile-name-for-layout" : "default"))
             }
             // UI-journey knob (HERMES_FLEET_SESSION_TITLE_FIXTURE=1): mirror
             // the live gateway's auto-title frame (methods_session.py:1427)
@@ -2915,6 +3036,13 @@ private struct FailingSaveRegistry: GatewayRegistryManaging {
     func allGateways() async -> [FleetGateway] { await inner.allGateways() }
     func gateway(for id: GatewayID) async -> FleetGateway? { await inner.gateway(for: id) }
     func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
+        // These fixed registrations represent an already configured fleet.
+        // Seed them before failing user saves so the regression can reach
+        // the additional-gateway form without bypassing QR-first onboarding.
+        if let id = registration.id,
+           ScriptedFleet.registrations.contains(where: { $0.id == id }) {
+            return try await inner.addGateway(registration)
+        }
         throw GatewayRegistryError.credentialStoreFailed("injected save failure")
     }
     func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
@@ -4032,4 +4160,10 @@ extension ScriptedRoomLinkEngine: RoomReplicateSink {
     }
 }
 
+
+/// Reports one fixed synthetic key for any secure endpoint (DEBUG simulator only).
+struct ScriptedTLSKeyProbe: TLSKeyProbing {
+    static let fingerprint = SPKIFingerprint(rawBytes: Array(repeating: 0xAB, count: 32))
+    func presentedKey(for endpoint: URL) async throws -> SPKIFingerprint { Self.fingerprint }
+}
 #endif

@@ -6,6 +6,10 @@ Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent deploy
 
 Hermes Fleet is under active development. The current project targets **iOS 26**, uses **Swift 6**, and is generated from `project.yml` with XcodeGen.
 
+Released DEV19: Hermes Fleet Dev **0.1.0 (19)** and public TestFlight **0.2.0 (98)**.
+See [release records](RELEASES.md) and [build instructions](docs/release/DEV19-BUILD.md).
+
+
 This repository contains source code and development tooling. It does not require an AIowa-hosted relay or shared operator account.
 The capability list describes source behavior; consult [`RELEASES.md`](RELEASES.md) for the exact contents and status of a distributed build.
 
@@ -73,6 +77,7 @@ FleetCore          domain models, policies, and cross-module seams
    ▲
    ├─ FleetNetworking   JSON-RPC/WebSocket transport and gateway clients
    ├─ FleetSecurity     Keychain-backed credentials, tokens, and trust pins
+   │    └─ FleetClientKit  extension-safe client layer (shared snapshot, one-shot calls)
    ├─ FleetPersistence  SwiftData non-secret cache and snapshots
    └─ FleetUI           SwiftUI screens and view models
 
@@ -137,7 +142,7 @@ The GitHub Actions workflow runs the repository's C1 validation for source, proj
 
 Gateway details are user-supplied. Hermes Fleet does not ship with a maintainer endpoint or shared credentials. Prefer TLS-protected endpoints, especially outside trusted local networks.
 
-See [`docs/gateway-pairing.md`](docs/gateway-pairing.md) for manual and QR-assisted setup.
+See [`docs/gateway-pairing.md`](docs/gateway-pairing.md) for owner-authenticated phone enrollment and advanced setup.
 
 ## Documentation
 
@@ -146,7 +151,7 @@ Start with [`docs/README.md`](docs/README.md).
 - [`docs/architecture.md`](docs/architecture.md) - module boundaries, data flow, and architectural constraints
 - [`docs/features.md`](docs/features.md) - current feature surfaces and important limitations
 - [`docs/navigation.md`](docs/navigation.md) - top-level destinations, ownership model, and restoration
-- [`docs/gateway-pairing.md`](docs/gateway-pairing.md) - gateway setup and QR pairing
+- [`docs/gateway-pairing.md`](docs/gateway-pairing.md) - phone enrollment and advanced gateway setup
 - [`docs/adr/`](docs/adr/) - architectural decision records
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - development and pull request guidance
 - [`SECURITY.md`](SECURITY.md) - security model and vulnerability reporting

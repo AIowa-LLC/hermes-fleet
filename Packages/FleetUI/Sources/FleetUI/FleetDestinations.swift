@@ -119,6 +119,7 @@ struct FleetChatsView: View {
     @State private var showingCompose = false
     @State private var pendingDeleteEntry: FleetChatEntry?
     @State private var archivedNotice: String?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     /// Codex-style cleanup: locally hidden conversations (archive). The
     /// gateway has no archive RPC on this client's seam yet — archive is an
@@ -283,8 +284,7 @@ struct FleetChatsView: View {
             }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
-                    ProgressView("Refreshing conversations…")
-                        .accessibilityIdentifier("fleet.chats.loading.first")
+                    FleetSkeletonList(identifier: "fleet.chats.loading.first")
                 } else {
                     HStack(spacing: FleetTheme.spacingSm) {
                         ProgressView()
@@ -394,7 +394,11 @@ struct FleetChatsView: View {
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,
                         hasUsableSessions: usableSessionCount > 0)
-                    ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
+                    if !query.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                    } else {
+                        ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
+                    }
                 }
             }
             if !query.isEmpty {
@@ -470,7 +474,12 @@ struct FleetChatsView: View {
                 .accessibilityHidden(true)
         }
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
-        .refreshable { await refresh(force: true) }.task { await refresh() }
+        .refreshable {
+            await refresh(force: true)
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
+        .task { await refresh() }
     }
 
     /// A single, labeled Chat button with a larger target and shared material
@@ -483,10 +492,14 @@ struct FleetChatsView: View {
             } label: {
                 HStack(spacing: FleetTheme.spacingSm) {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                     Text("Chat")
                         .font(.headline)
+                        .lineLimit(1)
                 }
+                // DEV19 AX5: the floating pill stops growing at the first
+                // accessibility size so it never covers the list it floats over.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)

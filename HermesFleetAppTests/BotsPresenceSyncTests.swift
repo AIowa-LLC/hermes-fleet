@@ -533,7 +533,16 @@ final class BotsPresenceSyncTests: XCTestCase {
             archOutcome: .loaded(profileCount: 0), bots: [bot]))
         let (environment, _) = await makeEnvironment(roster: roster)
 
+        let refreshesBeforeConnect = roster.refreshCount
         await environment.connect(to: workstation)
+        let initialRosterRefreshSettled = await waitUntil {
+            roster.refreshCount > refreshesBeforeConnect && !environment.isRefreshing
+        }
+        XCTAssertTrue(
+            initialRosterRefreshSettled,
+            "post-connect roster refresh should settle before injecting a stale outcome")
+        guard initialRosterRefreshSettled else { return }
+
         let initiallyReachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
         XCTAssertTrue(initiallyReachable)
         XCTAssertEqual(environment.connectionStates[workstation], .connected)

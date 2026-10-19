@@ -12,7 +12,8 @@ BUNDLE_ID = "com.aiowa.hermesfleet"
 
 
 def source_setting(project: str, name: str) -> str:
-    matches = re.findall(rf"^\s*{re.escape(name)}:\s*(\S+)\s*$", project, re.MULTILINE)
+    base = project.split("packages:", 1)[0]
+    matches = re.findall(rf"^\s*{re.escape(name)}:\s*(\S+)\s*$", base, re.MULTILINE)
     if len(matches) != 1:
         raise ValueError(f"project.yml must define exactly one {name}")
     return matches[0]

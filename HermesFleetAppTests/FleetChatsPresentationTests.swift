@@ -1,5 +1,5 @@
 import XCTest
-import FleetUI
+@testable import FleetUI
 import FleetCore
 
 /// Dogfood finding 1 (chat-list polish) — how the Chats screen reports a
@@ -55,6 +55,96 @@ final class FleetChatsPresentationTests: XCTestCase {
         XCTAssertTrue(FleetChatsPresentation.isRecentConversation(active))
         XCTAssertTrue(FleetChatsPresentation.isRecentConversation(olderGateway),
                       "same titles with distinct IDs remain distinct chats")
+    }
+
+    func testSidebarRecentsDoesNotTruncateValidSessionsAtTwelve() {
+        let defaultRoute = route(workstation, "default")
+        let sessions = (0..<15).map { index in
+            SessionSummary(
+                id: "chat-\(index)", title: "Conversation \(index)",
+                startedAt: Double(index), lastActive: Double(index),
+                messageCount: 1, source: "desktop")
+        }
+
+        let entries = FleetChatsPresentation.sidebarRecentEntries(
+            sessionsByRoute: [defaultRoute: sessions],
+            registeredGatewayIDs: [workstation],
+            canonicalConversationIDs: [], pinnedConversationIDs: [], hiddenEntryIDs: [])
+
+        XCTAssertEqual(entries.count, 15)
+        XCTAssertTrue(entries.contains { $0.session.title == "Conversation 0" },
+                      "the least recent valid row must remain reachable in the drawer")
+    }
+
+    func testSidebarRecentsDeduplicatesWithinRouteButKeepsProfilesSeparate() {
+        let defaultRoute = route(workstation, "default")
+        let agentRoute = route(workstation, "agent-smith")
+        let sameIDOlder = SessionSummary(
+            id: "shared-session", title: "Older duplicate", lastActive: 10,
+            messageCount: 1, source: "desktop")
+        let sameIDNewer = SessionSummary(
+            id: "shared-session", title: "Newer duplicate", lastActive: 20,
+            messageCount: 1, source: "desktop")
+
+        let entries = FleetChatsPresentation.sidebarRecentEntries(
+            sessionsByRoute: [
+                defaultRoute: [sameIDOlder, sameIDNewer],
+                agentRoute: [sameIDNewer],
+            ],
+            registeredGatewayIDs: [workstation],
+            canonicalConversationIDs: [], pinnedConversationIDs: [], hiddenEntryIDs: [])
+
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(Set(entries.map(\.route)), [defaultRoute, agentRoute])
+        XCTAssertEqual(
+            entries.first { $0.route == defaultRoute }?.session.title,
+            "Newer duplicate")
+    }
+
+    func testSidebarRecentsAppliesOwnershipAndLocalVisibilityAndUsesCurrentRefresh() {
+        let defaultRoute = route(workstation, "default")
+        let agentRoute = route(workstation, "agent-smith")
+        let removedGatewayRoute = route(arch, "default")
+        let visible = SessionSummary(
+            id: "visible", title: "Visible", lastActive: 50,
+            messageCount: 1, source: "desktop")
+        let hidden = SessionSummary(
+            id: "hidden", title: "Archived", lastActive: 40,
+            messageCount: 1, source: "desktop")
+        let pinned = SessionSummary(
+            id: "pinned", title: "Pinned", lastActive: 30,
+            messageCount: 1, source: "desktop")
+        let canonical = SessionSummary(
+            id: "canonical", title: "Bot Chat", lastActive: 20,
+            messageCount: 1, source: "desktop")
+        let scheduled = SessionSummary(
+            id: "scheduled", title: "Scheduled run", lastActive: 60,
+            messageCount: 1, source: "cron")
+        let stale = SessionSummary(
+            id: "removed", title: "Removed gateway", lastActive: 70,
+            messageCount: 1, source: "desktop")
+
+        let firstSnapshot = FleetChatsPresentation.sidebarRecentEntries(
+            sessionsByRoute: [
+                defaultRoute: [visible, hidden, pinned, canonical, scheduled],
+                removedGatewayRoute: [stale],
+            ],
+            registeredGatewayIDs: [workstation],
+            canonicalConversationIDs: [FleetConversationIdentity.individual(
+                route: defaultRoute, sessionID: canonical.id).id],
+            pinnedConversationIDs: [FleetConversationIdentity.individual(
+                route: defaultRoute, sessionID: pinned.id).id],
+            hiddenEntryIDs: ["\(defaultRoute.id)/\(hidden.id)"])
+
+        XCTAssertEqual(firstSnapshot.map(\.session.id), [visible.id])
+
+        let refreshedSnapshot = FleetChatsPresentation.sidebarRecentEntries(
+            sessionsByRoute: [agentRoute: [visible]],
+            registeredGatewayIDs: [workstation],
+            canonicalConversationIDs: [], pinnedConversationIDs: [], hiddenEntryIDs: [])
+        XCTAssertEqual(refreshedSnapshot.map(\.route), [agentRoute])
+        XCTAssertFalse(refreshedSnapshot.contains { $0.route == defaultRoute && $0.session.id == visible.id },
+                       "the projection follows the current session feed and does not resurrect stale entries")
     }
 
     // MARK: - Failure surface decision

@@ -16,6 +16,11 @@ public struct ApprovalBanner: View {
     /// Deny tap owned by the parent so the banner remains presentational.
     var onDeny: () -> Void
     @State private var reviewingRequest: ApprovalRequest?
+    /// Request id of a Deny tap still waiting for the gateway to clear it.
+    @State private var denyAwaitingRequestID: String?
+    /// Haptic triggers: bumped only once the gateway has accepted the decision.
+    @State private var approveFeedback = 0
+    @State private var denyFeedback = 0
 
     public init(
         model: ApprovalViewModel,
@@ -28,12 +33,26 @@ public struct ApprovalBanner: View {
     }
 
     public var body: some View {
-        if let request = model.pending {
-            scrollingIfNeeded(banner(for: request))
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
-        } else {
-            EmptyView()
+        Group {
+            if let request = model.pending {
+                scrollingIfNeeded(banner(for: request))
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+            } else {
+                EmptyView()
+            }
         }
+        // Observed here, not on the banner, so the clearing of `pending` (the
+        // gateway accepting a Deny) is still seen after the banner disappears.
+        .onChange(of: model.pending?.requestID) { _, current in
+            guard let awaiting = denyAwaitingRequestID, current != awaiting else { return }
+            denyAwaitingRequestID = nil
+            denyFeedback += 1
+        }
+        .onChange(of: model.state) { _, state in
+            if case .respondFailed = state { denyAwaitingRequestID = nil }
+        }
+        .fleetHaptic(.approve, trigger: approveFeedback)
+        .fleetHaptic(.deny, trigger: denyFeedback)
     }
 
     /// At accessibility text sizes the card can outgrow the screen; keep it
@@ -59,6 +78,7 @@ public struct ApprovalBanner: View {
             } icon: {
                 Image(systemName: "exclamationmark.shield.fill")
                     .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityHidden(true)
             }
             .accessibilityIdentifier("approval.banner.title")
 
@@ -94,6 +114,7 @@ public struct ApprovalBanner: View {
                 // Denial stays friction-free: one tap, no biometric prompt or
                 // confirmation step.
                 Button(role: .destructive) {
+                    denyAwaitingRequestID = request.requestID
                     onDeny()
                 } label: {
                     Text("Deny")
@@ -162,7 +183,13 @@ public struct ApprovalBanner: View {
     private func approveMenu(for request: ApprovalRequest) -> some View {
         let offered = Set(request.choices)
         let approveAction: (ApprovalChoice) -> Void = { choice in
-            Task { await model.approve(scope: choice) }
+            let requestID = request.requestID
+            Task {
+                await model.approve(scope: choice)
+                // The gateway accepted it only if the pending request moved on;
+                // a failed or cancelled presence check leaves it in place.
+                if model.pending?.requestID != requestID { approveFeedback += 1 }
+            }
         }
         let allowed = model.canApprove
         if offered.contains("session") || offered.contains("always") {
@@ -199,6 +226,7 @@ public struct ApprovalBanner: View {
         HStack(spacing: 4) {
             Image(systemName: "faceid")
                 .font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
             Text(text)
                 .font(.body.weight(.semibold))
         }

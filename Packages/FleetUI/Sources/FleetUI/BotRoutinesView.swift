@@ -205,7 +205,7 @@ public final class BotRoutinesViewModel {
     // MARK: helpers
 
     static func describe(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }
 
@@ -403,7 +403,7 @@ public struct BotRoutinesView: View {
                     .accessibilityIdentifier("routines.row.remove.\(routine.jobID)")
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.headline.weight(.medium))
                         .foregroundStyle(theme.textSecondary)
                 }
                 // FOS-6 tap-target: pad to the 44pt actionable bar (SPEC
@@ -500,7 +500,7 @@ public struct BotRoutinesView: View {
         ContentUnavailableView {
             Label("Routines Unavailable", systemImage: "calendar.badge.exclamationmark")
         } description: {
-            Text("This gateway has no management session wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to view and manage its routines.")
         }
         .accessibilityIdentifier("routines.unavailable")
     }
