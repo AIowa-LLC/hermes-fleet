@@ -59,11 +59,19 @@ mkdir -p HermesFleetApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
 cp "$LOCK_SOURCE" HermesFleetApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 ```
 
-For the Dev source, use the existing wrapper with explicit build 19; its historical
-project defaults are 1 and the wrapper supplies the release build override:
+For the original Dev source, use an explicit unsigned simulator build with build
+19 and its source SHA; its historical project defaults are 1. The guarded Dev
+wrapper requires the source to descend from current `origin/main`, so it can
+reject a historical release checkout after main advances. This compilation-only
+command keeps the original source and independent identity without changing that
+release guard:
 
 ```sh
-bash scripts/fleet_dev_build.sh simulator --sha "$SOURCE_SHA" --build 19
+xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetDev \
+  -configuration Debug -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath build/DEV19Reproduction -skipMacroValidation \
+  -onlyUsePackageVersionsFromResolvedFile CURRENT_PROJECT_VERSION=19 \
+  FLEET_DEV_SOURCE_SHA="$SOURCE_SHA" CODE_SIGNING_ALLOWED=NO build
 ```
 
 For the production source, an unsigned simulator build with the retained dependency
