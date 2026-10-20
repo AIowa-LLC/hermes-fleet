@@ -125,6 +125,11 @@ exit 86
 STUB
   chmod 755 "$TOOLS/$tool"
 done
+cat > "$TOOLS/sudo" <<'STUB'
+#!/bin/sh
+exit 86
+STUB
+chmod 755 "$TOOLS/sudo"
 FRESH="$T/fresh-reviewer"; mkdir -m 700 "$FRESH"
 ln -s "$LEG/credentials" "$FRESH/credentials"
 printf 'password=synthetic-fresh\n' > "$ALIAS/safe"; chmod 600 "$ALIAS/safe"
@@ -150,6 +155,31 @@ out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
   HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$ALIAS/loop-a" \
   bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses unresolvable state before Docker"; else fail "launcher state resolution rc=$rc"; fi
+
+# A credentials-named file is not proof that an unrelated private directory
+# belongs to this launcher. Only a marked state directory may be recursively
+# removed by clean --purge.
+UNRELATED="$T/unrelated-private-dir"; mkdir -m 700 "$UNRELATED"
+printf 'keep this unrelated file\n' > "$UNRELATED/credentials"; chmod 600 "$UNRELATED/credentials"
+rm -f "$T/tool-used"
+out=$(env PATH="$TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$UNRELATED" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -f "$UNRELATED/credentials" ] && [ ! -e "$T/tool-used" ]; then
+  pass "purge refuses an unrelated private directory before external work"
+else
+  fail "unrelated directory purge rc=$rc external=$(test -e "$T/tool-used" && echo yes || echo no)"
+fi
+
+MANAGED="$T/managed-reviewer-state"; mkdir -m 700 "$MANAGED"
+hf_mark_reviewer_state_dir "$MANAGED" || fail "state marker creation"
+[ "$(mode_of "$MANAGED/.hermes-fleet-reviewer-state")" = 600 ] \
+  && pass "launcher state marker is private" || fail "state marker mode"
+rm -f "$T/tool-used"
+out=$(env PATH="$TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$MANAGED" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" = 0 ] && [ ! -e "$MANAGED" ]; then pass "marked reviewer state directory can be purged"; else fail "marked purge rc=$rc"; fi
+[ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
+  && pass "purge decisions preserve legacy credentials" || fail "purge changed legacy fixture"
 [ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
   && pass "all alias refusals preserve synthetic legacy contents and mode" || fail "alias refusal changed legacy fixture"
 

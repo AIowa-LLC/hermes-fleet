@@ -110,7 +110,7 @@ def fixed_temp_lines(path):
         if line.strip().startswith("#"):
             continue
         fixed = re.search(r"/tmp/[A-Za-z0-9_.-]", line) or re.search(r"\$\{?TMPDIR[^}]*\}?/[A-Za-z]", line)
-        if fixed and "mktemp" not in line and "hf_private" not in line and "RESULT_ROOT" not in line:
+        if fixed and "mktemp" not in line and "RESULT_ROOT" not in line:
             hits.append((i, line.strip()))
     return hits
 

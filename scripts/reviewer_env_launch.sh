@@ -88,6 +88,7 @@ require_docker() {
 # ---------------------------------------------------------------- credentials
 resolve_credentials() {
   hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
+  hf_mark_reviewer_state_dir "$REVIEWER_ENV_DIR" || die "cannot mark reviewer state directory"
   if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
     CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") || die "refusing unsafe reviewer credentials"
   fi
@@ -401,10 +402,11 @@ do_clean() {
     # Only ever delete a directory that is verifiably ours (not a symlink,
     # not another user's, not world/group accessible).
     hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "REFUSING to purge $REVIEWER_ENV_DIR: not a private directory owned by this user"
-    # ...and only one this launcher created (holds its credentials file) or an
-    # empty one; never an arbitrary directory you happen to own.
-    if [ -n "$(ls -A "$REVIEWER_ENV_DIR" 2>/dev/null)" ] && [ ! -f "$CREDS_FILE" ]; then
-      die "REFUSING to purge $REVIEWER_ENV_DIR: not a reviewer state directory (no credentials file)"
+    # ...and only one the launcher has adopted with its private state marker,
+    # or an empty one; a credentials-named file alone proves nothing.
+    if [ -n "$(ls -A "$REVIEWER_ENV_DIR" 2>/dev/null)" ] \
+       && ! hf_reviewer_state_dir_marked "$REVIEWER_ENV_DIR"; then
+      die "REFUSING to purge $REVIEWER_ENV_DIR: not a marked reviewer state directory"
     fi
   fi
   do_stop

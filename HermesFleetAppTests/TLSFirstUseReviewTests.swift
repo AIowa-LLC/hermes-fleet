@@ -54,8 +54,31 @@ final class TLSFirstUseReviewTests: XCTestCase {
         func forget(gatewayID: GatewayID) async {}
     }
 
+    private enum PinStoreFailure: Error { case deleteFailed }
+
+    private final class FailingDeletePinStore: TLSPinStoring, TLSFirstUseApprovalStoring, @unchecked Sendable {
+        private let backing = InMemoryPinStore()
+        func savePin(_ pin: SPKIFingerprint, for gatewayID: GatewayID) async throws {
+            try await backing.savePin(pin, for: gatewayID)
+        }
+        func loadPin(for gatewayID: GatewayID) async throws -> SPKIFingerprint? {
+            try await backing.loadPin(for: gatewayID)
+        }
+        func deletePin(for gatewayID: GatewayID) async throws { throw PinStoreFailure.deleteFailed }
+        func approveFirstUse(for gatewayID: GatewayID, boundTo fingerprint: SPKIFingerprint) async throws {
+            try await backing.approveFirstUse(for: gatewayID, boundTo: fingerprint)
+        }
+        func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
+            try await backing.isFirstUseApproved(for: gatewayID)
+        }
+        func resetFirstUseApproval(for gatewayID: GatewayID) async throws {
+            try await backing.resetFirstUseApproval(for: gatewayID)
+        }
+    }
+
     private func makeEnvironment(
-        store: InMemoryPinStore,
+        store: any TLSPinStoring,
+        approvalStore: (any TLSFirstUseApprovalStoring)? = nil,
         probe: TLSKeyProbing? = nil,
         seeds: [GatewayRegistration] = []
     ) async throws -> AppEnvironment {
@@ -70,7 +93,7 @@ final class TLSFirstUseReviewTests: XCTestCase {
                 sessionFactory: { gateway, _ in RosterSession(gatewayID: gateway.id) }),
             cache: try SwiftDataCacheStore.makeInMemory(),
             tlsPinStore: store,
-            tlsApprovalStore: store,
+            tlsApprovalStore: approvalStore ?? (store as? TLSFirstUseApprovalStoring),
             tlsKeyProbe: probe ?? Probe(result: .success(keyA)),
             sessionList: SessionList(),
             connectionFactory: { gateway, _ in Connection(gatewayID: gateway.id) },
@@ -199,6 +222,32 @@ final class TLSFirstUseReviewTests: XCTestCase {
         XCTAssertNil(try store.syncLoadPin(for: id), "the old endpoint's pin never carries over")
         XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: keyA, for: id))
         XCTAssertTrue(try store.syncConsumeFirstUseApproval(matching: keyB, for: id))
+    }
+
+    func testEndpointEditKeepsOldEndpointWhenTrustCleanupFails() async throws {
+        let store = FailingDeletePinStore()
+        let id = GatewayID(rawValue: "gw-edit-cleanup-failure")
+        let env = try await makeEnvironment(
+            store: store, seeds: [registration(secure, id: id)])
+        try await store.savePin(keyA, for: id)
+        try await store.approveFirstUse(for: id, boundTo: keyA)
+        let review = TLSKeyReview(endpoint: otherSecure, fingerprint: keyB)
+
+        do {
+            _ = try await env.updateGateway(
+                id, edits: GatewayEdit(endpoint: otherSecure), tlsReview: review)
+            XCTFail("expected trust cleanup to fail")
+        } catch {
+            XCTAssertTrue(error is PinStoreFailure)
+        }
+
+        await env.load()
+        XCTAssertEqual(env.gateways.first?.endpoint, secure,
+                       "a failed Keychain cleanup must not leave the replacement endpoint registered")
+        let savedPin = try await store.loadPin(for: id)
+        let approvalRemains = try await store.isFirstUseApproved(for: id)
+        XCTAssertEqual(savedPin, keyA)
+        XCTAssertTrue(approvalRemains)
     }
 
     func testRenameKeepsEstablishedPinWithoutReview() async throws {

@@ -38,6 +38,14 @@ final class PathScopedEndpointTests: XCTestCase {
             "/gw/api/plugins/kanban/events")
     }
 
+    func testKanbanTaskIdsCannotEscapeTheirPathSegment() throws {
+        for hostile in [".", "..", "../admin", "a/../../admin", #"%2e%2e%2fadmin"#, "a\\..\\admin"] {
+            XCTAssertThrowsError(try KanbanEventStreamClient.taskPathSegment(hostile), "accepted \(hostile)")
+        }
+        XCTAssertEqual(try KanbanEventStreamClient.taskPathSegment("task-123"), "task-123")
+        XCTAssertEqual(try KanbanEventStreamClient.taskPathSegment("task name"), "task%20name")
+    }
+
     func testCronURLsKeepPrefixAndEncodeIdsInsideIt() throws {
         for base in [scoped, scopedSlash] {
             XCTAssertEqual(try XCTUnwrap(DashboardCronClient.jobsURL(base: base, profile: "p")).path, "/gw/api/cron/jobs")

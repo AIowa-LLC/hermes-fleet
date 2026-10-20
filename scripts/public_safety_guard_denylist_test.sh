@@ -21,4 +21,28 @@ run "absent denylist fails when required" 1 "$T/missing.txt"
 HIT="Hermes Fl$(printf 'ee')t"; printf '%s\n' "$HIT" > "$T/hit.txt";                    run "matching denylist fails" 1 "$T/hit.txt"
 # A matching private value must never be echoed into the output.
 grep -qF "$HIT" "$T/out" && { echo "FAIL  private value echoed" >&2; FAILS=$((FAILS+1)); } || echo "PASS  matched private value is not echoed"
+
+# Exercise the generic home-path filter in an isolated tracked tree. An allowed
+# placeholder must not mask a real path on the same source line.
+HOME_REPO="$T/homepath-repo"
+mkdir -p "$HOME_REPO/scripts"
+cp scripts/public_safety_guard.sh "$HOME_REPO/scripts/public_safety_guard.sh"
+git -C "$HOME_REPO" init -q
+HOME_PREFIX="$(printf '/%s/' Users)"
+printf 'example %srunner/template\n' "$HOME_PREFIX" > "$HOME_REPO/example.txt"
+git -C "$HOME_REPO" add scripts/public_safety_guard.sh example.txt
+HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
+  bash "$HOME_REPO/scripts/public_safety_guard.sh" >"$T/home-allowed.out" 2>&1; rc=$?
+if [ "$rc" = 0 ]; then echo "PASS  placeholder home path passes"; else echo "FAIL  placeholder home path rejected" >&2; FAILS=$((FAILS+1)); fi
+printf 'example %srunner/template and %sprivate-owner/data\n' "$HOME_PREFIX" "$HOME_PREFIX" > "$HOME_REPO/example.txt"
+git -C "$HOME_REPO" add example.txt
+HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
+  bash "$HOME_REPO/scripts/public_safety_guard.sh" >"$T/home-mixed.out" 2>&1; rc=$?
+if [ "$rc" != 0 ] && grep -q 'example.txt:1' "$T/home-mixed.out"; then
+  echo "PASS  mixed placeholder and real home path is rejected"
+else
+  echo "FAIL  mixed home-path line was not rejected" >&2
+  FAILS=$((FAILS+1))
+fi
+
 echo "guard denylist: $FAILS failure(s)"; [ "$FAILS" = 0 ]

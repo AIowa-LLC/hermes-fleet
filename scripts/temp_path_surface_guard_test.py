@@ -38,8 +38,12 @@ case("fixed ${TMPDIR:-/tmp}/name in a documented script fails",
      {"README.md": "run `bash scripts/a.sh`\n", "scripts/a.sh": 'LOG="${TMPDIR:-/tmp}/name.log"\n'}, 1)
 case("mktemp-created paths pass",
      {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": 'D=$(mktemp -d "${TMPDIR:-/tmp}/hf.XXXXXX")\n'}, 0)
-case("private_dir_lib users pass",
-     {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": 'W=$(hf_private_dir "${TMPDIR:-/tmp}/x-$(id -u)")\n'}, 0)
+case("the reviewed private path builder remains allowlisted",
+     {"Makefile": "t:\n\t. scripts/private_dir_lib.sh\n",
+      "scripts/private_dir_lib.sh": 'printf "%s/%s-%s" "${TMPDIR:-/tmp}" "$1" "$(id -u)"\n'}, 0)
+case("an exemption token in an unrelated line does not hide a fixed path",
+     {"Makefile": "t:\n\tbash scripts/a.sh\n",
+      "scripts/a.sh": 'echo x > /tmp/fixed-name.log # hf_private_dir\n'}, 1)
 case("an unreachable historical script is out of scope",
      {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": "echo ok\n", "scripts/old.sh": FIXED}, 0)
 case("comments are ignored",

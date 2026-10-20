@@ -13,6 +13,24 @@ import FleetCore
 /// rather than raw status codes.
 extension KanbanEventStreamClient: KanbanBoardOperating {
 
+    /// Task IDs come from the gateway response, but they still must remain one
+    /// path component when reused in an authenticated request. Reject path
+    /// separators, percent escapes (which can be decoded again by a proxy),
+    /// and dot segments before percent-encoding the remaining reserved bytes.
+    static func taskPathSegment(_ raw: String) throws -> String {
+        guard !raw.isEmpty, raw != ".", raw != "..",
+              !raw.contains("/"), !raw.contains("\\"), !raw.contains("%"),
+              !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw KanbanMutationError.malformedResponse("invalid task identifier")
+        }
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let encoded = raw.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            throw KanbanMutationError.malformedResponse("invalid task identifier")
+        }
+        return encoded
+    }
+
     // MARK: - Shared request plumbing
 
     /// Type-erasing box so one helper can take any request body.
@@ -139,17 +157,20 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     }
 
     public func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard {
+        let segment = try Self.taskPathSegment(id)
         let data = try await pluginRequest(
-            path: "/tasks/\(id)", method: "PATCH", body: UpdateTaskBody(patch))
+            path: "/tasks/\(segment)", method: "PATCH", body: UpdateTaskBody(patch))
         return try Self.decodeCardResponse(data, context: "updated task")
     }
 
     public func deleteTask(id: String) async throws {
-        _ = try await pluginRequest(path: "/tasks/\(id)", method: "DELETE")
+        let segment = try Self.taskPathSegment(id)
+        _ = try await pluginRequest(path: "/tasks/\(segment)", method: "DELETE")
     }
 
     public func fetchTaskDetail(id: String) async throws -> KanbanTaskDetail {
-        let data = try await pluginRequest(path: "/tasks/\(id)", method: "GET")
+        let segment = try Self.taskPathSegment(id)
+        let data = try await pluginRequest(path: "/tasks/\(segment)", method: "GET")
         do {
             return try JSONDecoder().decode(KanbanTaskDetail.self, from: data)
         } catch {
@@ -160,12 +181,13 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     // MARK: - Comments / links
 
     public func addComment(taskID: String, body: String, author: String?) async throws {
+        let segment = try Self.taskPathSegment(taskID)
         struct CommentBody: Encodable {
             let body: String
             let author: String?
         }
         _ = try await pluginRequest(
-            path: "/tasks/\(taskID)/comments", method: "POST",
+            path: "/tasks/\(segment)/comments", method: "POST",
             body: CommentBody(body: body, author: author ?? "dashboard"))
     }
 
@@ -202,16 +224,18 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     // MARK: - Recovery / auxiliary actions
 
     public func reclaimTask(id: String, reason: String?) async throws {
+        let segment = try Self.taskPathSegment(id)
         struct ReclaimBody: Encodable { let reason: String? }
         _ = try await pluginRequest(
-            path: "/tasks/\(id)/reclaim", method: "POST",
+            path: "/tasks/\(segment)/reclaim", method: "POST",
             body: ReclaimBody(reason: reason))
     }
 
     public func specifyTask(id: String, author: String?) async throws -> KanbanSpecifyOutcome {
+        let segment = try Self.taskPathSegment(id)
         struct SpecifyBody: Encodable { let author: String? }
         let data = try await pluginRequest(
-            path: "/tasks/\(id)/specify", method: "POST",
+            path: "/tasks/\(segment)/specify", method: "POST",
             body: SpecifyBody(author: author))
         do {
             return try JSONDecoder().decode(KanbanSpecifyOutcome.self, from: data)
@@ -221,9 +245,10 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     }
 
     public func decomposeTask(id: String, author: String?) async throws -> KanbanDecomposeOutcome {
+        let segment = try Self.taskPathSegment(id)
         struct DecomposeBody: Encodable { let author: String? }
         let data = try await pluginRequest(
-            path: "/tasks/\(id)/decompose", method: "POST",
+            path: "/tasks/\(segment)/decompose", method: "POST",
             body: DecomposeBody(author: author))
         do {
             return try JSONDecoder().decode(KanbanDecomposeOutcome.self, from: data)
@@ -233,13 +258,14 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     }
 
     public func reassignTask(id: String, profile: String?, reclaimFirst: Bool, reason: String?) async throws {
+        let segment = try Self.taskPathSegment(id)
         struct ReassignBody: Encodable {
             let profile: String?
             let reclaim_first: Bool
             let reason: String?
         }
         _ = try await pluginRequest(
-            path: "/tasks/\(id)/reassign", method: "POST",
+            path: "/tasks/\(segment)/reassign", method: "POST",
             body: ReassignBody(profile: profile, reclaim_first: reclaimFirst, reason: reason))
     }
 

@@ -125,3 +125,34 @@ hf_reviewer_credential_file() {
   fi
   printf '%s\n' "$physical"
 }
+
+# A non-empty reviewer state directory may be purged only after the launcher
+# explicitly adopts it while resolving credentials. This small marker protects
+# unrelated private directories that happen to contain a file named
+# `credentials`.
+hf_reviewer_state_dir_marked() {
+  local d="${1:-}" marker owner mode contents
+  [ -n "$d" ] || return 1
+  hf_private_dir "$d" >/dev/null || return 1
+  marker="$d/.hermes-fleet-reviewer-state"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  owner=$(hf__stat_field owner "$marker") || return 1
+  mode=$(hf__stat_field mode "$marker") || return 1
+  [ "$owner" = "$(id -u)" ] && [ "$mode" = "600" ] || return 1
+  contents=$(cat "$marker" 2>/dev/null) || return 1
+  [ "$contents" = "hermes-fleet-reviewer-state-v1" ]
+}
+
+hf_mark_reviewer_state_dir() {
+  local d="${1:-}" marker
+  [ -n "$d" ] || return 1
+  hf_private_dir "$d" >/dev/null || return 1
+  marker="$d/.hermes-fleet-reviewer-state"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    hf_reviewer_state_dir_marked "$d"
+    return $?
+  fi
+  ( umask 077; set -C; printf 'hermes-fleet-reviewer-state-v1\n' > "$marker" ) || return 1
+  chmod 600 "$marker" 2>/dev/null || return 1
+  hf_reviewer_state_dir_marked "$d"
+}
