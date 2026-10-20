@@ -1,16 +1,16 @@
 # Next-build readiness handoff
 
-> Snapshot: **main is `8ffbbb22d456cc35bfc3b125660652473cd5a374`; 11 open PRs and 80 open issues after #198**. All 11 open PRs and 80 open issues match disposition rows below. PR #195 is merged; #196 is in required CI, #197 awaits a post-#196 base refresh, and #198 is queued for hosted checks. Refresh this snapshot after the protected-queue merges and final main CI run. The original issue bodies linked below remain the authoritative acceptance checklists.
+> Snapshot: **main is `b93358a9b35f898a55e4db2afd43f4fd952f571c`; 9 open PRs and 80 open issues**. All 9 open PRs and 80 open issues match disposition rows below. PRs #195 and #196 are merged; #166 is closed as superseded. PR #198 is in protected merge-group validation; #197 is refreshed on `b93358a9` with hosted checks running. Post-merge CI for #196 is still running. Refresh this snapshot after the remaining merges and final main CI. The original issue bodies linked below remain the authoritative acceptance checklists.
 
 ## Development-build readiness
 
-The repository is positioned to start the next development build after the remaining fix PRs merge through the protected queue and the resulting main commit passes required CI. The fixes address reconnect recovery, long-chat loading, warning clarity, local file protection, and a Kanban stream-registration race. The physical iPhone verification for file protection remains an open acceptance item; simulator checks do not establish the exact iOS protection class.
+The repository is positioned to start the next development build after PRs #197, #198, and the focused security replacement for #183 merge through the protected queue and the resulting main commit passes required CI. The fixes address reconnect recovery, long-chat loading, warning clarity, local file protection, a Kanban stream-registration race, and a slow UI-test probe. The physical iPhone verification for file protection remains an open acceptance item; simulator checks do not establish the exact iOS protection class.
 
 The product versions remain unchanged: **Prod 0.2.0 (98)** and **Dev 0.1.0 (19)**, as defined in `project.yml`. This handoff records development readiness separately from distribution readiness.
 
 ## Recommended next-build order
 
-Start from the verified main commit after #196 and #197 pass the protected merge queue and post-merge CI, and the reconciled security PR #183 passes independent review and required CI. Keep the product versions above unchanged.
+Start from the verified main commit after #196 and #198 pass the protected merge queue, #197 is refreshed and passes the protected merge queue, and the reconciled security PR #183 passes independent review and required CI. Keep the product versions above unchanged.
 
 1. **Composer attachment previews (#192).** Finish the staged image/document preview and cleanup path. Accept with simulator build, focused unit/UI coverage, VoiceOver labels, and proof that temporary files are removed on cancel, send, and failure. Preserve the existing fork until the owner-coordinated implementation is ready.
 2. **Dynamic Type and accessibility (#170).** Replace fixed-size text in the scoped surfaces, then check the largest supported text size, VoiceOver labels/focus order, and the font-style audit. Keep the drawer navigation and do not expand into the larger proposed redesign.
@@ -33,10 +33,10 @@ The old Pocket Command plan is based on a stale audit snapshot and its P0.1 serv
 | PR | Disposition | Acceptance / next action |
 |---|---|---|
 | [#195](https://github.com/AIowa-LLC/hermes-fleet/pull/195) | **Merged** at `8ffbbb22` | Merge-group CI run [39411778560](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39411778560) passed. Implements durable `session.resume`, lifecycle/open-request recovery, long-chat paging fallback, and warning/accessibility copy. Closes #194 and #62; #188 still needs a real Windows gateway check. Main-push run [39429112604](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39429112604) failed the Kanban stream-registration test; #197 addresses that race. Scheduled full-UI run [39431348744](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39431348744) exposed a test timing defect: a broad accessibility text query outlasted the 15s scripted stream. Follow-up test fix is PR #198; its focused C1 preflight passed all 12 cases locally.
-| [#196](https://github.com/AIowa-LLC/hermes-fleet/pull/196) | Merge fix; CI running | Current head `188938b6`; PR CI run [39437584537](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39437584537). The read-back now requires confirmed `.complete` protection on iOS; unknown and `.none` values remain unverified. Merge only after all changed-area UI checks and the protected merge-group run pass. #82 stays open until physical iPhone proof covers all listed file families. |
-| [#197](https://github.com/AIowa-LLC/hermes-fleet/pull/197) | Merge fix; waiting for #196 and base refresh | Prior PR CI run [39432811508](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39432811508) was cancelled before validation completed. Static and package checks passed; hosted app-unit and UI jobs were cancelled, so they do not validate the final head. C1 app-unit validation on current head `0a0bcd41` passed 1,306 tests with zero failures. The change registers the Kanban event stream before returning from `openStream`, eliminating the cancellation race seen in main CI. Run fresh PR and merge-group checks on the refreshed head, then confirm final main CI. |
-| [#198](https://github.com/AIowa-LLC/hermes-fleet/pull/198) | Merge fix; hosted CI queued | Head `3e6f5ac2`; synchronizes the reasoning-indicator UI assertion with the scripted stream. Focused C1 preflight passed all 12 `ConversationCompactChrome` tests with zero failures. Wait for the required hosted checks and protected merge-group run, then include its suite in final main verification. |
-| [#166](https://github.com/AIowa-LLC/hermes-fleet/pull/166) | Close as superseded after #196 lands | Preserve its branch; do not merge the stale stacked schema/recovery base. Current main already contains protected room-draft persistence, while #196 directly implements the needed file-protection behavior. |
+| [#196](https://github.com/AIowa-LLC/hermes-fleet/pull/196) | **Merged** at `b93358a9` | PR CI run [39437584537](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39437584537) and protected merge-group run [39473686190](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39473686190) passed, including all 12 UI shards and critical smoke. Post-merge main CI [39491347407](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39491347407) is still running. The read-back now requires confirmed `.complete` protection on iOS; unknown and `.none` values remain unverified. #82 stays open until physical iPhone proof covers all listed file families. |
+| [#197](https://github.com/AIowa-LLC/hermes-fleet/pull/197) | Merge fix; refreshed on post-#196 main | Current head `08239e0d`; fresh CI run [39491461422](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39491461422). Package tests and changed-area UI shard 4 passed; hosted app units, static guards, and remaining UI shards are pending/running. Prior run [39432811508](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39432811508) was cancelled before validation completed. C1 app-unit validation on the original fix head `0a0bcd41` passed 1,306 tests with zero failures. The change registers the Kanban event stream before returning from `openStream`, eliminating the cancellation race seen in main CI. Complete fresh PR and protected merge-group checks, then confirm final main CI. |
+| [#198](https://github.com/AIowa-LLC/hermes-fleet/pull/198) | Merge fix; queued for protected merge | Head `3e6f5ac2`; synchronizes the reasoning-indicator UI assertion with the scripted stream. PR CI run [39461471281](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39461471281) passed all required checks and all 12 UI shards; focused C1 preflight passed all 12 `ConversationCompactChrome` tests with zero failures. Protected merge-group run [39491349720](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/39491349720) is running on post-#196 main. Verify post-merge CI after it lands. |
+| [#166](https://github.com/AIowa-LLC/hermes-fleet/pull/166) | **Closed as superseded** after #196 merged | Preserved its branch; did not merge the stale stacked schema/recovery base. Closure comment links #196 at `b93358a9`; physical file-protection proof remains in #82. |
 | [#68](https://github.com/AIowa-LLC/hermes-fleet/pull/68) | Close after this handoff lands | Preserve roadmap decisions and epic anchors; its audit is based on stale main SHA `481dd41` and its P0.1 headline no longer matches current server-request behavior. |
 | [#192](https://github.com/AIowa-LLC/hermes-fleet/pull/192) | Keep draft for next build | Requires macOS simulator build/unit/UI validation of preview, temporary-file cleanup/accessibility, and owner coordination already recorded on the PR. Keep the fork untouched. |
 | [#183](https://github.com/AIowa-LLC/hermes-fleet/pull/183) | Replace stale draft with a focused fix PR after #196/#197 | The original head is based on `3698c134`; its broad patch is stale against current main. Its security and reliability features that remain in main were checked, and only the new guard/path hardening was transplanted to `codex/pr183-fixes-on-main-20261020` through `708683dd`. The exact-range security diff review completed with zero reportable findings through `6123f23a`; the later URL-encoding follow-up was reviewed manually. Current local evidence: C1 static passes; package suites pass at 767/765/64/60/52/96 (FleetNetworking has 7 skipped); the private-denylist guard passes without printing its values; and C1 app-unit tests pass 1,307 tests with zero failures on current head `708683dd`. Reconcile with final main, then run fresh hosted CI and protected-queue merge. Preserve the original branch; publish the focused branch and close the stale PR only after its replacement is merged. Finding 8 history rewrite remains a separate gate requiring action-time confirmation and verified private recovery. |
@@ -47,12 +47,13 @@ The old Pocket Command plan is based on a stale audit snapshot and its P0.1 serv
 
 PR #162 is already closed without merge. Its archive and ADR-numbering cleanup is present on main at `79d1f181` through #193; its closure comment records that the stale branch is not needed.
 
-## Recently resolved issues
+## Recently resolved PRs and issues
 
-| Issue | Resolution |
+| Item | Resolution |
 |---|---|
 | [#194](https://github.com/AIowa-LLC/hermes-fleet/issues/194) | Closed by merged PR #195 at `8ffbbb22`; reconnect now resumes the durable chat and adopts the replacement runtime session. |
 | [#62](https://github.com/AIowa-LLC/hermes-fleet/issues/62) | Closed by merged PR #195 at `8ffbbb22`; warning copy now distinguishes HTTP transport from application-layer encryption while preserving the existing warning and Save gates. |
+| PR [#166](https://github.com/AIowa-LLC/hermes-fleet/pull/166) | Closed as superseded by merged PR #196 at `b93358a9`; issue #82 retains the physical-device acceptance gate. |
 
 ## Open issue disposition
 
@@ -143,9 +144,10 @@ Each open issue has a disposition reason and a minimum acceptance gate below. Th
 
 ## Merge and build gates
 
-1. Merge #196 and #197 through required CI and the protected merge queue; verify the resulting main commits and post-merge CI.
-2. Reconcile #183 with that final main, complete the fresh exact-range security review and required CI, then merge through the protected queue if clean.
-3. Close #166 as superseded after #196 lands and close #68 after this handoff replaces its stale audit snapshot.
+1. Verify post-merge CI for #196; complete #198's protected merge-group run and verify its post-merge CI.
+2. Complete #197's fresh PR checks on `b93358a9`, enqueue through the protected merge queue, and verify the resulting main CI.
+3. Reconcile #183 with that main, complete the fresh exact-range security review and required CI, then merge through the protected queue if clean.
+4. Close #68 after this handoff replaces its stale audit snapshot.
 4. Re-read the open issue/PR inventory from GitHub before starting the next build; keep issues #82 and #188 open until their physical/live acceptance evidence is attached.
 5. Start the next development build from the verified main SHA without changing the recorded Prod/Dev versions unless a separate versioning request authorizes it.
 6. Keep release preparation, uploads, deployments, Finding 8 history rewrite, and any external gateway changes behind their separate authorization and evidence gates.
