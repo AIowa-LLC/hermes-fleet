@@ -51,7 +51,8 @@ final class UniversalLoginUITests: XCTestCase {
     // MARK: paste -> confirm -> awaiting approval -> approved -> connected
 
     func testPasteConfirmAwaitApprovalThenConnect() throws {
-        let app = launch(paste: link(id: "ok0123456789abcdef"), approveAfter: "6")
+        // Keep the synthetic owner pending while UI automation inspects and taps the copy control.
+        let app = launch(paste: link(id: "ok0123456789abcdef"), approveAfter: "30")
 
         app.buttons["fleet.first-run.paste"].tap()
         XCTAssertTrue(app.buttons["fleet.pairing.confirm"].waitForExistence(timeout: 10),

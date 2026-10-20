@@ -58,6 +58,10 @@ public actor GatewayReplayEngine: ReplayProviding {
             .sorted { $0.sessionID < $1.sessionID }
     }
 
+    public func clearWatermarks(for sessionIDs: Set<String>) async {
+        await transport.clearWatermarks(for: sessionIDs)
+    }
+
     public func replayAfterReconnect() async throws -> [ReplayOutcome] {
         var outcomes = try await replayPass()
         // Sessions whose bounded tracking overflowed (evicted watermark,
