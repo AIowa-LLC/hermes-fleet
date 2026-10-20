@@ -1,6 +1,6 @@
 # Next-build readiness handoff
 
-> Snapshot: **main is `8ffbbb22d456cc35bfc3b125660652473cd5a374`; 10 open PRs and 80 open issues after #195**. PR #195 is merged; #196 is in required CI and #197 awaits a post-#196 base refresh. Refresh this snapshot after the protected-queue merges and final main CI run. The original issue bodies linked below remain the authoritative acceptance checklists.
+> Snapshot: **main is `8ffbbb22d456cc35bfc3b125660652473cd5a374`; 10 open PRs and 80 open issues after #195**. All 10 open PRs and 80 open issues match disposition rows below. PR #195 is merged; #196 is in required CI and #197 awaits a post-#196 base refresh. Refresh this snapshot after the protected-queue merges and final main CI run. The original issue bodies linked below remain the authoritative acceptance checklists.
 
 ## Development-build readiness
 
