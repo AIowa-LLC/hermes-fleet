@@ -89,15 +89,20 @@ public final class ServerPromptViewModel {
             stored = request
         }
         // A re-delivery (reconnect `open_requests`) of a request already on
-        // screen never renders a second card; for a batch it may carry more
-        // locks than we know, so merge them.
+        // screen never renders a second card. Refresh the runtime session
+        // identity so answers after recovery target the currently adopted
+        // session; for a batch, preserve locks already recorded locally.
         if pending?.id == stored.id {
             if case .clarify(let prompt) = stored.kind {
                 lockedAnswers.merge(prompt.lockedAnswers) { current, _ in current }
             }
+            pending = stored
             return
         }
-        if queued.contains(where: { $0.id == stored.id }) { return }
+        if let queuedIndex = queued.firstIndex(where: { $0.id == stored.id }) {
+            queued[queuedIndex] = stored
+            return
+        }
         if pending == nil {
             show(stored)
         } else {

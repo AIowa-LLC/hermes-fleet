@@ -119,13 +119,19 @@ final class ConversationFixtureLoopTests: XCTestCase {
                 }
             }
         )
-        // Connection 2 (reconnect): same epoch, answers session.events.since
+        // Connection 2 (reconnect): resume the durable session, then answer session.events.since
         // with ONLY the missed tail (seq 4,5) — never the already-rendered
         // prefix. This is where replay dedupe is proven.
         let second = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
             onText: { frame in
                 guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "session.resume" {
+                    return [Self.responseFrame(id: id, result: [
+                        "session_id": sessionID, "stored_session_id": "k-1",
+                        "message_count": 1, "messages": [],
+                    ])]
+                }
                 if method == "session.events.since" {
                     return [Self.sinceResponse(
                         id: id,
@@ -227,6 +233,10 @@ final class ConversationFixtureLoopTests: XCTestCase {
                 switch method {
                 case "session.create":
                     return [Self.responseFrame(id: id, result: ["session_id": sessionID, "message_count": 0, "messages": []])]
+                case "session.resume":
+                    return [Self.responseFrame(id: id, result: [
+                        "session_id": sessionID, "message_count": 0, "messages": [],
+                    ])]
                 case "session.events.since":
                     return [Self.sinceResponse(id: id, events: [], latestSeq: 0)]
                 default:

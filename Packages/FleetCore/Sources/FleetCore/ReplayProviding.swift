@@ -19,6 +19,11 @@ public protocol ReplayProviding: Sendable {
     /// Persist across disconnects so replay resumes exactly where it stopped.
     func watermarks() async -> [SessionEventWatermark]
 
+    /// Forget replay state for runtime sessions whose IDs are being replaced
+    /// by `session.resume`. Implementations should clear the set atomically so
+    /// events cannot interleave between old/new identity cleanup.
+    func clearWatermarks(for sessionIDs: Set<String>) async
+
     /// Perform the reconnect + replay protocol against the currently
     /// connected transport (assumes `connect()` already succeeded on the
     /// reconnected socket):
@@ -42,6 +47,8 @@ public protocol ReplayProviding: Sendable {
 }
 
 extension ReplayProviding {
+    public func clearWatermarks(for sessionIDs: Set<String>) async {}
+
     public func subscribeToGaps() -> AsyncStream<EventGap> {
         AsyncStream { $0.finish() }
     }

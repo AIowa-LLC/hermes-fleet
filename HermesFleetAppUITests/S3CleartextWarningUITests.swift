@@ -55,6 +55,12 @@ final class S3CleartextWarningUITests: XCTestCase {
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")
         XCTAssertTrue(warning.waitForExistence(timeout: 5),
                       "cleartext warning should appear for public http endpoint")
+        XCTAssertTrue(
+            warning.label.contains("Fleet can't verify application-layer encryption for HTTP"),
+            "warning must distinguish HTTP from a trusted encrypted tunnel: \(warning.label)")
+        XCTAssertTrue(
+            warning.label.contains("A trusted encrypted tunnel may protect traffic in transit"),
+            "warning must not claim an assumed tunnel is present: \(warning.label)")
 
         // Save must be gated until the user confirms. Query the toolbar
         // BUTTON element directly — a disabled SwiftUI toolbar item surfaces

@@ -85,6 +85,21 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         deinit { task?.cancel() }
     }
 
+    func testClearingReapedRuntimeWatermarkKeepsOtherSessionCursors() async {
+        let transport = makeTransport(ScriptedSession())
+        await transport.advanceWatermark(to: 12, for: "reaped-runtime")
+        await transport.advanceWatermark(to: 4, for: "other-session")
+
+        await transport.clearWatermarks(for: ["reaped-runtime"])
+
+        let clearedWatermark = await transport.watermark(for: "reaped-runtime")
+        let retainedWatermark = await transport.watermark(for: "other-session")
+        let remainingWatermarks = await transport.allWatermarks()
+        XCTAssertEqual(clearedWatermark, 0)
+        XCTAssertEqual(retainedWatermark, 4)
+        XCTAssertEqual(remainingWatermarks, ["other-session": 4])
+    }
+
     // MARK: queue primitives
 
     func testCountBoundEvictsOldestAndReportsThem() {
