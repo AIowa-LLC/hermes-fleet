@@ -135,8 +135,14 @@ ln -s "$LEG/credentials" "$FRESH/credentials"
 printf 'password=synthetic-fresh\n' > "$ALIAS/safe"; chmod 600 "$ALIAS/safe"
 cp "$ALIAS/safe" "$ALIAS/public"; chmod 644 "$ALIAS/public"
 ln -s safe "$ALIAS/safe-link"
+ln "$LEG/credentials" "$ALIAS/hardlink"
+if TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/hardlink" >/dev/null 2>&1; then
+  fail "hard link to legacy credentials accepted"
+else
+  pass "hard link to legacy credentials refused"
+fi
 for alias in "$ALIAS/direct" "$ALIAS/chained" "$ALIAS/dangling" "$ALIAS/loop-a" \
-             "$T/legacy-link/credentials" "$ALIAS/public" "$ALIAS/safe-link"; do
+             "$T/legacy-link/credentials" "$ALIAS/hardlink" "$ALIAS/public" "$ALIAS/safe-link"; do
   for consumer in scripts/reviewer_env_check.sh scripts/reviewer_containment_test.sh; do
     rm -f "$T/tool-used"
     out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
@@ -150,6 +156,17 @@ out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
   HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$FRESH" \
   bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses linked credentials before Docker"; else fail "launcher credential-link guard rc=$rc"; fi
+HARDLINK_DIR="$T/hardlink-reviewer"; mkdir -m 700 "$HARDLINK_DIR"
+ln "$LEG/credentials" "$HARDLINK_DIR/credentials"
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$HARDLINK_DIR" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses hard-linked legacy credentials before Docker"
+else
+  fail "launcher hard-link credential guard rc=$rc"
+fi
 rm -f "$T/tool-used"
 out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
   HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$ALIAS/loop-a" \
@@ -185,6 +202,7 @@ if [ "$rc" = 0 ] && [ ! -e "$MANAGED" ]; then pass "marked reviewer state direct
 
 # 14. Positive controls: regular private files still work; deliberate legacy
 # opt-in permits a safe regular file but never relaxes the file/link policy.
+rm -f "$ALIAS/hardlink" "$HARDLINK_DIR/credentials"
 SAFE_CANONICAL=$(hf_canonical_path "$ALIAS/safe")
 out=$(TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/safe" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "regular private credential file accepted" || fail "safe regular file rc=$rc"

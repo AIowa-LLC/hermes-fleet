@@ -13,15 +13,16 @@
 #   hf_private_name <base>  prints "${TMPDIR:-/tmp}/<base>-<uid>" so two users
 #                           on one host never contend for the same name.
 
-hf__stat_field() { # <owner|mode> <path>
+hf__stat_field() { # <owner|mode|links> <path>
   local what="$1" p="$2" out
   # GNU first: on BSD `stat -c` fails, whereas GNU `stat -f` succeeds with
   # unrelated filesystem output.
-  if [ "$what" = owner ]; then
-    out=$(stat -c %u "$p" 2>/dev/null) || out=$(stat -f %u "$p" 2>/dev/null) || return 1
-  else
-    out=$(stat -c %a "$p" 2>/dev/null) || out=$(stat -f %Lp "$p" 2>/dev/null) || return 1
-  fi
+  case "$what" in
+    owner) out=$(stat -c %u "$p" 2>/dev/null) || out=$(stat -f %u "$p" 2>/dev/null) || return 1 ;;
+    mode) out=$(stat -c %a "$p" 2>/dev/null) || out=$(stat -f %Lp "$p" 2>/dev/null) || return 1 ;;
+    links) out=$(stat -c %h "$p" 2>/dev/null) || out=$(stat -f %l "$p" 2>/dev/null) || return 1 ;;
+    *) return 1 ;;
+  esac
   printf '%s' "$out"
 }
 
@@ -99,7 +100,7 @@ hf_is_legacy_reviewer_path() {
 # Validate before any credential bytes are parsed; print an absolute physical
 # filename on success. Explicit legacy opt-in does not relax file safety.
 hf_reviewer_credential_file() {
-  local p="${1:-}" physical owner mode rc
+  local p="${1:-}" physical owner mode links rc
   if hf_is_legacy_reviewer_path "$p"; then
     if [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != 1 ]; then
       echo "FAIL: credential file is inside the legacy reviewer state directory; provision fresh credentials" >&2
@@ -119,8 +120,13 @@ hf_reviewer_credential_file() {
   physical=$(hf_canonical_path "$p") || return 1
   owner=$(hf__stat_field owner "$physical") || return 1
   mode=$(hf__stat_field mode "$physical") || return 1
+  links=$(hf__stat_field links "$physical") || return 1
   if [ "$owner" != "$(id -u)" ] || [ "$mode" != 600 ]; then
     echo "FAIL: reviewer credential file must be owned by the current user with mode 600" >&2
+    return 1
+  fi
+  if [ "$links" != "1" ]; then
+    echo "FAIL: reviewer credential file must not have hard-link aliases" >&2
     return 1
   fi
   printf '%s\n' "$physical"
