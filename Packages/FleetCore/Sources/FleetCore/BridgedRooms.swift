@@ -159,7 +159,10 @@ public enum BridgedRooms {
     /// Device-local JSON persistence for bridged rooms (non-secret; same
     /// container protection as every other Fleet store).
     public actor Store {
+        public typealias ProtectionFailureReporter = @Sendable (LocalFileProtection.Failure) -> Void
+
         private let url: URL
+        private let protectionReporter: ProtectionFailureReporter?
         private var rooms: [String: RoomRecord] = [:]
         private var loaded = false
         /// Set when a present store file could not be read/decoded and was
@@ -200,8 +203,9 @@ public enum BridgedRooms {
             }
         }
 
-        public init(url: URL) {
+        public init(url: URL, protectionReporter: ProtectionFailureReporter? = nil) {
             self.url = url
+            self.protectionReporter = protectionReporter
         }
 
         /// Live change feed (room storage keys). Every mutation yields the
@@ -234,7 +238,10 @@ public enum BridgedRooms {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else { return }
-            BackupExclusion.apply(to: url) // stores written before the exclusion existed
+            if let failure = LocalFileProtection.applyBestEffortReportingFailure(
+                to: url, role: "bridged-rooms") {
+                protectionReporter?(failure) // repairs legacy stores in place
+            }
             do {
                 let data = try Data(contentsOf: url)
                 rooms = try JSONDecoder().decode([String: RoomRecord].self, from: data)
@@ -255,13 +262,24 @@ public enum BridgedRooms {
             } catch {
                 return
             }
+            if let failure = LocalFileProtection.applyBestEffortReportingFailure(
+                to: backup, role: "bridged-rooms-quarantine") {
+                protectionReporter?(failure)
+            }
             quarantinedURL = backup
         }
 
         private func persist(_ snapshot: [String: RoomRecord]) throws {
             let data = try JSONEncoder().encode(snapshot)
+            #if os(iOS)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            #else
             try data.write(to: url, options: .atomic)
-            BackupExclusion.apply(to: url)
+            #endif
+            if let failure = LocalFileProtection.applyBestEffortReportingFailure(
+                to: url, role: "bridged-rooms") {
+                protectionReporter?(failure)
+            }
         }
 
         /// Test launches reset before hydration, so previous rooms cannot

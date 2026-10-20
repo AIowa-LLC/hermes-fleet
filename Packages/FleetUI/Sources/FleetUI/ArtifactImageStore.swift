@@ -49,6 +49,8 @@ public final class ArtifactImageStore {
     public static let maxLoadedBytes = 96 * 1024 * 1024
 
     public private(set) var states: [ArtifactReference: State] = [:]
+    /// Receives type-only local storage failures for the in-app diagnostics ring.
+    @ObservationIgnored public var protectionReporter: ((LocalFileProtection.Failure) -> Void)?
 
     /// Insertion order for eviction (references whose payload is retained).
     private var loadedOrder: [ArtifactReference] = []
@@ -99,11 +101,30 @@ public final class ArtifactImageStore {
         }
         guard case .loaded(let payload) = states[reference] else { return nil }
         let directory = Self.shareDirectory
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        if let failure = LocalFileProtection.applyBestEffortReportingFailure(
+            to: directory, role: "artifact-share-directory") {
+            protectionReporter?(failure)
+            return nil
+        }
         let url = shareFileLocation(for: reference)
         do {
+            #if os(iOS)
+            try payload.data.write(to: url, options: [.atomic, .completeFileProtection])
+            #else
             try payload.data.write(to: url, options: .atomic)
+            #endif
         } catch {
+            return nil
+        }
+        if let failure = LocalFileProtection.applyBestEffortReportingFailure(
+            to: url, role: "artifact-share-file") {
+            protectionReporter?(failure)
+            try? FileManager.default.removeItem(at: url)
             return nil
         }
         shareFiles[reference] = url

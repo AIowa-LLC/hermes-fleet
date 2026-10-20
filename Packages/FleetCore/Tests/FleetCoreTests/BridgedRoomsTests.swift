@@ -23,6 +23,12 @@ final class BridgedRoomsTests: XCTestCase {
         try await store.upsert(BridgedRooms.RoomRecord(
             roomKey: "fleet-bridged-1", name: "Crew", members: [], createdAt: 1))
         XCTAssertTrue(BackupExclusion.isExcluded(storeURL), "atomic write must re-apply the exclusion")
+        XCTAssertEqual(LocalFileProtection.read(from: storeURL).backupExcluded, true)
+        #if os(iOS) && !targetEnvironment(simulator)
+        XCTAssertEqual(LocalFileProtection.read(from: storeURL).protectionClass,
+                       FileProtectionType.complete.rawValue,
+                       "room JSON must use NSFileProtectionComplete")
+        #endif
 
         // A store written before the exclusion existed is repaired on load.
         var url = storeURL!
@@ -33,6 +39,7 @@ final class BridgedRoomsTests: XCTestCase {
         let reloaded = BridgedRooms.Store(url: storeURL)
         _ = await reloaded.record(roomKey: "fleet-bridged-1")
         XCTAssertTrue(BackupExclusion.isExcluded(storeURL))
+        XCTAssertEqual(LocalFileProtection.read(from: storeURL).backupExcluded, true)
     }
 
     func testStoreRoundTripsRecordsAndEvents() async throws {
