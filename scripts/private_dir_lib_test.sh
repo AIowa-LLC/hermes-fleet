@@ -216,6 +216,13 @@ if [ "$rc" = 0 ] && [ ! -e "$MANAGED" ]; then pass "marked reviewer state direct
 # 14. Positive controls: regular private files still work; deliberate legacy
 # opt-in permits a safe regular file but never relaxes the file/link policy.
 rm -f "$ALIAS/hardlink" "$HARDLINK_DIR/credentials"
+UNSAFE_CREDENTIAL_PARENT="$T/unsafe-credential-parent"; mkdir -m 777 "$UNSAFE_CREDENTIAL_PARENT"
+printf 'password=synthetic-shared-parent\n' > "$UNSAFE_CREDENTIAL_PARENT/credentials"; chmod 600 "$UNSAFE_CREDENTIAL_PARENT/credentials"
+if hf_reviewer_credential_file "$UNSAFE_CREDENTIAL_PARENT/credentials" >/dev/null 2>&1; then
+  fail "credential file accepted under shared-writable non-sticky parent"
+else
+  pass "credential file under shared-writable non-sticky parent is refused"
+fi
 SAFE_CANONICAL=$(hf_canonical_path "$ALIAS/safe")
 out=$(TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/safe" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "regular private credential file accepted" || fail "safe regular file rc=$rc"

@@ -50,7 +50,7 @@ hf_private_parent_safe() {
     sticky=$((numeric & 512)) # sticky bit (01000)
     if [ "$writable" -ne 0 ] \
        && { [ "$sticky" -eq 0 ] || { [ "$owner" != 0 ] && [ "$owner" != "$(id -u)" ]; }; }; then
-      echo "FAIL: private directory has a shared-writable parent without safe sticky ownership" >&2
+      echo "FAIL: private path has a shared-writable parent without safe sticky ownership" >&2
       return 1
     fi
     [ "$parent" = / ] && break
@@ -148,6 +148,10 @@ hf_reviewer_credential_file() {
     return 1
   fi
   physical=$(hf_canonical_path "$p") || return 1
+  # File ownership and mode do not protect its directory entry. A peer with
+  # write access to a non-sticky parent could replace the credential pathname
+  # after validation but before a consumer reads it.
+  hf_private_parent_safe "$physical" || return 1
   owner=$(hf__stat_field owner "$physical") || return 1
   mode=$(hf__stat_field mode "$physical") || return 1
   links=$(hf__stat_field links "$physical") || return 1
