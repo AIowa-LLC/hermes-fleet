@@ -99,11 +99,24 @@ public final class ArtifactImageStore {
         }
         guard case .loaded(let payload) = states[reference] else { return nil }
         let directory = Self.shareDirectory
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        guard LocalFileProtection.applyBestEffort(to: directory) else { return nil }
         let url = shareFileLocation(for: reference)
         do {
+            #if os(iOS)
+            try payload.data.write(to: url, options: [.atomic, .completeFileProtection])
+            #else
             try payload.data.write(to: url, options: .atomic)
+            #endif
         } catch {
+            return nil
+        }
+        guard LocalFileProtection.applyBestEffort(to: url) else {
+            try? FileManager.default.removeItem(at: url)
             return nil
         }
         shareFiles[reference] = url

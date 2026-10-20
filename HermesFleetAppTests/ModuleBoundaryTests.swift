@@ -349,19 +349,37 @@ final class ModuleBoundaryTests: XCTestCase {
 
         let storeURL = dir.appendingPathComponent("cache.store")
         let store = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)
+        try await store.saveHistory(SessionHistory(sessionID: "s1", count: 1, messages: [
+            SessionMessage(role: .user, text: "protection fixture", timestamp: 1, rowID: "r1"),
+        ]), for: GatewayID(rawValue: "workstation"))
 
         let protection = CacheStoreProtection.read(from: storeURL)
         XCTAssertEqual(protection.backupExcluded, true, "cache is excluded from backup")
-        // The store applies NSFileProtectionComplete. The iOS Simulator does
-        // not faithfully honor per-file protection classes — it reports the
-        // simulator's default class (CompleteUntilFirstUserAuthentication)
-        // rather than the applied .complete — so the honest on-simulator
-        // assertion is that the file reports a non-nil protection class
-        // (i.e. data protection is on), while backup exclusion (which the
-        // simulator DOES honor) is asserted exactly.
+        XCTAssertEqual(LocalFileProtection.read(from: dir).backupExcluded, true,
+                       "the cache directory must be excluded from backup")
+        // The iOS Simulator reports its default class for the store file and
+        // does not expose a directory class. Physical-device runs verify the
+        // exact Complete class on the store, directory, and sidecars.
         XCTAssertNotNil(
             protection.fileProtection,
             "store file reports a data-protection class (NSFileProtectionComplete applied on device)")
+        #if os(iOS) && !targetEnvironment(simulator)
+        XCTAssertEqual(protection.fileProtection, FileProtectionType.complete.rawValue,
+                       "the cache file must use NSFileProtectionComplete")
+        XCTAssertEqual(LocalFileProtection.read(from: dir).protectionClass,
+                       FileProtectionType.complete.rawValue,
+                       "the cache directory must protect SQLite sidecars before they are created")
+        #endif
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: storeURL.path + suffix)
+            guard FileManager.default.fileExists(atPath: sidecar.path) else { continue }
+            let sidecarProtection = CacheStoreProtection.read(from: sidecar)
+            XCTAssertEqual(sidecarProtection.backupExcluded, true, "SQLite sidecars are excluded from backup")
+            #if os(iOS) && !targetEnvironment(simulator)
+            XCTAssertEqual(sidecarProtection.fileProtection, FileProtectionType.complete.rawValue,
+                           "SQLite sidecars must use NSFileProtectionComplete")
+            #endif
+        }
         XCTAssertNotNil(store.storeURL, "file-backed store exposes its URL")
     }
 

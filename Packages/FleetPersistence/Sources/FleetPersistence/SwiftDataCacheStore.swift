@@ -69,6 +69,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
                 ))
             }
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -132,6 +133,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
             ctx.delete(row)
         }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 
     public func saveWatermark(_ watermark: SessionEventWatermark, for gatewayID: GatewayID) async throws {
@@ -147,6 +149,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
                 lastSeenSeq: watermark.lastSeenSeq
             ))
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -163,6 +166,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
             ctx.delete(row)
         }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 
     public func saveReplayEpoch(_ epoch: String?, for gatewayID: GatewayID) async throws {
@@ -174,6 +178,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
             }
             ctx.insert(CachedReplayEpochRow(gatewayID: gatewayID.rawValue, epoch: epoch))
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -199,6 +204,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
             ctx.delete(row)
         }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 
     /// Delete every gateway-keyed cache row for exactly one gateway (exact
@@ -224,6 +230,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
                 ctx.delete(row)
             }
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -240,6 +247,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
         for row in try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>()) { ctx.delete(row) }
         for row in try ctx.fetch(FetchDescriptor<ProjectsSnapshotRow>()) { ctx.delete(row) }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 }
 
@@ -271,6 +279,7 @@ extension SwiftDataCacheStore: HealthStatsStoring {
                 pingSampleCount: stats.pingSampleCount
             ))
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -303,6 +312,7 @@ extension SwiftDataCacheStore: HealthStatsStoring {
             ctx.delete(row)
         }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 
     // MARK: GatewayRecordStoring (P0-4 — durable gateway roster)
@@ -326,6 +336,7 @@ extension SwiftDataCacheStore: HealthStatsStoring {
                 authConfigured: record.authConfigured
             ))
             try ctx.save()
+            reapplyProtectionAfterWrite()
 
         }
     }
@@ -337,6 +348,7 @@ extension SwiftDataCacheStore: HealthStatsStoring {
             ctx.delete(row)
         }
         try ctx.save()
+        reapplyProtectionAfterWrite()
     }
 
     public func loadGatewayRecords() async throws -> [StoredGatewayRecord] {
@@ -356,6 +368,14 @@ extension SwiftDataCacheStore: HealthStatsStoring {
                     authConfigured: row.authConfigured
                 )
             }
+    }
+
+    /// SQLite can create or replace WAL/SHM files during a write. Re-apply
+    /// protection after each successful mutation; failures remain fail-soft
+    /// and are logged without paths or data by `LocalFileProtection`.
+    private func reapplyProtectionAfterWrite() {
+        guard let storeURL else { return }
+        CacheStoreProtection.applyStoreFamilyBestEffort(to: storeURL)
     }
 }
 
@@ -380,8 +400,8 @@ public extension SwiftDataCacheStore {
     static func makeFileBacked(storeURL: URL) throws -> SwiftDataCacheStore {
         let container = try openFileBackedContainer(storeURL: storeURL)
         // The store file is created eagerly at container init (verified); apply
-        // the protection attributes now.
-        try CacheStoreProtection.apply(to: storeURL)
+        // the protection attributes to it and any sidecars now.
+        try CacheStoreProtection.applyStoreFamily(to: storeURL)
         return SwiftDataCacheStore(container: container, storeURL: storeURL)
     }
 
@@ -390,6 +410,10 @@ public extension SwiftDataCacheStore {
     internal static func openFileBackedContainer(storeURL: URL) throws -> ModelContainer {
         let directory = storeURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // Protect the parent before SQLite creates WAL/SHM files so they
+        // inherit the directory class. This is best-effort for availability;
+        // the primary store file remains fail-closed after container open.
+        _ = CacheStoreProtection.applyBestEffort(to: directory)
         return try ModelContainer.fleetCache(configuration: ModelConfiguration(url: storeURL))
     }
 }
@@ -399,24 +423,46 @@ public extension SwiftDataCacheStore {
 /// the (non-secret but privacy-bearing) transcript cache.
 public enum CacheStoreProtection {
     public static func apply(to url: URL) throws {
-        var url = url
-        // Backup exclusion: the cache is disposable and privacy-bearing; it
-        // must not ride along in device/iCloud backups.
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try url.setResourceValues(values)
+        try LocalFileProtection.apply(to: url)
+    }
 
-        // NSFileProtectionComplete: the store file is only readable while the
-        // device is unlocked. iOS-only semantic (macOS ignores it).
-        #if os(iOS)
-        try (url as NSURL).setResourceValue(FileProtectionType.complete, forKey: .fileProtectionKey)
-        #endif
+    /// Strictly protect the primary store, then best-effort protect any
+    /// existing SQLite sidecars. New sidecars inherit the already-protected
+    /// parent directory; re-running after writes catches files created later.
+    public static func applyStoreFamily(to storeURL: URL) throws {
+        _ = applyBestEffort(to: storeURL.deletingLastPathComponent())
+        try apply(to: storeURL)
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: storeURL.path + suffix)
+            guard FileManager.default.fileExists(atPath: sidecar.path) else { continue }
+            _ = applyBestEffort(to: sidecar)
+        }
+    }
+
+    @discardableResult
+    static func applyBestEffort(to url: URL) -> Bool {
+        LocalFileProtection.applyBestEffort(to: url)
+    }
+
+    /// Re-apply protection after a successful SQLite write. The primary-store
+    /// write already succeeded, so attribute failures are logged but do not
+    /// turn a saved transcript into a reported write failure.
+    @discardableResult
+    static func applyStoreFamilyBestEffort(to storeURL: URL) -> Bool {
+        var succeeded = applyBestEffort(to: storeURL.deletingLastPathComponent())
+        succeeded = applyBestEffort(to: storeURL) && succeeded
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = URL(fileURLWithPath: storeURL.path + suffix)
+            guard FileManager.default.fileExists(atPath: sidecar.path) else { continue }
+            succeeded = applyBestEffort(to: sidecar) && succeeded
+        }
+        return succeeded
     }
 
     /// Read back the protection attributes for verification (used by the
     /// app-level boundary test on iOS; on macOS file protection reads as nil).
     public static func read(from url: URL) -> (backupExcluded: Bool?, fileProtection: String?) {
-        let values = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey, .fileProtectionKey])
-        return (values?.isExcludedFromBackup, values?.fileProtection?.rawValue)
+        let attributes = LocalFileProtection.read(from: url)
+        return (attributes.backupExcluded, attributes.protectionClass)
     }
 }

@@ -218,6 +218,7 @@ public enum BridgedRooms {
         public static func defaultURL() -> URL {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            _ = LocalFileProtection.applyBestEffort(to: base)
             return base.appendingPathComponent(BridgedRooms.storeFileName)
         }
 
@@ -234,7 +235,7 @@ public enum BridgedRooms {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else { return }
-            BackupExclusion.apply(to: url) // stores written before the exclusion existed
+            _ = LocalFileProtection.applyBestEffort(to: url) // repairs legacy stores in place
             do {
                 let data = try Data(contentsOf: url)
                 rooms = try JSONDecoder().decode([String: RoomRecord].self, from: data)
@@ -255,13 +256,18 @@ public enum BridgedRooms {
             } catch {
                 return
             }
+            _ = LocalFileProtection.applyBestEffort(to: backup)
             quarantinedURL = backup
         }
 
         private func persist(_ snapshot: [String: RoomRecord]) throws {
             let data = try JSONEncoder().encode(snapshot)
+            #if os(iOS)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            #else
             try data.write(to: url, options: .atomic)
-            BackupExclusion.apply(to: url)
+            #endif
+            _ = LocalFileProtection.applyBestEffort(to: url)
         }
 
         /// Test launches reset before hydration, so previous rooms cannot
