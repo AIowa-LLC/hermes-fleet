@@ -19,7 +19,13 @@ hf__stat_field() { # <owner|mode|links> <path>
   # unrelated filesystem output.
   case "$what" in
     owner) out=$(stat -c %u "$p" 2>/dev/null) || out=$(stat -f %u "$p" 2>/dev/null) || return 1 ;;
-    mode) out=$(stat -c %a "$p" 2>/dev/null) || out=$(stat -f %Lp "$p" 2>/dev/null) || return 1 ;;
+    mode)
+      out=$(stat -c %a "$p" 2>/dev/null) || {
+        out=$(stat -f %p "$p" 2>/dev/null) || return 1
+        out=${out: -4}
+        case "$out" in 0[0-7][0-7][0-7]) out=${out#0} ;; esac
+      }
+      ;;
     links) out=$(stat -c %h "$p" 2>/dev/null) || out=$(stat -f %l "$p" 2>/dev/null) || return 1 ;;
     *) return 1 ;;
   esac
@@ -28,6 +34,29 @@ hf__stat_field() { # <owner|mode|links> <path>
 
 hf_private_name() {
   printf '%s/%s-%s' "${TMPDIR:-/tmp}" "$1" "$(id -u)"
+}
+
+hf_private_parent_safe() {
+  local path="${1:-}" parent owner mode numeric writable sticky
+  [ -n "$path" ] || return 1
+  case "$path" in /*) ;; *) path="$PWD/$path" ;; esac
+  parent=$(dirname "$path")
+  while [ -n "$parent" ]; do
+    owner=$(hf__stat_field owner "$parent") || return 1
+    mode=$(hf__stat_field mode "$parent") || return 1
+    case "$mode" in ''|*[!0-7]*) return 1 ;; esac
+    numeric=$((8#$mode))
+    writable=$((numeric & 18)) # group/world write bits (0022)
+    sticky=$((numeric & 512)) # sticky bit (01000)
+    if [ "$writable" -ne 0 ] \
+       && { [ "$sticky" -eq 0 ] || { [ "$owner" != 0 ] && [ "$owner" != "$(id -u)" ]; }; }; then
+      echo "FAIL: private directory has a shared-writable parent without safe sticky ownership" >&2
+      return 1
+    fi
+    [ "$parent" = / ] && break
+    parent=$(dirname "$parent")
+  done
+  return 0
 }
 
 hf_private_dir() {
@@ -43,6 +72,7 @@ hf_private_dir() {
     (umask 077; mkdir -m 700 "$d") 2>/dev/null || true
   fi
   if [ ! -d "$d" ] || [ -L "$d" ]; then echo "FAIL: $d is not a real directory" >&2; return 1; fi
+  hf_private_parent_safe "$d" || return 1
   owner=$(hf__stat_field owner "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
   mode=$(hf__stat_field mode "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
   if [ "$owner" != "$(id -u)" ]; then

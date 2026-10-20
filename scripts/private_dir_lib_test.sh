@@ -21,6 +21,19 @@ mode_of() { hf__stat_field mode "$1"; }
 # 2. Re-validating our own directory succeeds (stable across script runs).
 hf_private_dir "$T/fresh" >/dev/null && pass "existing private directory is reused" || fail "reuse"
 
+# A private leaf is still unsafe when another user can rename it through a
+# shared-writable parent. Root-owned/current-user sticky parents remain valid.
+UNSAFE_PARENT="$T/shared-writable"; mkdir -m 777 "$UNSAFE_PARENT"
+if hf_private_dir "$UNSAFE_PARENT/private" >/dev/null 2>&1; then
+  fail "private directory accepted under shared-writable non-sticky parent"
+else
+  pass "shared-writable non-sticky parent is refused"
+fi
+STICKY_PARENT="$T/sticky-parent"; mkdir -m 1777 "$STICKY_PARENT"
+hf_private_dir "$STICKY_PARENT/private" >/dev/null \
+  && pass "sticky private-owned parent is accepted" \
+  || fail "sticky private-owned parent was refused"
+
 # 3. A pre-created group/world-accessible directory (another user squatting
 #    the predictable name) is refused, not silently repaired and used.
 mkdir "$T/squat" && chmod 755 "$T/squat"
