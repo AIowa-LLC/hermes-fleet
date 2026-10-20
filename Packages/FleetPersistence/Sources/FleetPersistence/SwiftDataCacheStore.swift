@@ -439,6 +439,22 @@ public enum CacheStoreProtection {
         }
     }
 
+    /// Read-back summary for the in-app diagnostics report. Only fixed role
+    /// labels and attributes are returned; no local paths enter diagnostics.
+    public static func verify(storeURL: URL) -> CacheStoreProtectionReport {
+        let sidecars = [
+            ("directory", storeURL.deletingLastPathComponent()),
+            ("store", storeURL),
+            ("wal", URL(fileURLWithPath: storeURL.path + "-wal")),
+            ("shm", URL(fileURLWithPath: storeURL.path + "-shm")),
+        ]
+        let entries = sidecars.compactMap { role, url -> CacheStoreProtectionReport.Entry? in
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return CacheStoreProtectionReport.Entry(role: role, attributes: LocalFileProtection.read(from: url))
+        }
+        return CacheStoreProtectionReport(entries: entries)
+    }
+
     @discardableResult
     static func applyBestEffort(to url: URL) -> Bool {
         LocalFileProtection.applyBestEffort(to: url)
@@ -464,5 +480,37 @@ public enum CacheStoreProtection {
     public static func read(from url: URL) -> (backupExcluded: Bool?, fileProtection: String?) {
         let attributes = LocalFileProtection.read(from: url)
         return (attributes.backupExcluded, attributes.protectionClass)
+    }
+}
+
+/// Snapshot of the attributes reported for the cache directory, main store,
+/// and any present SQLite sidecars. Role labels are fixed and path-free.
+public struct CacheStoreProtectionReport: Sendable, Equatable {
+    public struct Entry: Sendable, Equatable {
+        public let role: String
+        public let attributes: LocalFileProtection.Attributes
+
+        public init(role: String, attributes: LocalFileProtection.Attributes) {
+            self.role = role
+            self.attributes = attributes
+        }
+
+        public var isProtected: Bool { attributes.isProtected }
+    }
+
+    public let entries: [Entry]
+
+    public init(entries: [Entry]) {
+        self.entries = entries
+    }
+
+    public var isFullyProtected: Bool {
+        !entries.isEmpty && entries.allSatisfy(\.isProtected)
+    }
+
+    public var diagnosticsDetail: String {
+        let unprotected = entries.filter { !$0.isProtected }.map(\.role)
+        guard !unprotected.isEmpty else { return "local cache protection verified" }
+        return "local cache protection incomplete (\(unprotected.joined(separator: ", ")))"
     }
 }
