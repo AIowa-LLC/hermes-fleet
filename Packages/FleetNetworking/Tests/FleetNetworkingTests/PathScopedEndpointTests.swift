@@ -43,7 +43,14 @@ final class PathScopedEndpointTests: XCTestCase {
             XCTAssertThrowsError(try KanbanEventStreamClient.taskPathSegment(hostile), "accepted \(hostile)")
         }
         XCTAssertEqual(try KanbanEventStreamClient.taskPathSegment("task-123"), "task-123")
-        XCTAssertEqual(try KanbanEventStreamClient.taskPathSegment("task name"), "task%20name")
+        let segment = try KanbanEventStreamClient.taskPathSegment("task name")
+        XCTAssertEqual(segment, "task name")
+        var components = URLComponents(url: scoped, resolvingAgainstBaseURL: false)
+        components?.path = GatewayEndpoint.path(
+            joining: "/api/plugins/kanban/tasks/\(segment)", onto: scoped)
+        XCTAssertEqual(
+            try XCTUnwrap(components?.percentEncodedPath),
+            "/gw/api/plugins/kanban/tasks/task%20name")
     }
 
     func testCronURLsKeepPrefixAndEncodeIdsInsideIt() throws {

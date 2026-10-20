@@ -16,19 +16,15 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     /// Task IDs come from the gateway response, but they still must remain one
     /// path component when reused in an authenticated request. Reject path
     /// separators, percent escapes (which can be decoded again by a proxy),
-    /// and dot segments before percent-encoding the remaining reserved bytes.
+    /// and dot segments. `URLComponents.path` encodes the accepted identifier
+    /// when the full request path is assembled, so return it unescaped here.
     static func taskPathSegment(_ raw: String) throws -> String {
         guard !raw.isEmpty, raw != ".", raw != "..",
               !raw.contains("/"), !raw.contains("\\"), !raw.contains("%"),
               !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw KanbanMutationError.malformedResponse("invalid task identifier")
         }
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        guard let encoded = raw.addingPercentEncoding(withAllowedCharacters: allowed) else {
-            throw KanbanMutationError.malformedResponse("invalid task identifier")
-        }
-        return encoded
+        return raw
     }
 
     // MARK: - Shared request plumbing
