@@ -218,6 +218,18 @@ final class ArtifactDestinationTests: XCTestCase {
         XCTAssertTrue(url?.lastPathComponent.hasSuffix("cat.png") == true)
         XCTAssertFalse(url?.path.contains("private/profile") == true, "the gateway path never becomes a filename")
         XCTAssertTrue(FileManager.default.fileExists(atPath: url?.path ?? ""))
+        if let url {
+            XCTAssertEqual(LocalFileProtection.read(from: url).backupExcluded, true)
+            XCTAssertEqual(LocalFileProtection.read(from: url.deletingLastPathComponent()).backupExcluded, true)
+            #if os(iOS) && !targetEnvironment(simulator)
+            XCTAssertEqual(LocalFileProtection.read(from: url).protectionClass,
+                           FileProtectionType.complete.rawValue,
+                           "staged artifact files must use NSFileProtectionComplete")
+            XCTAssertEqual(LocalFileProtection.read(from: url.deletingLastPathComponent()).protectionClass,
+                           FileProtectionType.complete.rawValue,
+                           "staged artifact directory must use NSFileProtectionComplete")
+            #endif
+        }
     }
 
     func testClearGatewayDropsItsEntriesOnly() async {

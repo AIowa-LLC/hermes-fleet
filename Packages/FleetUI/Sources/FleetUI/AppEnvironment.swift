@@ -705,7 +705,14 @@ public final class AppEnvironment {
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
-        self.bridgedStore = BridgedRooms.Store(url: bridgedStoreURL ?? BridgedRooms.Store.defaultURL())
+        let storageProtectionReporter: BridgedRooms.Store.ProtectionFailureReporter = { failure in
+            Task { @MainActor in
+                diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
+            }
+        }
+        let resolvedBridgedStoreURL = bridgedStoreURL ?? BridgedRooms.Store.defaultURL()
+        self.bridgedStore = BridgedRooms.Store(
+            url: resolvedBridgedStoreURL, protectionReporter: storageProtectionReporter)
         self.voiceEngineFactory = voiceEngineFactory
         self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
         self.gatewaySessionInvalidator = gatewaySessionInvalidator
@@ -718,6 +725,13 @@ public final class AppEnvironment {
             // path leaves a diagnostics line.
             diagnosticsRecorder.record(category: "persistence", detail: localCacheRecovery.diagnosticsDetail)
             self.localCacheNotices = localCacheRecovery.notices
+        }
+        if let cacheStore = cache as? SwiftDataCacheStore, let storeURL = cacheStore.storeURL {
+            let protectionReport = CacheStoreProtection.verify(storeURL: storeURL)
+            if !protectionReport.isFullyProtected {
+                diagnosticsRecorder.record(
+                    category: "persistence", detail: protectionReport.diagnosticsDetail)
+            }
         }
         self.recoveryTiming = recoveryTiming
         self.ownerEnrollment = ownerEnrollment
@@ -739,6 +753,9 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
+        artifactImages.protectionReporter = { failure in
+            diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
+        }
         pairing.attach(host: self)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
         liveOps.setProviders(

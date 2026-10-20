@@ -87,7 +87,7 @@ public extension SwiftDataCacheStore {
             return try recover(from: error, storeURL: storeURL, faults: faults, now: now)
         }
         do {
-            try CacheStoreProtection.apply(to: storeURL)
+            try CacheStoreProtection.applyStoreFamily(to: storeURL)
         } catch {
             // The store is healthy but protection could not be applied. Never
             // run an unprotected transcript cache, and never quarantine a good
@@ -174,7 +174,7 @@ private extension SwiftDataCacheStore {
         if leftovers.isEmpty, !faults.contains(.freshFileBackedStore) {
             do {
                 let container = try openFileBackedContainer(storeURL: storeURL)
-                try CacheStoreProtection.apply(to: storeURL)
+                try CacheStoreProtection.applyStoreFamily(to: storeURL)
                 do {
                     try insert(salvagedRows, into: container)
                 } catch {
