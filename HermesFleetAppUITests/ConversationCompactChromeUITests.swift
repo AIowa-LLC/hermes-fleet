@@ -420,10 +420,13 @@ final class ConversationCompactChromeUITests: XCTestCase {
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.stop").exists,
                       "Stop must be shown while the turn is pending")
 
-        // Mid-stream (message deltas arriving): still one indicator, same x.
-        let midStream = NSPredicate(format: "label CONTAINS[c] 'slowly'")
-        let reply = app.staticTexts.matching(midStream).firstMatch
-        _ = reply.waitForExistence(timeout: 10)
+        // The scripted demo emits its first message delta after two 3s
+        // reasoning holds. Avoid a broad StaticText query here: on iOS 27 it
+        // repeatedly snapshots the large accessibility tree and can outlast
+        // the fixture's 15s stream. This deterministic wait enters the
+        // message-stream phase; the targeted working-identifier query below
+        // then verifies the turn is still active before completion.
+        Thread.sleep(forTimeInterval: 5)
         XCTAssertEqual(working.count, 1, "exactly one indicator while streaming message text")
         XCTAssertEqual(toggle.frame.minX, streamingMinX, accuracy: 1,
                        "reasoning toggle must not shift while the reply streams")
