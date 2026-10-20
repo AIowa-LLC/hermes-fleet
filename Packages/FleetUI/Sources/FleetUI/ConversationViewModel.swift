@@ -438,6 +438,16 @@ public final class ConversationViewModel {
 
     private var openedSessionID: String?
     private var openedStoredSessionID: String?
+    /// Prompt lifecycle events for a replacement runtime may arrive inside
+    /// `session.resume` before its result tells us which runtime ID to adopt.
+    /// Keep that small, bounded slice until the identity switch completes.
+    @ObservationIgnored private var runtimeResumeToken: Int?
+    @ObservationIgnored private var runtimeResumeTargetSessionID: String?
+    @ObservationIgnored private var runtimeResumePromptEvents: [ConversationEvent] = []
+    @ObservationIgnored private var runtimeResumePromptEventBytes = 0
+    @ObservationIgnored private var runtimeResumePromptEventCountsBySession: [String: Int] = [:]
+    @ObservationIgnored private var runtimeResumePromptEventBytesBySession: [String: Int] = [:]
+    @ObservationIgnored private var runtimeResumePromptOverflowedSessionIDs: Set<String> = []
     /// FOS-4: the durable session id the Continue index and device-local
     /// unread state may record. The transport's runtime id is intentionally
     /// kept separate: `session.resume` returns both identities.
@@ -707,7 +717,8 @@ public final class ConversationViewModel {
                     // every (re)subscribe so the resume point travels with the
                     // subscription itself. #188: a too-long refusal falls back
                     // to the omit-messages resume + paged transcript.
-                    let (resumed, paged) = try await resumeOpeningSession(sessionID: sessionID)
+                    let (resumed, paged) = try await resumeOpeningSession(
+                        sessionID: sessionID, lastEventID: lastAppliedEventID)
                     guard isCurrent(token) else { return false }
                     if paged { enterPagedHistory() }
                     settleRefreshArmed = false
@@ -760,12 +771,13 @@ public final class ConversationViewModel {
     /// opens today takes exactly the same path. Without a pager the 4130
     /// rethrows and surfaces the long-chat open message.
     private func resumeOpeningSession(
-        sessionID: String
+        sessionID: String,
+        lastEventID: Int?
     ) async throws -> (session: ConversationSession, paged: Bool) {
         do {
             let resumed = try await session.conversation.resumeSession(
                 sessionID: sessionID,
-                lastEventID: lastAppliedEventID,
+                lastEventID: lastEventID,
                 profile: route.profileSlug.rawValue
             )
             return (resumed, false)
@@ -773,7 +785,7 @@ public final class ConversationViewModel {
             do {
                 let resumed = try await session.conversation.resumeSession(
                     sessionID: sessionID,
-                    lastEventID: lastAppliedEventID,
+                    lastEventID: lastEventID,
                     profile: route.profileSlug.rawValue,
                     omitMessages: true
                 )
@@ -787,6 +799,145 @@ public final class ConversationViewModel {
                 throw ConversationError.sessionTooLongToReload(messageCount: count)
             }
         }
+    }
+
+    /// Re-adopt the runtime session id after the transport reconnects. The
+    /// stored id identifies the durable conversation; the runtime id returned
+    /// by `session.resume` is what subsequent RPCs must use. Keep the current
+    /// transcript intact while refreshing that transport identity.
+    private func resumeOpenedSession(fencedBy token: Int) async -> Bool? {
+        guard isCurrent(token) else { return nil }
+        guard let durableID = resolvedSessionID else {
+            classifyOpenFailure(ConversationError.sessionNotFound("missing durable session id"))
+            return nil
+        }
+        // A newer recovery takes ownership of any lifecycle events already
+        // consumed by an in-flight recovery. The old operation is fenced from
+        // applying them, and `session.resume` may suppress duplicate open
+        // requests, so resetting here would lose prompts permanently.
+        if runtimeResumeToken == nil {
+            runtimeResumePromptEvents.removeAll(keepingCapacity: true)
+            runtimeResumePromptEventBytes = 0
+            runtimeResumePromptEventCountsBySession.removeAll(keepingCapacity: true)
+            runtimeResumePromptEventBytesBySession.removeAll(keepingCapacity: true)
+            runtimeResumePromptOverflowedSessionIDs.removeAll(keepingCapacity: true)
+        }
+        runtimeResumeToken = token
+        runtimeResumeTargetSessionID = nil
+        do {
+            // A runtime id may have been reaped since the last connection.
+            // Its event sequence is not safe to send as the new resume cursor.
+            let (resumed, paged) = try await resumeOpeningSession(
+                sessionID: durableID, lastEventID: nil)
+            guard isCurrent(token) else {
+                clearRuntimeResumePromptBuffer(ownedBy: token)
+                return nil
+            }
+            let previousRuntimeID = openedSessionID
+            let runtimeIDChanged = previousRuntimeID != resumed.sessionID
+            if runtimeIDChanged, runtimeResumeToken == token {
+                runtimeResumeTargetSessionID = resumed.sessionID
+            }
+            if runtimeIDChanged { lastAppliedEventID = nil }
+            if paged && !isPagedHistory { enterPagedHistory() }
+            // Adopt the new runtime identity before the actor hop below. The
+            // existing event stream remains live, and `apply(_:)` filters by
+            // this ID; updating first prevents new-runtime events from being
+            // consumed while the view model still accepts only the old ID.
+            openedSessionID = resumed.sessionID
+            openedStoredSessionID = Self.durableSessionID(
+                listedSessionID: durableID, opened: resumed)
+            bindSessionScopedViewModels(to: resumed.sessionID)
+            startStatusWatcher()
+            if runtimeIDChanged {
+                let staleRuntimeIDs = Set([previousRuntimeID, resumed.sessionID].compactMap { $0 })
+                await session.replay.clearWatermarks(for: staleRuntimeIDs)
+                guard isCurrent(token) else {
+                    clearRuntimeResumePromptBuffer(ownedBy: token)
+                    return nil
+                }
+            }
+            let (bufferedPromptEvents, promptBufferOverflowed) = takeRuntimeResumePromptEvents(ownedBy: token)
+            for event in bufferedPromptEvents where event.sessionID == resumed.sessionID {
+                apply(event)
+            }
+            if promptBufferOverflowed {
+                integrityNotice = "A gateway prompt arrived during reconnect but could not be retained. Reconnect again to check for pending requests."
+            }
+            return runtimeIDChanged || paged
+        } catch {
+            clearRuntimeResumePromptBuffer(ownedBy: token)
+            guard isCurrent(token) else { return nil }
+            classifyOpenFailure(error)
+            return nil
+        }
+    }
+
+    private static let maxRuntimeResumePromptEvents = 64
+    private static let maxRuntimeResumePromptEventBytes = 2 << 20
+    // Traffic from another chat must not consume the entire reconnect slice.
+    // A target session can still use the full global budget when its lifecycle
+    // events arrive in one burst.
+    private static let maxRuntimeResumePromptEventsPerSession = 16
+    private static let maxRuntimeResumePromptEventBytesPerSession = 512 << 10
+
+    private func isRuntimeResumePromptLifecycleEvent(_ event: ConversationEvent) -> Bool {
+        switch event {
+        case .serverRequest, .approvalRequested, .requestCancelled:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func clearRuntimeResumePromptBuffer(ownedBy token: Int) {
+        guard runtimeResumeToken == token else { return }
+        runtimeResumeToken = nil
+        runtimeResumeTargetSessionID = nil
+        runtimeResumePromptEvents.removeAll(keepingCapacity: true)
+        runtimeResumePromptEventBytes = 0
+        runtimeResumePromptEventCountsBySession.removeAll(keepingCapacity: true)
+        runtimeResumePromptEventBytesBySession.removeAll(keepingCapacity: true)
+        runtimeResumePromptOverflowedSessionIDs.removeAll(keepingCapacity: true)
+    }
+
+    private func takeRuntimeResumePromptEvents(ownedBy token: Int) -> ([ConversationEvent], Bool) {
+        guard runtimeResumeToken == token else { return ([], false) }
+        let targetSessionID = runtimeResumeTargetSessionID
+        let overflowed = targetSessionID.map(runtimeResumePromptOverflowedSessionIDs.contains) ?? false
+        // Never apply a partial lifecycle prefix. If this session overflowed,
+        // dropping the whole slice avoids leaving a request visible after its
+        // cancellation was discarded.
+        let events = overflowed ? [] : runtimeResumePromptEvents
+        runtimeResumeToken = nil
+        runtimeResumeTargetSessionID = nil
+        runtimeResumePromptEvents.removeAll(keepingCapacity: true)
+        runtimeResumePromptEventBytes = 0
+        runtimeResumePromptEventCountsBySession.removeAll(keepingCapacity: true)
+        runtimeResumePromptEventBytesBySession.removeAll(keepingCapacity: true)
+        runtimeResumePromptOverflowedSessionIDs.removeAll(keepingCapacity: true)
+        return (events, overflowed)
+    }
+
+    private func bufferRuntimeResumePromptEvent(_ event: ConversationEvent) {
+        guard let sessionID = event.sessionID,
+              !runtimeResumePromptOverflowedSessionIDs.contains(sessionID) else { return }
+        let byteCount = String(reflecting: event).utf8.count
+        let sessionEventCount = runtimeResumePromptEventCountsBySession[sessionID, default: 0]
+        let sessionByteCount = runtimeResumePromptEventBytesBySession[sessionID, default: 0]
+        guard runtimeResumePromptEvents.count < Self.maxRuntimeResumePromptEvents,
+              byteCount <= Self.maxRuntimeResumePromptEventBytes,
+              runtimeResumePromptEventBytes <= Self.maxRuntimeResumePromptEventBytes - byteCount,
+              sessionEventCount < Self.maxRuntimeResumePromptEventsPerSession,
+              byteCount <= Self.maxRuntimeResumePromptEventBytesPerSession,
+              sessionByteCount <= Self.maxRuntimeResumePromptEventBytesPerSession - byteCount else {
+            runtimeResumePromptOverflowedSessionIDs.insert(sessionID)
+            return
+        }
+        runtimeResumePromptEvents.append(event)
+        runtimeResumePromptEventBytes += byteCount
+        runtimeResumePromptEventCountsBySession[sessionID] = sessionEventCount + 1
+        runtimeResumePromptEventBytesBySession[sessionID] = sessionByteCount + byteCount
     }
 
     /// #188: switch the transcript to paged loading. Resets the paging cursor
@@ -834,8 +985,9 @@ public final class ConversationViewModel {
     /// P1-5: a reconnect after an INITIAL connect/open failure must actually
     /// (re)open the session + (re)start subscriptions before it can be called
     /// ready — never set `.ready` with no session and a dead composer. When a
-    /// session IS already open (mid-stream drop), it is left as-is: reconnect
-    /// + replay only (the live event/status tasks keep running).
+    /// session IS already open (mid-stream drop), resume its durable identity
+    /// before replay so a gateway replacement runtime ID is adopted without
+    /// replacing the transcript or restarting the single-subscriber event task.
     ///
     /// t_e77c614c: generation-fenced — a superseded recovery (user retapped
     /// reconnect, or re-auth started while a reconnect was in flight) never
@@ -851,19 +1003,37 @@ public final class ConversationViewModel {
             errorMessage = Self.nonSecret(error)
             return
         }
+        guard isCurrent(token) else { return }
+        var refreshHistoryAfterRecovery = false
+        var resumedExistingSession = false
         if openedSessionID == nil {
             // Initial connect/open failure recovery (P1-5): the session was
             // never opened and subscriptions never started — open + subscribe
             // before the connection can be called ready.
             guard await ensureOpenAndSubscribed(fencedBy: token) else { return }
+        } else {
+            // A reconnect can replace the gateway's runtime session id. Resume
+            // the durable conversation before replay or any later prompt RPC.
+            guard let refresh = await resumeOpenedSession(fencedBy: token) else { return }
+            refreshHistoryAfterRecovery = refresh
+            resumedExistingSession = true
         }
         await runReplayHydration(fencedBy: token)
         guard token == operationGeneration else { return }
+        if refreshHistoryAfterRecovery, let sessionID = openedSessionID {
+            await refetchAuthoritativeHistory(sessionID: sessionID, fencedBy: token)
+            guard token == operationGeneration else { return }
+        }
+        if resumedExistingSession {
+            await approvalViewModel?.restorePendingApprovals()
+            guard token == operationGeneration else { return }
+        }
         phase = .ready
     }
 
     /// Explicit user action after a 4401 close (M11 — NEVER silent retry).
-    /// Re-authenticates with a fresh ticket, then replays hydration.
+    /// Re-authenticates with a fresh ticket, resumes the durable chat identity,
+    /// then replays and refreshes history as needed.
     ///
     /// t_e77c614c: generation-fenced (same semantics as `reconnect()`).
     public func reauthenticate() async {
@@ -877,11 +1047,28 @@ public final class ConversationViewModel {
             errorMessage = Self.nonSecret(error)
             return
         }
+        guard isCurrent(token) else { return }
+        var refreshHistoryAfterRecovery = false
+        var resumedExistingSession = false
         if openedSessionID == nil {
             guard await ensureOpenAndSubscribed(fencedBy: token) else { return }
+        } else {
+            // Re-authentication issues a fresh transport ticket, so refresh
+            // the runtime session id before replaying or accepting new turns.
+            guard let refresh = await resumeOpenedSession(fencedBy: token) else { return }
+            refreshHistoryAfterRecovery = refresh
+            resumedExistingSession = true
         }
         await runReplayHydration(fencedBy: token)
         guard token == operationGeneration else { return }
+        if refreshHistoryAfterRecovery, let sessionID = openedSessionID {
+            await refetchAuthoritativeHistory(sessionID: sessionID, fencedBy: token)
+            guard token == operationGeneration else { return }
+        }
+        if resumedExistingSession {
+            await approvalViewModel?.restorePendingApprovals()
+            guard token == operationGeneration else { return }
+        }
         phase = .ready
     }
 
@@ -2194,11 +2381,16 @@ public final class ConversationViewModel {
         } else if let model = opened.model {
             sessionModel = model
         }
-        // R9-T1: the session is open — build the approval banner VM bound to
-        // this runtime session id, over the session's approvals seam (nil on
-        // sessions without one → the banner surface simply never appears).
-        // One cast at build time (see ApprovalsCapable: a same-named
-        // extension property recurses through swift_dynamicCast).
+        bindSessionScopedViewModels(to: opened.sessionID)
+    }
+
+    /// Rebind per-session controls whenever a resume changes or confirms the
+    /// active runtime ID. These view models intentionally filter requests and
+    /// actions to the runtime session they were bound to.
+    private func bindSessionScopedViewModels(to sessionID: String) {
+        // R9-T1: the session is open — build the approval banner VM over the
+        // session's approvals seam (nil on sessions without one). One cast at
+        // build time avoids the same-named extension-property recursion.
         if approvalViewModel == nil {
             if let capable = session as? ApprovalsCapable {
                 let vm = ApprovalViewModel(
@@ -2206,11 +2398,11 @@ public final class ConversationViewModel {
                     biometrics: biometrics,
                     initialYolo: nil
                 )
-                vm.bind(sessionID: opened.sessionID)
+                vm.bind(sessionID: sessionID)
                 approvalViewModel = vm
             }
         } else {
-            approvalViewModel?.bind(sessionID: opened.sessionID)
+            approvalViewModel?.bind(sessionID: sessionID)
         }
         // P0.1: clarify / sudo / secret prompts (server→client requests) —
         // same one-cast build. Requests that arrived before this point are
@@ -2218,33 +2410,33 @@ public final class ConversationViewModel {
         if serverPromptViewModel == nil {
             if let capable = session as? ServerPromptCapable {
                 let vm = ServerPromptViewModel(prompts: capable.serverPrompts, biometrics: biometrics)
-                vm.bind(sessionID: opened.sessionID)
+                vm.bind(sessionID: sessionID)
                 serverPromptViewModel = vm
             }
         } else {
-            serverPromptViewModel?.bind(sessionID: opened.sessionID)
+            serverPromptViewModel?.bind(sessionID: sessionID)
         }
         // R9-T2/T3/T4: same one-cast build for the tooling seam (sticky
         // model pick, context meter, steer/rename/fork).
         if toolingViewModel == nil {
             if let capable = session as? ConversationToolingCapable {
                 let vm = ConversationToolingViewModel(tooling: capable.tooling, gatewayID: route.gatewayID)
-                vm.bind(sessionID: opened.sessionID)
+                vm.bind(sessionID: sessionID)
                 toolingViewModel = vm
             }
         } else {
-            toolingViewModel?.bind(sessionID: opened.sessionID)
+            toolingViewModel?.bind(sessionID: sessionID)
         }
         // Dogfood r8: same one-cast build for the reasoning seam (thinking
         // level slider — config.get/set reasoning, session-scoped).
         if reasoningViewModel == nil {
             if let capable = session as? ReasoningCapable {
                 let vm = ReasoningViewModel(reasoning: capable.reasoning)
-                vm.bind(sessionID: opened.sessionID)
+                vm.bind(sessionID: sessionID)
                 reasoningViewModel = vm
             }
         } else {
-            reasoningViewModel?.bind(sessionID: opened.sessionID)
+            reasoningViewModel?.bind(sessionID: sessionID)
         }
         // Slash parity: a different session may expose a different command
         // surface — invalidate the cached catalog so the next `/` refetches
@@ -2361,6 +2553,17 @@ public final class ConversationViewModel {
 
     @MainActor
     private func apply(_ event: ConversationEvent) {
+        if runtimeResumeToken != nil,
+           isRuntimeResumePromptLifecycleEvent(event),
+           let sid = event.sessionID,
+           (sid != openedSessionID || sid == runtimeResumeTargetSessionID) {
+            // `session.resume` can deliver open_requests before returning the
+            // replacement runtime ID. Also hold matching requests until the
+            // pre-result slice is drained so a later cancellation cannot be
+            // applied ahead of its request.
+            bufferRuntimeResumePromptEvent(event)
+            return
+        }
         // Only render events for THIS session (the transport may carry other
         // sessions' events on the same gateway).
         if let sid = event.sessionID, sid != openedSessionID { return }
@@ -2624,7 +2827,9 @@ public final class ConversationViewModel {
                 // the user already loaded stay (see mergeLatestPage).
                 let previousRows = allRows
                 allRows = Self.mergeLatestPage(
-                    existing: allRows, latest: messages, nextRowID: { nextRowID() }
+                    existing: allRows, latest: messages,
+                    preserveOlder: pagedOlderPageCount > 0,
+                    nextRowID: { nextRowID() }
                 )
                 carryDerivedRowState(into: &allRows, from: previousRows)
                 adoptHistoryReactions(into: Array(allRows.suffix(messages.count)), from: messages)
@@ -3598,8 +3803,12 @@ public final class ConversationViewModel {
     static func mergeLatestPage(
         existing: [ConversationRow],
         latest: [SessionMessage],
+        preserveOlder: Bool,
         nextRowID: () -> String
     ) -> [ConversationRow] {
+        guard preserveOlder else {
+            return mergePreservingIDs(existing: existing, authoritative: latest, nextRowID: nextRowID)
+        }
         let numericIDs = latest.compactMap { $0.rowID.flatMap { Int($0) } }
         guard let oldestLatest = numericIDs.min() else {
             return mergePreservingIDs(existing: existing, authoritative: latest, nextRowID: nextRowID)

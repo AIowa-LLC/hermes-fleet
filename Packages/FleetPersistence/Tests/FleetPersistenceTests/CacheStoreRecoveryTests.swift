@@ -27,6 +27,28 @@ final class CacheStoreRecoveryTests: XCTestCase {
             authConfigured: true)
     }
 
+    func testProtectionVerifierReadsTheStoreFamilyAndPassesWithoutPaths() throws {
+        try Data("synthetic-cache".utf8).write(to: storeURL)
+        try CacheStoreProtection.applyStoreFamily(to: storeURL)
+
+        let report = CacheStoreProtection.verify(storeURL: storeURL)
+
+        XCTAssertTrue(report.isFullyProtected)
+        XCTAssertEqual(Set(report.entries.map(\.role)), ["directory", "store"])
+        XCTAssertEqual(report.diagnosticsDetail, "local cache protection verified")
+        XCTAssertFalse(report.diagnosticsDetail.contains(storeURL.path))
+    }
+
+    func testProtectionVerifierReportsMissingBackupExclusionByRoleOnly() throws {
+        let report = CacheStoreProtectionReport(entries: [
+            .init(role: "store", attributes: .init(backupExcluded: false, protectionClass: nil)),
+        ])
+
+        XCTAssertFalse(report.isFullyProtected)
+        XCTAssertEqual(report.diagnosticsDetail, "local cache protection incomplete (store)")
+        XCTAssertFalse(report.diagnosticsDetail.contains(storeURL.path))
+    }
+
     /// Writes a healthy store with two saved gateways and one transcript.
     private func seedHealthyStore() async throws {
         let store = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)

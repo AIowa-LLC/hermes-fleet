@@ -220,6 +220,29 @@ final class ServerRequestBox: @unchecked Sendable {
         return admission
     }
 
+    /// Refresh a still-open request from a replayed `open_requests` snapshot
+    /// and re-deliver it only to conversation subscribers. This lets a view
+    /// model recover after it dropped a bounded lifecycle slice while keeping
+    /// the separate server-request stream deduplicated.
+    func refreshDuplicate(_ open: Open) {
+        let evicted = lock.withLock { state -> [BoundedQueue<ConversationEvent>.Entry] in
+            guard let index = state.open.firstIndex(where: { $0.request.id == open.request.id }) else {
+                return []
+            }
+            state.open[index] = open
+            var dropped: [BoundedQueue<ConversationEvent>.Entry] = []
+            for queue in state.conversationSubscribers.values {
+                dropped += queue.push(.init(
+                    value: .serverRequest(open.request), bytes: 256,
+                    sessionID: open.request.sessionID, pinned: true))
+            }
+            return dropped
+        }
+        for entry in evicted {
+            onGap(EventGap(sessionID: entry.sessionID, reason: .subscriberOverflow))
+        }
+    }
+
     /// Atomically register a subscriber and hand it the currently open
     /// requests (marked replayed) before any live one.
     func subscribe(_ continuation: AsyncStream<ServerRequest>.Continuation) -> UUID {

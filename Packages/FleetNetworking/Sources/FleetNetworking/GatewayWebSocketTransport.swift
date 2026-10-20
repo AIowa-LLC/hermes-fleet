@@ -407,6 +407,23 @@ public actor GatewayWebSocketTransport: HermesTransport {
         sessionWatermarks
     }
 
+    /// Forget runtime sessions after `session.resume` adopts a replacement
+    /// runtime id. Clear the set in one actor turn so transport events cannot
+    /// interleave between removing the old and replacement identities.
+    public func clearWatermarks(for sessionIDs: Set<String>) {
+        for sessionID in sessionIDs {
+            sessionWatermarks.removeValue(forKey: sessionID)
+            watermarkTouch.removeValue(forKey: sessionID)
+            incompleteSessions.remove(sessionID)
+            replayHoldOverflowSessions.remove(sessionID)
+        }
+    }
+
+    /// Single-session convenience for focused transport tests.
+    public func clearWatermark(for sessionID: String) {
+        clearWatermarks(for: [sessionID])
+    }
+
     /// Drop all watermarks — call on replay-epoch change (gateway restart);
     /// stale seq assumptions must be discarded and the client rehydrates from
     /// server state (spec §9.6).
@@ -957,9 +974,12 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .failure(let error):
             await replyWithError(id: id, error: error)
         case .success(let request):
-            switch serverRequests.admit(.init(wireID: id, request: request)) {
-            case .admitted, .duplicate, .settled:
+            let open = ServerRequestBox.Open(wireID: id, request: request)
+            switch serverRequests.admit(open) {
+            case .admitted, .settled:
                 break
+            case .duplicate:
+                if replayed { serverRequests.refreshDuplicate(open) }
             case .full:
                 await replyWithError(id: id, error: JSONRPCError(
                     code: JSONRPCError.internalError.code,

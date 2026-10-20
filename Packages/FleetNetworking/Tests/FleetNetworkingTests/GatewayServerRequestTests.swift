@@ -150,6 +150,24 @@ final class GatewayServerRequestTests: XCTestCase {
         }
     }
 
+    private func nextConversationEvent(
+        _ stream: AsyncStream<ConversationEvent>, timeout: Duration = .seconds(3)
+    ) async -> ConversationEvent? {
+        await withTaskGroup(of: ConversationEvent?.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next()
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
     private func expectNext(
         _ stream: AsyncStream<ServerRequest>, timeout: Duration = .seconds(3)
     ) async throws -> ServerRequest {
@@ -690,8 +708,10 @@ final class GatewayServerRequestTests: XCTestCase {
 
     /// A `session.resume` response whose `open_requests` is the given JSON
     /// array text (pre-serialized so the fixture closure stays Sendable).
-    private static func resumeFrame(id: String, openRequestsJSON: String) -> String {
-        #"{"jsonrpc":"2.0","id":"\#(id)","result":{"session_id":"abc12345","message_count":0,"messages":[],"info":{"model":"fixture-model"},"open_requests":\#(openRequestsJSON)}}"#
+    private static func resumeFrame(
+        id: String, openRequestsJSON: String, sessionID: String = "abc12345"
+    ) -> String {
+        #"{"jsonrpc":"2.0","id":"\#(id)","result":{"session_id":"\#(sessionID)","message_count":0,"messages":[],"info":{"model":"fixture-model"},"open_requests":\#(openRequestsJSON)}}"#
     }
 
     private func sudoEntryJSON(id: String) -> String {
@@ -756,27 +776,44 @@ final class GatewayServerRequestTests: XCTestCase {
         await transport.disconnect()
     }
 
-    func testRequestDeliveredLiveAndViaOpenRequestsSurfacesOnce() async throws {
+    func testDuplicateOpenRequestsRefreshConversationWithoutDuplicatingRequestStream() async throws {
         let recorder = FrameRecorder()
-        let entry = sudoEntryJSON(id: "srq-dup00001")
+        let entry = Self.json([
+            "id": "srq-dup00001", "method": "sudo",
+            "params": ["session_id": "runtime-after", "command": "true"],
+        ])
         let server = try await startServer(
             onOpen: [Self.ready(), Self.requestFrame(
-                id: "srq-dup00001", method: "sudo", params: ["session_id": sid, "command": "true"])],
+                id: "srq-dup00001", method: "sudo",
+                params: ["session_id": "runtime-before", "command": "true"])],
             recorder: recorder
         ) { frame in
             guard let (id, method, _) = Self.idAndMethod(frame), method == "session.resume" else { return [] }
-            return [Self.resumeFrame(id: id, openRequestsJSON: "[\(entry)]")]
+            return [Self.resumeFrame(id: id, openRequestsJSON: "[\(entry)]", sessionID: "runtime-after")]
         }
         defer { server.stop() }
         let transport = makeTransport(serverPort: server.listeningPort)
         let stream = transport.subscribeToServerRequests()
+        let conversationEvents = transport.subscribeToConversationEvents()
         try await transport.connect()
         let first = try await expectNext(stream)
         XCTAssertEqual(first.id, "srq-dup00001")
+        let firstEvent = await nextConversationEvent(conversationEvents)
+        guard case .serverRequest(let firstRequest) = firstEvent else {
+            return XCTFail("the live request should reach the conversation stream")
+        }
+        XCTAssertEqual(firstRequest.sessionID, "runtime-before")
 
         let conversation = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await conversation.resumeSession(sessionID: sid, lastEventID: nil, profile: nil)
 
+        let recoveredEvent = await nextConversationEvent(conversationEvents)
+        guard case .serverRequest(let recoveredRequest) = recoveredEvent else {
+            return XCTFail("the duplicate open_requests row should rebind the conversation prompt")
+        }
+        XCTAssertEqual(recoveredRequest.id, "srq-dup00001")
+        XCTAssertEqual(recoveredRequest.sessionID, "runtime-after")
+        XCTAssertTrue(recoveredRequest.replayed)
         await assertNoNext(stream, timeout: .milliseconds(250), "the same id must not surface twice")
         XCTAssertEqual(transport.openServerRequestCount, 1)
         await transport.disconnect()
