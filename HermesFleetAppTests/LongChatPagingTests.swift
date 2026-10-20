@@ -286,6 +286,21 @@ final class LongChatPagingTests: XCTestCase {
         XCTAssertEqual(rowIDs(viewModel), Array(24_401...25_000))
     }
 
+    func testReconnectLongChatFallbackRefreshesLatestPageWhenReplayHasNoEvents() async throws {
+        let (session, pager, viewModel) = try await openLongChat()
+        pager.appendTip(2)
+        session.replayOutcomes = [.nothingToReplay]
+        let requestsBefore = pager.requests.count
+
+        await viewModel.reconnect()
+
+        XCTAssertEqual(session.resumeOmitFlags, [false, true, false, true])
+        XCTAssertGreaterThan(pager.requests.count, requestsBefore,
+                             "omit_messages fallback must refresh the newest page even with no replay rows")
+        XCTAssertEqual(rowIDs(viewModel), Array(24_803...25_002))
+        XCTAssertEqual(session.historyCallCount, 0, "paged mode never falls back to session.history")
+    }
+
     func testStreamedRepliesDuringPagingAppendAfterTheTail() async throws {
         let (session, _, viewModel) = try await openLongChat()
         await viewModel.loadOlderHistory()

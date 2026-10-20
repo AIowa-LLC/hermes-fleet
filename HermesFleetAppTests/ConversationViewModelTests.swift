@@ -29,6 +29,7 @@ final class ConversationViewModelTests: XCTestCase {
         ReplayProviding,
         SessionHistoryProviding,
         ApprovalsCapable,
+        ConversationToolingCapable,
         ServerPromptCapable,
         SlashCommandCapable,
         AttachmentStagingCapable,
@@ -50,14 +51,22 @@ final class ConversationViewModelTests: XCTestCase {
             .success(ConversationSession(sessionID: "s-1", profileName: "default"))
         var createCallCount = 0
         var resumeCallCount = 0
+        var resumeGate: OneShotGate?
+        var resumeParkedCount = 0
         var resumedProfiles: [String?] = []
+        var resumedSessionIDs: [String] = []
+        var resumedEventIDs: [Int?] = []
+        var clearedWatermarkSessionIDs: [String] = []
+        var watermarkClearGate: OneShotGate?
         var submittedTexts: [String] = []
+        var submittedSessionIDs: [String] = []
         var submitError: ConversationError?
         /// The `prompt.submit` status the seam answers with. Non-streaming
         /// ("accepted") reproduces the path with NO terminal event frame.
         var submissionStatus = "streaming"
         var interruptError: ConversationError?
         let attachmentDouble = ScriptedAttachmentStaging()
+        let toolingBox = ScriptedConversationTooling()
 
         // event stream
         private let streamPair: (AsyncStream<ConversationEvent>, AsyncStream<ConversationEvent>.Continuation)
@@ -113,6 +122,7 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: ApprovalsCapable (R9-T1 rework: approval.pending restore)
         var approvals: any ApprovalsProviding { approvalsBox }
         let approvalsBox = ScriptedPendingApprovals()
+        var tooling: any ConversationToolingProviding { toolingBox }
         // P0.1: clarify / sudo / secret answers
         var serverPrompts: any ServerPromptResponding { serverPromptsBox }
         let serverPromptsBox = ScriptedServerPrompts()
@@ -130,7 +140,15 @@ final class ConversationViewModelTests: XCTestCase {
         }
         func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
             resumeCallCount += 1
+            resumedSessionIDs.append(sessionID)
+            resumedEventIDs.append(lastEventID)
             resumedProfiles.append(profile)
+            let gate = resumeGate
+            resumeGate = nil
+            if let gate {
+                resumeParkedCount += 1
+                await gate.wait()
+            }
             return try resumeResult.get()
         }
         /// t_8401d3c3 — captured gap-recovery requests + scripted responses.
@@ -141,6 +159,7 @@ final class ConversationViewModelTests: XCTestCase {
             return try resumeEventsResult.get()
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            submittedSessionIDs.append(sessionID)
             submittedTexts.append(text)
             if let submitError { throw submitError }
             return PromptSubmission(status: submissionStatus)
@@ -153,6 +172,12 @@ final class ConversationViewModelTests: XCTestCase {
 
         // MARK: ReplayProviding
         func watermarks() async -> [SessionEventWatermark] { [] }
+        func clearWatermarks(for sessionIDs: Set<String>) async {
+            clearedWatermarkSessionIDs.append(contentsOf: sessionIDs)
+            let gate = watermarkClearGate
+            watermarkClearGate = nil
+            if let gate { await gate.wait() }
+        }
         func replayAfterReconnect() async throws -> [ReplayOutcome] {
             replayCallCount += 1
             // Capture the scripted result at CALL time: a gated (in-flight)
@@ -189,6 +214,17 @@ final class ConversationViewModelTests: XCTestCase {
     }
 
     private final class ScriptedAttachmentStaging: AttachmentStagingProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _imageSessionIDs: [String] = []
+        var imageSessionIDs: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _imageSessionIDs
+        }
+        private func recordImageSession(_ sessionID: String) {
+            lock.lock(); defer { lock.unlock() }
+            _imageSessionIDs.append(sessionID)
+        }
+
         func attachFile(sessionID: String, name: String, dataURL: String) async throws -> StagedFileAttachment {
             StagedFileAttachment(
                 name: name,
@@ -199,7 +235,8 @@ final class ConversationViewModelTests: XCTestCase {
         }
 
         func attachImageBytes(sessionID: String, filename: String, dataURL: String) async throws -> StagedImageAttachment {
-            StagedImageAttachment(path: "fixture/\(filename)", name: filename, count: 1)
+            recordImageSession(sessionID)
+            return StagedImageAttachment(path: "fixture/\(filename)", name: filename, count: 1)
         }
 
         func attachPDF(sessionID: String, filename: String, dataURL: String) async throws -> StagedPDFAttachment {
@@ -210,6 +247,36 @@ final class ConversationViewModelTests: XCTestCase {
 
         func detachImage(sessionID: String, path: String) async throws -> DetachedImageState {
             DetachedImageState(detached: true, count: 0)
+        }
+    }
+
+    private final class ScriptedConversationTooling: ConversationToolingProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _usageSessionIDs: [String] = []
+        var usageSessionIDs: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _usageSessionIDs
+        }
+        private func recordUsageSession(_ sessionID: String) {
+            lock.lock(); defer { lock.unlock() }
+            _usageSessionIDs.append(sessionID)
+        }
+
+        func modelChoices(sessionID: String?) async throws -> [ModelChoice] { [] }
+        func usage(sessionID: String) async throws -> SessionUsageSnapshot {
+            recordUsageSession(sessionID)
+            return SessionUsageSnapshot(model: "fixture", input: 1, output: 1, total: 2, calls: 1)
+        }
+        func contextBreakdown(sessionID: String) async throws -> ContextBreakdown {
+            ContextBreakdown(categories: [])
+        }
+        func steer(sessionID: String, text: String) async throws -> Bool { true }
+        func renameSession(sessionID: String, title: String) async throws -> String { title }
+        func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+            ConversationSession(sessionID: "branch-\(sessionID)")
+        }
+        func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+            SessionCWDInfo(cwd: cwd, branch: nil, project: nil)
         }
     }
 
@@ -271,18 +338,24 @@ final class ConversationViewModelTests: XCTestCase {
         }
 
         private var _respondCount = 0
+        private var _respondedSessionIDs: [String] = []
+        var respondedSessionIDs: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _respondedSessionIDs
+        }
         /// P0.1: how many times anything tried to answer an approval.
         var respondCount: Int {
             lock.lock(); defer { lock.unlock() }
             return _respondCount
         }
-        private func recordRespond() {
+        private func recordRespond(sessionID: String) {
             lock.lock(); defer { lock.unlock() }
             _respondCount += 1
+            _respondedSessionIDs.append(sessionID)
         }
 
         func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
-            recordRespond()
+            recordRespond(sessionID: sessionID)
             throw ConversationError.notConnected
         }
 
@@ -1192,6 +1265,304 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.replayNotice, "Reconnected · replayed 2 missed events")
     }
 
+    func testReconnectResumesDurableSessionAndUsesFreshRuntimeIDWithoutReplacingTranscript() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat",
+            messages: [SessionMessage(role: .user, text: "kept question", timestamp: 1, rowID: "q"),
+                       SessionMessage(role: .assistant, text: "kept answer", timestamp: 2, rowID: "a")]))
+        await viewModel.start()
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["kept question", "kept answer"])
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat", messages: []))
+        scripted.historyResult = .success(SessionHistory(
+            sessionID: "runtime-after", count: 2,
+            messages: [
+                SessionMessage(role: .user, text: "kept question", timestamp: 1, rowID: "q"),
+                SessionMessage(role: .assistant, text: "kept answer", timestamp: 2, rowID: "a"),
+            ]))
+        await viewModel.reconnect()
+        XCTAssertEqual(scripted.resumedSessionIDs, ["stored-chat", "stored-chat"])
+        XCTAssertEqual(scripted.resumedEventIDs, [nil, nil])
+        XCTAssertEqual(Set(scripted.clearedWatermarkSessionIDs), Set(["runtime-before", "runtime-after"]))
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["kept question", "kept answer"])
+        XCTAssertEqual(viewModel.resolvedSessionID, "stored-chat")
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        scripted.push(.messageStart(sessionID: "runtime-after", seq: 1))
+        scripted.push(.messageDelta(sessionID: "runtime-after", text: "fresh sequence", rendered: nil, seq: 2))
+        scripted.push(.messageComplete(
+            sessionID: "runtime-after", text: "fresh sequence", status: "complete", error: nil, seq: 3))
+        scripted.push(.approvalRequested(
+            sessionID: "runtime-after", requestID: "fresh-approval", command: "echo safe",
+            detail: nil, choices: ["allow", "deny"], seq: 4))
+        await flush()
+        XCTAssertTrue(viewModel.transcript.contains { $0.text == "fresh sequence" },
+                      "events from the replacement runtime must not be dropped by an old cursor")
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.requestID, "fresh-approval",
+                       "approval state must bind to the replacement runtime")
+        XCTAssertTrue(scripted.approvalsBox.pendingCalls.contains("runtime-after"),
+                      "recovery must restore pending approvals for the replacement runtime")
+
+        let image = Data([0x89, 0x50, 0x4e, 0x47])
+        await viewModel.stageAttachment(
+            name: "photo.png", mime: "image/png", byteCount: image.count, loadBytes: { image })
+        XCTAssertEqual(scripted.attachmentDouble.imageSessionIDs, ["runtime-after"],
+                       "image attachment staging must use the replacement runtime")
+        await viewModel.refreshUsageSnapshot()
+        XCTAssertFalse(scripted.toolingBox.usageSessionIDs.isEmpty)
+        XCTAssertTrue(scripted.toolingBox.usageSessionIDs.allSatisfy { $0 == "runtime-after" },
+                      "every usage refresh must use the replacement runtime")
+
+        await viewModel.send("after reconnect")
+        XCTAssertEqual(scripted.submittedSessionIDs, ["runtime-after"])
+        XCTAssertEqual(scripted.createCallCount, 0, "recovery must not replace the canonical conversation")
+    }
+
+    func testReconnectRoutesNewRuntimeEventsWhileWatermarksAreBeingCleared() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        let gate = OneShotGate()
+        scripted.watermarkClearGate = gate
+        let recovery = Task { await viewModel.reconnect() }
+        for _ in 0..<200 where scripted.clearedWatermarkSessionIDs.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(scripted.clearedWatermarkSessionIDs.isEmpty,
+                       "recovery should reach atomic watermark cleanup")
+
+        scripted.push(.messageStart(sessionID: "runtime-after", seq: 1))
+        scripted.push(.messageDelta(
+            sessionID: "runtime-after", text: "arrived during recovery", rendered: nil, seq: 2))
+        await flush()
+        XCTAssertTrue(viewModel.transcript.contains { $0.text == "arrived during recovery" },
+                      "the adopted runtime identity must accept events during watermark cleanup")
+
+        gate.open()
+        await recovery.value
+        XCTAssertEqual(viewModel.phase, .ready)
+    }
+
+    func testReconnectRetainsOpenRequestDeliveredBeforeResumeReturns() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        let gate = OneShotGate()
+        scripted.resumeGate = gate
+        let watermarkGate = OneShotGate()
+        scripted.watermarkClearGate = watermarkGate
+        let recovery = Task { await viewModel.reconnect() }
+        for _ in 0..<200 where scripted.resumeParkedCount == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(scripted.resumeParkedCount, 1, "resume must be held before the replacement ID is known")
+
+        scripted.push(.serverRequest(clarifyRequest(sessionID: "runtime-after")))
+        await flush()
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending,
+                     "the replacement request should wait until its runtime ID is adopted")
+
+        gate.open()
+        for _ in 0..<200 where scripted.clearedWatermarkSessionIDs.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(scripted.clearedWatermarkSessionIDs.isEmpty,
+                       "the new runtime identity should be adopted before clearing watermarks")
+        scripted.push(.requestCancelled(
+            sessionID: "runtime-after", requestID: "srq-clarify1",
+            method: "clarify", reason: "timeout"))
+        scripted.push(.serverRequest(clarifyRequest(id: "srq-clarify2", sessionID: "runtime-after")))
+        await flush()
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending,
+                     "request and cancellation should remain ordered until the runtime switch settles")
+
+        watermarkGate.open()
+        await recovery.value
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify2")
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.sessionID, "runtime-after")
+    }
+
+    func testSupersedingReconnectKeepsBufferedOpenRequest() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        let firstResumeGate = OneShotGate()
+        scripted.resumeGate = firstResumeGate
+        let firstRecovery = Task { await viewModel.reconnect() }
+        for _ in 0..<200 where scripted.resumeParkedCount == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(scripted.resumeParkedCount, 1)
+
+        scripted.push(.serverRequest(clarifyRequest(sessionID: "runtime-after")))
+        await flush()
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending)
+
+        // A second recovery supersedes the parked resume. It must adopt the
+        // already-consumed request buffer because the transport dedupes the
+        // matching open_requests row by request ID.
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify1")
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.sessionID, "runtime-after")
+
+        firstResumeGate.open()
+        await firstRecovery.value
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify1")
+    }
+
+    func testUnrelatedSessionLifecycleTrafficDoesNotExhaustResumeBuffer() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        let resumeGate = OneShotGate()
+        scripted.resumeGate = resumeGate
+        let recovery = Task { await viewModel.reconnect() }
+        for _ in 0..<200 where scripted.resumeParkedCount == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(scripted.resumeParkedCount, 1)
+
+        for index in 0..<24 {
+            scripted.push(.requestCancelled(
+                sessionID: "unrelated-session", requestID: "unrelated-\(index)",
+                method: "clarify", reason: "fixture"))
+        }
+        scripted.push(.serverRequest(clarifyRequest(sessionID: "runtime-after")))
+        await flush()
+        resumeGate.open()
+        await recovery.value
+
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify1")
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.sessionID, "runtime-after")
+        XCTAssertNotEqual(
+            viewModel.integrityNotice,
+            "A gateway prompt arrived during reconnect but could not be retained. Reconnect again to check for pending requests.")
+    }
+
+    func testResumeBufferOverflowDropsIncompleteLifecyclePrefix() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        let resumeGate = OneShotGate()
+        scripted.resumeGate = resumeGate
+        let recovery = Task { await viewModel.reconnect() }
+        for _ in 0..<200 where scripted.resumeParkedCount == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(scripted.resumeParkedCount, 1)
+
+        for index in 0..<15 {
+            scripted.push(.requestCancelled(
+                sessionID: "runtime-after", requestID: "older-\(index)",
+                method: "clarify", reason: "fixture"))
+        }
+        scripted.push(.serverRequest(clarifyRequest(id: "srq-overflow", sessionID: "runtime-after")))
+        scripted.push(.requestCancelled(
+            sessionID: "runtime-after", requestID: "srq-overflow",
+            method: "clarify", reason: "cancelled after buffer cap"))
+        await flush()
+
+        resumeGate.open()
+        await recovery.value
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending,
+                     "overflow must not apply a request without its later cancellation")
+        XCTAssertEqual(
+            viewModel.integrityNotice,
+            "A gateway prompt arrived during reconnect but could not be retained. Reconnect again to check for pending requests.")
+    }
+
+    func testRedeliveredServerRequestRefreshesItsRuntimeSessionID() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.push(.serverRequest(clarifyRequest(id: "srq-rebind1", sessionID: "runtime-before")))
+        await flush()
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.sessionID, "runtime-before")
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        await viewModel.reconnect()
+        scripted.push(.serverRequest(clarifyRequest(id: "srq-rebind1", sessionID: "runtime-after")))
+        await flush()
+
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-rebind1")
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.sessionID, "runtime-after",
+                       "an existing prompt must answer against the adopted runtime session")
+    }
+
+    func testRestoredApprovalWithExistingRequestIDAdoptsReplacementRuntime() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+        for _ in 0..<200 where scripted.approvalsBox.pendingCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await flush()
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.sessionID, "runtime-before")
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after", storedSessionID: "stored-chat"))
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.requestID, "req-restore-1")
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.sessionID, "runtime-after",
+                       "a restored duplicate must refresh the runtime ID used for its response")
+
+        await viewModel.approvalViewModel?.deny()
+        XCTAssertEqual(scripted.approvalsBox.respondedSessionIDs, ["runtime-after"])
+    }
+
+    func testReauthenticateResumesDurableSessionBeforeSending() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "stored-chat")
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-before", storedSessionID: "stored-chat"))
+        await viewModel.start()
+
+        scripted.resumeResult = .success(ConversationSession(
+            sessionID: "runtime-after-auth", storedSessionID: "stored-chat"))
+        await viewModel.reauthenticate()
+
+        XCTAssertEqual(scripted.resumedSessionIDs, ["stored-chat", "stored-chat"])
+        XCTAssertEqual(scripted.resumedEventIDs, [nil, nil])
+        XCTAssertEqual(Set(scripted.clearedWatermarkSessionIDs), Set(["runtime-before", "runtime-after-auth"]))
+        XCTAssertEqual(scripted.reauthenticateCount, 1)
+        XCTAssertEqual(viewModel.resolvedSessionID, "stored-chat")
+        XCTAssertEqual(viewModel.phase, .ready)
+        await viewModel.send("after re-auth")
+        XCTAssertEqual(scripted.submittedSessionIDs, ["runtime-after-auth"])
+        XCTAssertEqual(scripted.createCallCount, 0)
+    }
+
     func testReplayDedupeVisibleInTranscript() async throws {
         let (scripted, viewModel) = try await makeFixture()
         await viewModel.start()
@@ -1813,8 +2184,8 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.replayNotice, "Replay unavailable after reconnect.")
     }
 
-    /// Repeated background/foreground cycles: no extra session opens, no
-    /// duplicated rows from a single live event, transcript retained.
+    /// Repeated background/foreground cycles resume the canonical durable chat
+    /// without creating replacements, duplicating rows, or dropping transcript.
     func testRepeatedForegroundCyclesKeepOneSessionAndNoDuplicateRows() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
         await viewModel.start()
@@ -1823,7 +2194,8 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
         scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
         await flush()
-        let opens = scripted.createCallCount + scripted.resumeCallCount
+        let creates = scripted.createCallCount
+        let resumes = scripted.resumeCallCount
         let rowsBefore = viewModel.transcript.count
 
         scripted.replayOutcomes = .success(Array(repeating: .nothingToReplay, count: 25))
@@ -1836,8 +2208,10 @@ final class ConversationViewModelTests: XCTestCase {
             XCTAssertNil(viewModel.replayNotice)
         }
 
-        XCTAssertEqual(scripted.createCallCount + scripted.resumeCallCount, opens,
-                       "foreground recovery must not reopen the session")
+        XCTAssertEqual(scripted.createCallCount, creates,
+                       "foreground recovery must not create replacement chats")
+        XCTAssertEqual(scripted.resumeCallCount, resumes + 4,
+                       "each interrupted connection must refresh the runtime session id")
         XCTAssertEqual(viewModel.transcript.count, rowsBefore)
         scripted.push(.messageStart(sessionID: "s-1"))
         scripted.push(.messageDelta(sessionID: "s-1", text: "again", rendered: nil))

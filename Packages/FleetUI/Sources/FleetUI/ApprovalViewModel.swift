@@ -227,8 +227,11 @@ public final class ApprovalViewModel {
             // Fail-soft: leave current banner state untouched.
             return
         }
-        let known = Set([self.pending?.requestID].compactMap { $0 } + queued.map(\.requestID))
-        for request in restored where !known.contains(request.requestID) {
+        // Always feed restored rows through the normal dedupe path. A request
+        // with an already-visible ID may now belong to a replacement runtime;
+        // `handleApprovalRequest` refreshes its stored session ID (and wire ID)
+        // so the banner answers the currently open session.
+        for request in restored {
             handleApprovalRequest(request)
         }
     }

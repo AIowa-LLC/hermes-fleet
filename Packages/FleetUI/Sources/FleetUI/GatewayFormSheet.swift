@@ -111,10 +111,9 @@ struct GatewayFormSheet: View {
                 }
 
                 if cleartextRisk {
-                    // B2: prominent cleartext warning when the endpoint is
-                    // http:// to a NON-private/loopback host — credentials
-                    // would travel unencrypted to a public address. Saving is
-                    // gated on explicit confirmation below.
+                    // B2: prominent HTTP warning when the endpoint is not
+                    // classified private/loopback. Saving remains gated on
+                    // explicit confirmation below; a tunnel may encrypt transit.
                     Section {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
@@ -122,7 +121,7 @@ struct GatewayFormSheet: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(FleetTheme.statusDestructive)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text("Fleet can't verify that the connection is encrypted. A trusted encrypted tunnel (like a VPN) may protect it, but avoid sending a password over HTTP on public or untrusted networks. Use HTTPS when you can.")
+                                Text("Fleet can't verify application-layer encryption for HTTP. A trusted encrypted tunnel may protect traffic in transit. Avoid sending credentials over HTTP on public or untrusted networks. HTTPS is recommended.")
                                     .font(.caption)
                                     .foregroundStyle(theme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -131,6 +130,7 @@ struct GatewayFormSheet: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(FleetTheme.statusDestructive)
                         }
+                        .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("fleet.gateways.form.cleartext-warning")
 
                         Toggle("I understand — connect anyway", isOn: $draftStore.confirmsCleartextSend)
@@ -363,10 +363,10 @@ struct GatewayFormSheet: View {
         return try? GatewayEndpoint.normalizedOrigin(from: url)
     }
 
-    /// B2 cleartext risk: the endpoint is `http://` AND its host is NOT a
-    /// private or loopback address — credentials would travel unencrypted to
-    /// a public address. `https://` is never at risk. `PrivateNetwork` does
-    /// the network-free classification (RFC1918/127./::1/.local/localhost).
+    /// B2 warning scope: the endpoint is `http://` AND its host is NOT
+    /// classified private or loopback. This is a warning predicate, not a
+    /// claim about tunnel encryption. `PrivateNetwork` performs the
+    /// network-free classification; HTTPS follows the separate TLS path.
     private var cleartextRisk: Bool {
         guard let url = endpointURL,
               url.scheme?.lowercased() == "http",
