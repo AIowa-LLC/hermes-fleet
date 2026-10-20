@@ -15,12 +15,13 @@ public enum LocalFileProtection {
             self.protectionClass = protectionClass
         }
 
-        /// nil means the platform did not report a class; it is not evidence
-        /// of `.none`. Physical-device acceptance checks the exact class.
+        /// A missing or different class cannot confirm the requested iOS
+        /// protection level. Physical-device acceptance still checks the
+        /// exact on-disk attribute for each required file family.
         public var isProtected: Bool {
             guard backupExcluded == true else { return false }
             #if os(iOS)
-            return protectionClass != FileProtectionType.none.rawValue
+            return protectionClass == FileProtectionType.complete.rawValue
             #else
             return true
             #endif

@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import Security
 import FleetCore
@@ -336,6 +337,21 @@ final class ModuleBoundaryTests: XCTestCase {
         let afterDelete = try await store.loadToken(for: id)
         XCTAssertNil(afterDelete, "token is gone after delete")
     }
+
+#if os(iOS)
+    func testProtectionReportRequiresConfirmedCompleteClass() {
+        XCTAssertFalse(
+            LocalFileProtection.Attributes(backupExcluded: true, protectionClass: nil).isProtected,
+            "an unavailable read-back must remain unverified")
+        XCTAssertFalse(
+            LocalFileProtection.Attributes(
+                backupExcluded: true, protectionClass: FileProtectionType.none.rawValue).isProtected,
+            "the unprotected class must fail closed")
+        XCTAssertTrue(
+            LocalFileProtection.Attributes(
+                backupExcluded: true, protectionClass: FileProtectionType.complete.rawValue).isProtected)
+    }
+#endif
 
     func testSwiftDataCacheStoreFileProtectionInApp() async throws {
         // The "NSFileProtectionComplete + backup-excluded" on-disk acceptance
