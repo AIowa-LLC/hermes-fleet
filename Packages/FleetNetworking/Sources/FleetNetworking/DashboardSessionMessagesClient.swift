@@ -211,6 +211,8 @@ public struct DashboardSessionMessagesClient: SessionHistoryPaging, Sendable {
                 request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
             case .cookie(let cookie):
                 request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
+            case .bearer(let token):
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
         } catch {
             if Redaction.isCancellation(error) { throw CancellationError() }
