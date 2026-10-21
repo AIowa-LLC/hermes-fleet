@@ -314,6 +314,30 @@ else
   fail "launcher dotted symlink purge rc=$rc target=$(test -d "$SYMLINK_STATE_TARGET" && echo present || echo removed)"
 fi
 
+# Darwin can normalize `symlink-parent/../leaf` differently across shell path
+# checks. Resolve the parent physically and ensure a final symlink remains a
+# symlink before clean --purge can canonicalize or remove its target.
+if [ "$(uname -s)" = Darwin ]; then
+  DARWIN_PARENT="$T/darwin-parent"; mkdir -m 700 "$DARWIN_PARENT"
+  mkdir -m 700 "$DARWIN_PARENT/child"
+  DARWIN_PARENT_LINK="$T/darwin-parent-link"; ln -s "$DARWIN_PARENT/child" "$DARWIN_PARENT_LINK"
+  DARWIN_STATE_TARGET="$T/darwin-state-target"; mkdir -m 700 "$DARWIN_STATE_TARGET"
+  DARWIN_STATE_LINK="$DARWIN_PARENT/state-alias"; ln -s "$DARWIN_STATE_TARGET" "$DARWIN_STATE_LINK"
+  rm -f "$T/tool-used"
+  out=$(env -u REVIEWER_ALLOW_LEGACY_DIR PATH="$TOOLS:$PATH" \
+    HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+    REVIEWER_ENV_DIR="$DARWIN_PARENT_LINK/../state-alias" \
+    bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+  if [ "$rc" != 0 ] && [ -d "$DARWIN_STATE_TARGET" ] \
+     && [ -L "$DARWIN_STATE_LINK" ] && [ ! -e "$T/tool-used" ]; then
+    pass "macOS symlink-parent .. path refuses final symlink before purge or external work"
+  else
+    fail "macOS symlink-parent .. purge rc=$rc target=$(test -d "$DARWIN_STATE_TARGET" && echo present || echo removed)"
+  fi
+else
+  pass "macOS symlink-parent regression skipped on non-Darwin host"
+fi
+
 # Inject a credential symlink after initial validation but before creation.
 # Exclusive final-name creation must fail without modifying the victim.
 RACE_STATE="$T/credential-race-state"; VICTIM="$T/credential-race-victim"

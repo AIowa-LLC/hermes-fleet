@@ -37,7 +37,7 @@ hf_private_name() {
 }
 
 hf_private_path_is_symlink_leaf() {
-  local path="${1:-}"
+  local path="${1:-}" parent leaf
   [ -n "$path" ] || return 1
   while [ "$path" != / ]; do
     case "$path" in
@@ -46,7 +46,15 @@ hf_private_path_is_symlink_leaf() {
       *) break ;;
     esac
   done
-  [ -L "$path" ]
+  [ "$path" != / ] || return 1
+  # Resolve the parent before inspecting the final component. On macOS, a
+  # lexical path containing a symlinked parent followed by `..` can otherwise
+  # make a final symlink check depend on how the shell normalizes that path.
+  # This still permits safe symlinked parent aliases while checking the real
+  # directory entry that the canonical state path would use.
+  parent=$(hf_canonical_path "$(dirname "$path")") || return 1
+  leaf=$(basename "$path") || return 1
+  [ -L "$parent/$leaf" ]
 }
 
 hf_private_parent_safe() {
