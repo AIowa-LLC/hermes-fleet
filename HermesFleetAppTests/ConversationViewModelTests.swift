@@ -285,6 +285,22 @@ final class ConversationViewModelTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(25))
     }
 
+    /// Wait for a specific state change when an AsyncStream consumer is still
+    /// draining scripted events. Keep the final state assertion separate so
+    /// a missing event still fails instead of being converted to a skip.
+    private func waitUntil(
+        timeout: Duration,
+        _ condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition()
+    }
+
     /// t_e77c614c — one-shot async gate for holding a scripted call in flight.
     final class OneShotGate: @unchecked Sendable {
         private let lock = NSLock()
@@ -1205,8 +1221,17 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
         await flush()
 
+        let streamedWhileHistoryHeld = await waitUntil(timeout: .seconds(4)) {
+            let toolNames = viewModel.transcript.filter { $0.kind == .tool }.map(\.text)
+            let finalAssistant = viewModel.transcript.last { $0.kind == .assistant }
+            return toolNames == names && finalAssistant?.text == "done" && finalAssistant?.isStreaming == false
+        }
+        XCTAssertTrue(streamedWhileHistoryHeld,
+                      "all scripted events should render while the empty history fetch is still held in flight")
+
         gate.open()
-        await flush()
+        let historySettled = await waitUntil(timeout: .seconds(4)) { !viewModel.isHistoryHydrationInProgress }
+        XCTAssertTrue(historySettled, "the held empty-history fetch should finish after its gate opens")
 
         XCTAssertEqual(
             viewModel.transcript.filter { $0.kind == .tool }.map(\.text), names,
@@ -1927,6 +1952,12 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.messageDelta(sessionID: "s-1", text: "turn", rendered: nil, seq: 3))
         await flush()
 
+        let replayedTailApplied = await waitUntil(timeout: .seconds(4)) {
+            viewModel.transcript.last { $0.kind == .assistant }?.text == "post-restart turn"
+        }
+        XCTAssertTrue(replayedTailApplied,
+                      "both low-sequence post-restart deltas should be consumed after the epoch refresh")
+
         let assistant = viewModel.transcript.last { $0.kind == .assistant }
         XCTAssertEqual(assistant?.text, "post-restart turn",
                        "post-restart low-seq events must APPLY (cursor dropped), not drop as duplicates")
@@ -1935,6 +1966,12 @@ final class ConversationViewModelTests: XCTestCase {
         // event (seq 4) renders without firing a spurious gap recovery.
         scripted.push(.messageComplete(sessionID: "s-1", text: "post-restart turn", status: nil, error: nil, seq: 4))
         await flush()
+        let turnSettled = await waitUntil(timeout: .seconds(4)) {
+            viewModel.phase == .ready
+                && viewModel.transcript.last { $0.kind == .assistant }?.text == "post-restart turn"
+                && viewModel.transcript.last { $0.kind == .assistant }?.isStreaming == false
+        }
+        XCTAssertTrue(turnSettled, "the contiguous terminal event should settle the post-restart turn")
         XCTAssertEqual(scripted.resumeEventsRequests.count, 0,
                        "fresh-epoch tail must be contiguous — no spurious gap recovery")
         let completed = viewModel.transcript.last { $0.kind == .assistant }
