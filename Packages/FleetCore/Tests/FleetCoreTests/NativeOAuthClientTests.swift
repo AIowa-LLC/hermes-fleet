@@ -14,6 +14,17 @@ final class NativeOAuthClientTests: XCTestCase {
             Data(#"{"gateway_running":true}"#.utf8)))
     }
 
+    func testProviderDiscoveryMatchesUpstreamInteractiveProviderShape() throws {
+        let data = Data(#"""
+        {"providers":[{"name":"nous","display_name":"Nous Research","supports_password":false},{"name":"basic","display_name":"Username & Password","supports_password":true}]}
+        """#.utf8)
+        let providers = try NativeOAuthClient.decodeProviders(data)
+
+        XCTAssertEqual(providers.map(\.name), ["nous", "basic"])
+        XCTAssertEqual(providers.map(\.displayName), ["Nous Research", "Username & Password"])
+        XCTAssertEqual(providers.map(\.supportsPassword), [false, true])
+    }
+
     func testClientConstructionPreservesIdentity() async {
         let baseURL = URL(string: "https://gateway.example.invalid")!
         let gatewayID = GatewayID(rawValue: "test-gateway")

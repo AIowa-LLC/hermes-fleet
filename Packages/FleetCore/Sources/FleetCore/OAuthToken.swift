@@ -114,7 +114,7 @@ public enum NativeOAuthError: Error, Sendable, Equatable, LocalizedError {
         case .nativeFlowUnsupported:
             return "Gateway does not advertise native sign-in; choose one of its existing sign-in methods"
         case .noSessionProviders:
-            return "Gateway advertises no session-capable OAuth providers"
+            return "Gateway advertises no interactive sign-in providers"
         case .unknownProvider(let name):
             return "Unknown or unsupported provider: \(name)"
         case .multipleProviders:

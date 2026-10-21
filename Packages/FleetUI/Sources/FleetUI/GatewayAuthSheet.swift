@@ -108,7 +108,7 @@ struct GatewayAuthSheet: View {
                         }
                         .disabled(isBusy)
                         .accessibilityIdentifier("fleet.gateways.auth.oauth-sign-in")
-                        Text("Sign-in opens the system browser. Tokens stay in Keychain and are never shown. If this gateway does not advertise native sign-in, choose one of its existing strategies above.")
+                        Text("Sign-in opens the system browser. Tokens stay in Keychain and are never shown. If native sign-in is unsupported, canceled, or unavailable, choose another existing strategy above.")
                             .font(.caption)
                             .foregroundStyle(theme.textSecondary)
                             .accessibilityIdentifier("fleet.gateways.auth.oauth-hint")
