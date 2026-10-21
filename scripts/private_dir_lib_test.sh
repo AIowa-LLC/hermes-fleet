@@ -45,6 +45,22 @@ CANONICAL_DIR=$(hf_private_dir "$T/private-parent-link/child")
 [ "$CANONICAL_DIR" = "$CANONICAL_PARENT/child" ] \
   && pass "safe symlink parent returns and creates the physical path" \
   || fail "safe symlink parent did not return its physical path"
+mkdir -m 700 "$SAFE_PARENT/alias-child" "$SAFE_PARENT/dotdot-target"
+ln -s "$SAFE_PARENT/alias-child" "$T/private-dotdot-link"
+CANONICAL_DOTDOT=$(hf_private_dir "$T/private-dotdot-link/../dotdot-target")
+[ "$CANONICAL_DOTDOT" = "$(hf_canonical_path "$SAFE_PARENT/dotdot-target")" ] \
+  && pass "safe symlink-parent .. alias resolves to a private target" \
+  || fail "safe symlink-parent .. alias resolved unexpectedly: $CANONICAL_DOTDOT"
+mkdir -m 700 "$UNSAFE_PARENT/branch"
+ln -s "$UNSAFE_PARENT/branch" "$T/unsafe-dotdot-link"
+if hf_private_dir "$T/unsafe-dotdot-link/../dotdot-target" >/dev/null 2>&1; then
+  fail "symlink-parent .. alias accepted under shared-writable parent"
+else
+  pass "symlink-parent .. alias into shared-writable parent is refused"
+fi
+[ ! -e "$UNSAFE_PARENT/dotdot-target" ] \
+  && pass "unsafe symlink-parent .. alias is refused before creating its target" \
+  || fail "unsafe symlink-parent .. target was created"
 STICKY_PARENT="$T/sticky-parent"; mkdir -m 1777 "$STICKY_PARENT"
 hf_private_dir "$STICKY_PARENT/private" >/dev/null \
   && pass "sticky private-owned parent is accepted" \
@@ -63,6 +79,8 @@ mkdir "$T/target" && chmod 700 "$T/target"
 ln -s "$T/target" "$T/link"
 if hf_private_dir "$T/link" >/dev/null 2>&1; then fail "symlink accepted"; else pass "symlink to a private directory refused"; fi
 if hf_private_dir "$T/link/" >/dev/null 2>&1; then fail "symlink with trailing slash accepted"; else pass "symlink with trailing slash refused"; fi
+if hf_private_dir "$T/link/." >/dev/null 2>&1; then fail "symlink with terminal dot accepted"; else pass "symlink with terminal dot refused"; fi
+if hf_private_dir "$T/link/./" >/dev/null 2>&1; then fail "symlink with terminal dot and slash accepted"; else pass "symlink with terminal dot and slash refused"; fi
 ln -s "$T/does-not-exist" "$T/dangling"
 if hf_private_dir "$T/dangling" >/dev/null 2>&1; then fail "dangling symlink accepted"; else pass "dangling symlink refused"; fi
 [ ! -e "$T/does-not-exist" ] && pass "refused symlink was not followed to create its target" || fail "symlink target created"
@@ -282,6 +300,18 @@ if [ "$rc" != 0 ] && [ -d "$SYMLINK_STATE_TARGET" ] && [ -L "$SYMLINK_STATE_LINK
   pass "launcher refuses a symlink leaf before purge or external work, including a trailing slash"
 else
   fail "launcher symlink-leaf purge rc=$rc target=$(test -d "$SYMLINK_STATE_TARGET" && echo present || echo removed)"
+fi
+
+# Dot components must not hide the final symlink from the pre-purge check.
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$SYMLINK_STATE_LINK/./" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -d "$SYMLINK_STATE_TARGET" ] && [ -L "$SYMLINK_STATE_LINK" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a dotted symlink leaf before purge or external work"
+else
+  fail "launcher dotted symlink purge rc=$rc target=$(test -d "$SYMLINK_STATE_TARGET" && echo present || echo removed)"
 fi
 
 # Inject a credential symlink after initial validation but before creation.

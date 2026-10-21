@@ -40,7 +40,11 @@ hf_private_path_is_symlink_leaf() {
   local path="${1:-}"
   [ -n "$path" ] || return 1
   while [ "$path" != / ]; do
-    case "$path" in */) path=${path%/} ;; *) break ;; esac
+    case "$path" in
+      */) path=${path%/} ;;
+      */.) path=${path%/.} ;;
+      *) break ;;
+    esac
   done
   [ -L "$path" ]
 }

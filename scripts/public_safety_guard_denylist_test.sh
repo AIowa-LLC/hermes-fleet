@@ -31,12 +31,12 @@ git -C "$HOME_REPO" init -q
 HOME_PREFIX="$(printf '/%s/' Users)"
 printf 'example %srunner/template\n' "$HOME_PREFIX" > "$HOME_REPO/example.txt"
 git -C "$HOME_REPO" add scripts/public_safety_guard.sh example.txt
-HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
+HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=0 HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
   bash "$HOME_REPO/scripts/public_safety_guard.sh" >"$T/home-allowed.out" 2>&1; rc=$?
 if [ "$rc" = 0 ]; then echo "PASS  placeholder home path passes"; else echo "FAIL  placeholder home path rejected" >&2; FAILS=$((FAILS+1)); fi
 printf 'example %srunner/template and %sprivate-owner/data\n' "$HOME_PREFIX" "$HOME_PREFIX" > "$HOME_REPO/example.txt"
 git -C "$HOME_REPO" add example.txt
-HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
+HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=0 HF_PUBLIC_SAFETY_DENYLIST_FILE="$T/missing-home-denylist" \
   bash "$HOME_REPO/scripts/public_safety_guard.sh" >"$T/home-mixed.out" 2>&1; rc=$?
 if [ "$rc" != 0 ] && grep -q 'example.txt:1' "$T/home-mixed.out"; then
   echo "PASS  mixed placeholder and real home path is rejected"
