@@ -38,22 +38,18 @@ final class LoopbackOAuthListenerTests: XCTestCase {
         let redirectURI = await listener.redirectURI
         let testCode = "test_auth_code_12345"
         let testState = "test_state_abcde"
-        let callbackURL = "\(redirectURI)?code=\(testCode)&state=\(testState)"
-
         let callbackTask = Task {
             try await listener.waitForCallback(timeout: 5)
         }
-        try await Task.sleep(nanoseconds: 150_000_000)
-
-        var request = URLRequest(url: URL(string: callbackURL)!)
-        request.httpMethod = "GET"
-        let (_, response) = try await URLSession.shared.data(for: request)
-        let http = try XCTUnwrap(response as? HTTPURLResponse)
-        XCTAssertEqual(http.statusCode, 302)
-        let location = try XCTUnwrap(http.value(forHTTPHeaderField: "Location"))
-        XCTAssertTrue(location.hasPrefix("hermes-fleet://oauth-callback"))
-        XCTAssertTrue(location.contains("code=\(testCode)"))
-        XCTAssertTrue(location.contains("state=\(testState)"))
+        let response = try await sendLoopbackRequest(
+            to: redirectURI,
+            requestTarget: "/cb?code=\(testCode)&state=\(testState)"
+        )
+        let responseString = try XCTUnwrap(String(data: response, encoding: .utf8))
+        XCTAssertTrue(responseString.hasPrefix("HTTP/1.1 302 Found"))
+        XCTAssertTrue(responseString.contains("Location: hermes-fleet://oauth-callback"))
+        XCTAssertTrue(responseString.contains("code=\(testCode)"))
+        XCTAssertTrue(responseString.contains("state=\(testState)"))
 
         let result = try await callbackTask.value
         XCTAssertEqual(result.code, testCode)
@@ -72,11 +68,7 @@ final class LoopbackOAuthListenerTests: XCTestCase {
         let callbackTask = Task {
             try await listener.waitForCallback(timeout: 5)
         }
-        try await Task.sleep(nanoseconds: 150_000_000)
-
-        var request = URLRequest(url: URL(string: "\(redirectURI)?state=test_state")!)
-        request.httpMethod = "GET"
-        _ = try await URLSession.shared.data(for: request)
+        _ = try await sendLoopbackRequest(to: redirectURI, requestTarget: "/cb?state=test_state")
 
         do {
             _ = try await callbackTask.value
@@ -104,5 +96,42 @@ final class LoopbackOAuthListenerTests: XCTestCase {
             "GET /other?code=abc&state=expected HTTP/1.1\r\n\r\n")
         XCTAssertNil(parsed.code)
         XCTAssertNil(parsed.state)
+    }
+
+    private func sendLoopbackRequest(to redirectURI: String, requestTarget: String) async throws -> Data {
+        let components = try XCTUnwrap(URLComponents(string: redirectURI))
+        let portValue = try XCTUnwrap(components.port)
+        let port = try XCTUnwrap(NWEndpoint.Port(rawValue: UInt16(portValue)))
+        let connection = NWConnection(
+            to: .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: port),
+            using: .tcp
+        )
+        defer { connection.cancel() }
+        connection.start(queue: .global(qos: .userInitiated))
+
+        let request = Data(
+            "GET \(requestTarget) HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".utf8
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: request, contentContext: .defaultMessage, isComplete: true, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
+            })
+        }
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let data {
+                    continuation.resume(returning: data)
+                } else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                }
+            }
+        }
     }
 }
