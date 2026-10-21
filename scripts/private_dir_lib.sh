@@ -36,11 +36,26 @@ hf_private_name() {
   printf '%s/%s-%s' "${TMPDIR:-/tmp}" "$1" "$(id -u)"
 }
 
+hf_private_path_is_symlink_leaf() {
+  local path="${1:-}"
+  [ -n "$path" ] || return 1
+  while [ "$path" != / ]; do
+    case "$path" in */) path=${path%/} ;; *) break ;; esac
+  done
+  [ -L "$path" ]
+}
+
 hf_private_parent_safe() {
   local path="${1:-}" parent owner mode numeric writable sticky
   [ -n "$path" ] || return 1
-  case "$path" in /*) ;; *) path="$PWD/$path" ;; esac
+  path=$(hf_canonical_path "$path") || return 1
   parent=$(dirname "$path")
+  # A configured path may have a not-yet-created tail. Check the complete
+  # existing ancestor chain before creating that tail; canonicalization above
+  # resolves any symlink in the existing prefix first.
+  while [ "$parent" != / ] && [ ! -e "$parent" ]; do
+    parent=$(dirname "$parent")
+  done
   while [ -n "$parent" ]; do
     owner=$(hf__stat_field owner "$parent") || return 1
     mode=$(hf__stat_field mode "$parent") || return 1
@@ -60,18 +75,24 @@ hf_private_parent_safe() {
 }
 
 hf_private_dir() {
-  local d="${1:-}" owner mode
+  local d="${1:-}" owner mode physical
   if [ -z "$d" ]; then echo "FAIL: empty private directory path" >&2; return 1; fi
-  if [ -L "$d" ]; then echo "FAIL: $d is a symlink; refusing to use it" >&2; return 1; fi
+  if hf_private_path_is_symlink_leaf "$d"; then echo "FAIL: $d is a symlink; refusing to use it" >&2; return 1; fi
+  physical=$(hf_canonical_path "$d") || { echo "FAIL: cannot resolve private directory path" >&2; return 1; }
+  d="$physical"
   if [ ! -e "$d" ]; then
-    # Missing parents are created as before (mkdir -p), but only the leaf is
-    # the private, validated directory.
+    # Validate the real existing ancestor chain before mkdir -p can follow a
+    # symlink in a configured path or create sensitive state under a shared
+    # writable non-sticky parent.
+    hf_private_parent_safe "$d" || return 1
     mkdir -p "$(dirname "$d")" 2>/dev/null || true
     # Non-recursive and mode-atomic. Losing a creation race is fine: the
     # validation below then rejects anything that is not ours and private.
     (umask 077; mkdir -m 700 "$d") 2>/dev/null || true
   fi
   if [ ! -d "$d" ] || [ -L "$d" ]; then echo "FAIL: $d is not a real directory" >&2; return 1; fi
+  physical=$(hf_canonical_path "$d") || return 1
+  [ "$physical" = "$d" ] || { echo "FAIL: private directory path changed during validation" >&2; return 1; }
   hf_private_parent_safe "$d" || return 1
   owner=$(hf__stat_field owner "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
   mode=$(hf__stat_field mode "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
@@ -173,7 +194,7 @@ hf_reviewer_credential_file() {
 hf_reviewer_state_dir_marked() {
   local d="${1:-}" marker owner mode contents
   [ -n "$d" ] || return 1
-  hf_private_dir "$d" >/dev/null || return 1
+  d=$(hf_private_dir "$d") || return 1
   marker="$d/.hermes-fleet-reviewer-state"
   [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
   owner=$(hf__stat_field owner "$marker") || return 1
@@ -186,7 +207,7 @@ hf_reviewer_state_dir_marked() {
 hf_mark_reviewer_state_dir() {
   local d="${1:-}" marker
   [ -n "$d" ] || return 1
-  hf_private_dir "$d" >/dev/null || return 1
+  d=$(hf_private_dir "$d") || return 1
   marker="$d/.hermes-fleet-reviewer-state"
   if [ -e "$marker" ] || [ -L "$marker" ]; then
     hf_reviewer_state_dir_marked "$d"
