@@ -63,11 +63,14 @@ public actor NativeOAuthClient {
             throw NativeOAuthError.authorizeFailed("HTTP \(status)")
         }
 
-        struct ProvidersEnvelope: Codable, Sendable {
-            struct Provider: Codable, Sendable {
+        return try Self.decodeProviders(data)
+    }
+
+    static func decodeProviders(_ data: Data) throws -> [OAuthProvider] {
+        struct ProvidersEnvelope: Decodable, Sendable {
+            struct Provider: Decodable, Sendable {
                 let name: String
                 let display_name: String?
-                let supports_session: Bool?
                 let supports_password: Bool?
             }
             let providers: [Provider]
@@ -79,11 +82,10 @@ public actor NativeOAuthClient {
         } catch {
             throw NativeOAuthError.malformedTokenResponse
         }
-        let sessionProviders = envelope.providers.filter { $0.supports_session == true }
-        guard !sessionProviders.isEmpty else {
+        guard !envelope.providers.isEmpty else {
             throw NativeOAuthError.noSessionProviders
         }
-        return sessionProviders.map { provider in
+        return envelope.providers.map { provider in
             OAuthProvider(
                 name: provider.name,
                 displayName: provider.display_name ?? provider.name,
@@ -126,13 +128,12 @@ public actor NativeOAuthClient {
 
     /// Perform the full native OAuth flow and store the resulting token pair.
     ///
-    /// When `provider` is nil and exactly one session-capable provider is
-    /// advertised, that provider is used. Multiple providers without a
-    /// selection fail closed (`multipleProviders`) so the UI can present a
-    /// chooser rather than silently picking one.
+    /// When `provider` is nil and exactly one interactive provider is
+    /// advertised, that provider is used. Multiple providers are left to the
+    /// gateway's provider chooser rather than silently selecting one.
     public func authenticate(provider: OAuthProvider? = nil) async throws -> OAuthTokenPair {
         let providers = try await discoverProviders()
-        let selected: OAuthProvider
+        let selected: OAuthProvider?
         if let provider {
             guard let match = providers.first(where: { $0.name == provider.name }) else {
                 throw NativeOAuthError.unknownProvider(provider.name)
@@ -141,7 +142,9 @@ public actor NativeOAuthClient {
         } else if providers.count == 1 {
             selected = providers[0]
         } else {
-            throw NativeOAuthError.multipleProviders
+            // The gateway renders its own provider chooser when this parameter
+            // is omitted and more than one interactive provider is available.
+            selected = nil
         }
 
         let codeVerifier = PKCE.generateCodeVerifier()
@@ -155,19 +158,26 @@ public actor NativeOAuthClient {
             url: baseURL.appendingPathComponent("auth/native/authorize"),
             resolvingAgainstBaseURL: false
         )
-        components?.queryItems = [
-            URLQueryItem(name: "provider", value: selected.name),
+        var authorizeQueryItems = [
             URLQueryItem(name: "code_challenge", value: codeChallenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "state", value: state),
         ]
+        if let selected {
+            authorizeQueryItems.append(URLQueryItem(name: "provider", value: selected.name))
+        }
+        components?.queryItems = authorizeQueryItems
         guard let authorizeURL = components?.url else {
             await listener.stop()
             throw NativeOAuthError.internalError("Failed to build authorize URL")
         }
 
-        log.info("NativeOAuth: authorize provider \(selected.name, privacy: .public)")
+        if let selected {
+            log.info("NativeOAuth: authorize provider \(selected.name, privacy: .public)")
+        } else {
+            log.info("NativeOAuth: authorize gateway provider chooser")
+        }
 
         let callbackTask = Task { try await listener.waitForCallback() }
         do {
@@ -207,7 +217,7 @@ public actor NativeOAuthClient {
             codeVerifier: codeVerifier
         )
         try await tokenStore.saveTokenPair(tokenPair, for: gatewayID)
-        log.info("NativeOAuth: stored tokens for provider \(selected.name, privacy: .public)")
+        log.info("NativeOAuth: stored tokens for provider \(tokenPair.provider, privacy: .public)")
         return tokenPair
     }
 
