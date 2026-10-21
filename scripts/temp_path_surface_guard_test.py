@@ -40,7 +40,10 @@ case("mktemp-created paths pass",
      {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": 'D=$(mktemp -d "${TMPDIR:-/tmp}/hf.XXXXXX")\n'}, 0)
 case("the reviewed private path builder remains allowlisted",
      {"Makefile": "t:\n\t. scripts/private_dir_lib.sh\n",
-      "scripts/private_dir_lib.sh": 'printf "%s/%s-%s" "${TMPDIR:-/tmp}" "$1" "$(id -u)"\n'}, 0)
+      "scripts/private_dir_lib.sh": "printf '%s/%s-%s' \"${TMPDIR:-/tmp}\" \"$1\" \"$(id -u)\"\n"}, 0)
+case("an unsafe path appended to an allowlisted line still fails",
+     {"Makefile": "t:\n\tbash scripts/private_dir_lib.sh\n",
+      "scripts/private_dir_lib.sh": "printf '%s/%s-%s' \"${TMPDIR:-/tmp}\" \"$1\" \"$(id -u)\"; echo x > /tmp/unsafe\n"}, 1)
 case("an exemption token in an unrelated line does not hide a fixed path",
      {"Makefile": "t:\n\tbash scripts/a.sh\n",
       "scripts/a.sh": 'echo x > /tmp/fixed-name.log # hf_private_dir\n'}, 1)

@@ -39,15 +39,18 @@ UNRESOLVED_ALLOWED = [
     ("c1_ui_preflight.sh", "scripts/*"),            # changed-file path classification, not an invocation
 ]
 
-# Reachable scripts whose matching line was reviewed and is NOT a host path.
-# (script, substring of the line)
-ALLOWED = [
-    ("private_dir_lib.sh", "hermes-fleet"),          # unused example text
-    ("private_dir_lib.sh", '"${TMPDIR:-/tmp}" "$1"'),  # the per-uid name builder itself
-    ("public_safety_guard.sh", "DESTRUCTIVE_FIXTURE"),  # destructive-command fixture string
-    ("reviewer_containment_test.sh", "udp53probe"),     # path INSIDE the container's tmpfs
-    ("reviewer_provider_env_test.sh", "HOME=/tmp/evil"),  # hostile-environment fixture value
-]
+# Reachable scripts whose exact stripped source line was reviewed and is NOT
+# a host path. Exact matching prevents an allowed fixture or helper token from
+# masking an additional unsafe path appended to the same line.
+ALLOWED_LINES = {
+    ("private_dir_lib.sh", 'printf \'%s/%s-%s\' "${TMPDIR:-/tmp}" "$1" "$(id -u)"'),
+    ("private_dir_lib.sh", 'printf \'%s/hermes-fleet-reviewer\' "${TMPDIR:-/tmp}"'),
+    ("public_safety_guard.sh", "DESTRUCTIVE_FIXTURE='rm -rf " + "/tmp/scratch'            # destructive approval fixture"),
+    ("reviewer_containment_test.sh", 'docker cp "$UDP_PROBE" "$CONT_NAME:/tmp/udp53probe.py" >/dev/null 2>&1 || true'),
+    ("reviewer_containment_test.sh", "if cecho 'python3 /tmp/udp53probe.py 1.1.1.1 53' | grep -q REPLY; then"),
+    ("reviewer_containment_test.sh", 'if cecho "python3 /tmp/udp53probe.py $tgt 53" | grep -q REPLY; then leak53="$leak53 $tgt"; fi'),
+    ("reviewer_provider_env_test.sh", 'printf \'OPENAI_API_KEY=x\\nHOME=/tmp/evil\\nHERMES_DASHBOARD_BASIC_AUTH_PASSWORD=pwn\\nPATH=/evil:%s\\nUNKNOWN_KEY=1\\n\' "$PATH" > "$T/malicious.env"'),
+}
 
 
 BUILD_ROOT_GLOBS = ["project.yml", "Config/*", "Package.swift", "Packages/*/Package.swift", "*.xcconfig"]
@@ -129,7 +132,7 @@ def main(argv):
         if name.startswith("temp_path_surface_guard"):
             continue  # the guard's own patterns
         for lineno, text in fixed_temp_lines(scripts[name]):
-            if any(name == s and frag in text for s, frag in ALLOWED):
+            if (name, text) in ALLOWED_LINES:
                 continue
             failures.append(f"{name}:{lineno}: {text[:100]}")
     if "--report" in argv:
