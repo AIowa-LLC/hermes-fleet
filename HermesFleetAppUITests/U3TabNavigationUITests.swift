@@ -191,7 +191,7 @@ final class U3TabNavigationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchArguments += ["-UIPreferredContentSizeCategoryName",
-                                "UICTContentSizeCategoryAccessibilityXL"]
+                                "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
 
         XCTAssertFalse(app.tabBars.firstMatch.waitForExistence(timeout: 2),
@@ -202,12 +202,50 @@ final class U3TabNavigationUITests: XCTestCase {
                 .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists,
                 "drawer exposes \(raw) destination")
         }
-        attachScreenshot(of: app, name: "u3-compact-drawer-accessibility-type")
+        let title = app.staticTexts["Hermes Fleet"].firstMatch
+        let search = app.buttons["fleet.drawer.search"].firstMatch
+        XCTAssertTrue(title.exists, "drawer title remains exposed at AX5")
+        XCTAssertTrue(search.exists, "drawer search action remains exposed at AX5")
+        XCTAssertLessThanOrEqual(title.frame.maxX, search.frame.minX,
+                                  "wrapped drawer title must not overlap Search at AX5")
+        XCTAssertTrue(app.buttons["fleet.drawer.new-chat"].isHittable,
+                      "pinned compose action remains tappable at AX5")
+        attachScreenshot(of: app, name: "u3-compact-drawer-accessibility5")
         XCTAssertTrue(drawer.exists)
         XCTAssertFalse(app.tabBars.firstMatch.exists, "no bottom bar while drawer is open")
-        UITabNavigation.closeDrawer(app)
-        XCTAssertFalse(app.descendants(matching: .any)["fleet.drawer"].exists,
-                       "Close dismisses the compact drawer")
+        let fleet = app.buttons["fleet.drawer.destination.fleet"].firstMatch
+        let artifacts = app.buttons["fleet.drawer.destination.artifacts"].firstMatch
+        let pinnedChat = app.buttons["fleet.drawer.new-chat"]
+        let dragStart = drawer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.82))
+        let dragEnd = drawer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.64))
+        dragStart.press(forDuration: 0.08, thenDragTo: dragEnd)
+        XCTAssertGreaterThanOrEqual(fleet.frame.minY, drawer.frame.minY,
+                                    "Fleet row remains on-screen after scrolling at AX5")
+        XCTAssertLessThanOrEqual(fleet.frame.maxY, pinnedChat.frame.minY,
+                                 "Fleet row clears the pinned footer at AX5")
+        XCTAssertGreaterThanOrEqual(artifacts.frame.minY, drawer.frame.minY,
+                                    "Artifacts row remains on-screen after scrolling at AX5")
+        XCTAssertLessThanOrEqual(artifacts.frame.maxY, pinnedChat.frame.minY,
+                                 "Artifacts row clears the pinned footer at AX5")
+        XCTAssertTrue(pinnedChat.isHittable,
+                      "pinned compose action remains available after scrolling")
+        attachScreenshot(of: app, name: "u3-compact-drawer-accessibility5-scrolled")
+        fleet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertFalse(drawer.exists, "selecting Fleet dismisses the drawer at AX5")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10),
+                      "Fleet destination is selectable at AX5")
+
+        let secondDrawer = UITabNavigation.openDrawer(app)
+        let artifactsRow = app.buttons["fleet.drawer.destination.artifacts"].firstMatch
+        let secondStart = secondDrawer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.82))
+        let secondEnd = secondDrawer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.64))
+        secondStart.press(forDuration: 0.08, thenDragTo: secondEnd)
+        XCTAssertLessThanOrEqual(artifactsRow.frame.maxY,
+                                 app.buttons["fleet.drawer.new-chat"].frame.minY,
+                                 "Artifacts clears the pinned footer when selected")
+        artifactsRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.artifacts"].waitForExistence(timeout: 10),
+                      "Artifacts destination is selectable at AX5")
     }
 
     func testCompactMenuIsAvailableOnIndividualAndGroupDestinations() throws {
@@ -215,6 +253,8 @@ final class U3TabNavigationUITests: XCTestCase {
                           "compact iPhone drawer coverage")
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
 
         let individual = app.descendants(matching: .any)
@@ -256,7 +296,7 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertTrue(group.isHittable, "scripted group row must be hittable before activation")
         group.tap()
         XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10))
-        attachScreenshot(of: app, name: "u3-group-menu-and-back")
+        attachScreenshot(of: app, name: "u3-group-menu-and-back-accessibility5")
         UITabNavigation.openDrawer(app)
         let groupsDestination = app.descendants(matching: .any)["fleet.drawer.destination.groups"]
         XCTAssertEqual(groupsDestination.value as? String, "Selected",
