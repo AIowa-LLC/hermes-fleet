@@ -114,7 +114,16 @@ enum UITabNavigation {
         XCTAssertTrue(destination.exists || destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
         let drawer = app.descendants(matching: .any)["fleet.drawer"]
         for _ in 0..<4 {
-            destination.tap()
+            if destination.isHittable {
+                destination.tap()
+            } else {
+                // In the compact drawer at the largest Dynamic Type sizes,
+                // XCTest can report a visible selected row but fail to find
+                // a hit point for Button.tap(). Try the element's on-screen
+                // center and still require the drawer to dismiss below.
+                print("UITabNavigation: \(label) accessibility frame is not reported hittable; using its center")
+                destination.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
             // Dismissal = the tap landed. Poll briefly (the 0.24s dismiss
             // animation keeps the element in the tree for a moment).
             var dismissed = false
