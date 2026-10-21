@@ -524,31 +524,24 @@ public final class KanbanBoardViewModel {
 
     // MARK: Internals
 
-    /// Start the stream task and yield until the consumer has actually
-    /// reached the watcher (so callers observe the subscription recorded
-    /// before continuing). A single yield was marginal under load; poll
-    /// briefly for the phase transition (bounded, test-safe).
+    /// Register the stream before returning so a board switch cannot cancel
+    /// an unstarted consumer and silently skip the old subscription.
     private func openStream() async {
         streamGeneration += 1
         let generation = streamGeneration
+        let batches = await watcher.changeEvents()
+        guard generation == streamGeneration else { return }
+        streamPhase = .streaming
         streamTask = Task { [weak self] in
-            await self?.consumeStream(generation: generation)
-        }
-        for _ in 0..<50 {
-            if streamPhase == .streaming || streamTask == nil { break }
-            await Task.yield()
-            // The consumer sets phase only when it IS the current
-            // generation; a superseded task leaves it to its successor.
-            if streamPhase == .streaming { break }
+            await self?.consumeStream(batches, generation: generation)
         }
     }
 
-    private func consumeStream(generation: Int) async {
-        let batches = await watcher.changeEvents()
-        // t_624b81cd: only the CURRENT stream generation may set phase — a
-        // task superseded by selectBoard must not clobber its successor.
-        guard generation == streamGeneration else { return }
-        streamPhase = .streaming
+    private func consumeStream(
+        _ batches: AsyncStream<KanbanEventBatch>, generation: Int
+    ) async {
+        // A superseded generation must not return the successor's phase to idle.
+        guard generation == streamGeneration, !Task.isCancelled else { return }
         for await batch in batches {
             if Task.isCancelled || generation != streamGeneration { break }
             var events = batch.events

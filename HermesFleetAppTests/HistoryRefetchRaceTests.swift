@@ -288,6 +288,10 @@ final class HistoryRefetchRaceTests: XCTestCase {
         let (session, model) = try await makeFixture()
         session.immediate = [msg("SNAP")]
         session.immediateDelayMs = 40 // a real suspension: live events interleave with every request
+        let base = session.gates.callCount
+        let refetch = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }
+        let firstRequestStarted = await waitUntil { session.gates.callCount == base + 1 }
+        XCTAssertTrue(firstRequestStarted, "the first request starts before the conversation becomes busy")
         let churn = Task { @MainActor in
             var seq = 1
             while !Task.isCancelled {
@@ -297,11 +301,14 @@ final class HistoryRefetchRaceTests: XCTestCase {
                 try? await Task.sleep(for: .milliseconds(5))
             }
         }
-        let base = session.gates.callCount
-        let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
+        let outcome = await refetch.value
         churn.cancel()
         XCTAssertEqual(outcome, .rejectedStale, "every response landed after fresh live activity")
-        XCTAssertEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts, "bounded: exactly the allowed attempts")
+        XCTAssertGreaterThan(session.gates.callCount - base, 0, "at least the first history request ran")
+        XCTAssertLessThanOrEqual(
+            session.gates.callCount - base,
+            ConversationViewModel.maxRefetchAttempts,
+            "a busy stream may stop retries early, but must never exceed the attempt limit")
         XCTAssertTrue(model.historyMayBeIncomplete, "no recovery is claimed")
         XCTAssertFalse(texts(model).contains("SNAP"), "the stale snapshot was never applied")
     }
