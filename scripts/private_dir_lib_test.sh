@@ -200,6 +200,49 @@ else
   fail "unrelated directory purge rc=$rc external=$(test -e "$T/tool-used" && echo yes || echo no)"
 fi
 
+# A failed credential validation must not mark an unrelated directory and
+# make a later explicit purge treat it as adopted reviewer state.
+START_TOOLS="$T/start-mock-tools"; mkdir "$START_TOOLS"
+cat > "$START_TOOLS/docker" <<'STUB'
+#!/bin/bash
+if [ "$1" = "network" ] && [ "$2" = "inspect" ]; then
+  case "$*" in
+    *EnableIPv6*) echo false; exit 0 ;;
+    *Subnet*) echo 172.25.0.0/24; exit 0 ;;
+    *Gateway*) echo 172.17.0.1; exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 0
+STUB
+cat > "$START_TOOLS/sudo" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod 755 "$START_TOOLS/docker" "$START_TOOLS/sudo"
+FAILED_ADOPTION="$T/failed-adoption"; mkdir -m 700 "$FAILED_ADOPTION"
+printf 'malformed unrelated credential material\n' > "$FAILED_ADOPTION/credentials"
+chmod 644 "$FAILED_ADOPTION/credentials"
+BEFORE_FAILED_ADOPTION=$(cat "$FAILED_ADOPTION/credentials")
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" REVIEWER_PUBLIC_URL=https://reviewer.example \
+  REVIEWER_ENV_DIR="$FAILED_ADOPTION" bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$FAILED_ADOPTION/.hermes-fleet-reviewer-state" ] \
+   && [ "$(cat "$FAILED_ADOPTION/credentials")" = "$BEFORE_FAILED_ADOPTION" ]; then
+  pass "failed credential validation does not mark or alter unrelated state"
+else
+  fail "failed credential validation adoption rc=$rc"
+fi
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" REVIEWER_ENV_DIR="$FAILED_ADOPTION" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -f "$FAILED_ADOPTION/credentials" ] \
+   && [ ! -e "$FAILED_ADOPTION/.hermes-fleet-reviewer-state" ]; then
+  pass "later purge refuses the directory after failed credential resolution"
+else
+  fail "post-failure purge rc=$rc"
+fi
+
 MANAGED="$T/managed-reviewer-state"; mkdir -m 700 "$MANAGED"
 hf_mark_reviewer_state_dir "$MANAGED" || fail "state marker creation"
 [ "$(mode_of "$MANAGED/.hermes-fleet-reviewer-state")" = 600 ] \

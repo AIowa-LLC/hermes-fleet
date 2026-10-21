@@ -88,7 +88,6 @@ require_docker() {
 # ---------------------------------------------------------------- credentials
 resolve_credentials() {
   hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
-  hf_mark_reviewer_state_dir "$REVIEWER_ENV_DIR" || die "cannot mark reviewer state directory"
   if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
     CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") || die "refusing unsafe reviewer credentials"
   fi
@@ -109,6 +108,10 @@ resolve_credentials() {
     chmod 600 "$CREDS_FILE" || die "chmod 600 $CREDS_FILE failed"
     info "generated fresh reviewer credentials (0600) at $CREDS_FILE"
   fi
+  # Do not adopt a directory until existing credentials pass validation or
+  # fresh credentials have been created successfully. A failed setup must not
+  # leave behind the marker that authorizes a later recursive purge.
+  hf_mark_reviewer_state_dir "$REVIEWER_ENV_DIR" || die "cannot mark reviewer state directory"
 }
 
 # ------------------------------------------------------------- network setup
