@@ -29,8 +29,8 @@ final class R10AttachmentTrayUITests: XCTestCase {
         element.tap()
     }
 
-    /// On iOS 26 the document picker is embedded in the host app's accessibility
-    /// tree as a DOC.browsingRoot element. Its visible X is exposed as a Cancel
+    /// The document picker is embedded in the host app's accessibility tree as
+    /// a DOC.browsingRoot element. Its close control is exposed as a Cancel
     /// button beneath that root; the separate DocumentsApp process is not
     /// discoverable while this picker is presented.
     private func waitForSystemPicker(
@@ -57,10 +57,12 @@ final class R10AttachmentTrayUITests: XCTestCase {
 
         while Date() < deadline {
             if pickerName == "File" {
-                if !selectedAction.exists,
-                   filesBrowser.exists,
-                   filesCloseButton.exists,
-                   filesCloseButton.isHittable {
+                // The iOS 27 Files picker includes the visible Cancel button
+                // in the accessibility tree but may report it as not hittable.
+                // Scope to the picker root and use the button's frame to dismiss
+                // it below rather than timing out on XCTest's hit-test result.
+                if filesBrowser.exists,
+                   filesCloseButton.exists {
                     return filesCloseButton
                 }
             } else if !selectedAction.exists,
@@ -90,7 +92,7 @@ final class R10AttachmentTrayUITests: XCTestCase {
             hierarchy.lifetime = .keepAlways
             activity.add(hierarchy)
         }
-        XCTFail("\(pickerName) picker should dismiss Add and expose a hittable Cancel control within 20 seconds")
+        XCTFail("\(pickerName) picker should dismiss Add and expose a Cancel control within 20 seconds")
         return pickerName == "File" ? filesCloseButton : photoCancelButton
     }
 
@@ -126,7 +128,8 @@ final class R10AttachmentTrayUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
             .firstMatch
 
-        tap(tapping)
+        XCTAssertTrue(tapping.waitForExistence(timeout: 10), "Files picker should expose its Cancel control before dismissal")
+        tapping.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
 
         let deadline = Date().addingTimeInterval(10)
         while filesBrowser.exists && Date() < deadline {

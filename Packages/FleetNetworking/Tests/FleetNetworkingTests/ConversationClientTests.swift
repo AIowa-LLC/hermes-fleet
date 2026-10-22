@@ -83,11 +83,11 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
         let client = GatewayConversationClient(gatewayID: .init(rawValue: "fixture"), transport: transport)
-        let events = client.events
+        let eventStream = client.events
         _ = try await client.submitPrompt(sessionID: "instant", text: "Hello")
         let received = expectation(description: "reply buffered before iteration")
         let consumer = Task {
-            for await event in events {
+            for await event in eventStream {
                 if case .messageComplete(let id, let text, _, _, _) = event {
                     XCTAssertEqual(id, "instant")
                     XCTAssertEqual(text, "Buffered reply")
@@ -595,8 +595,9 @@ final class ConversationClientTests: XCTestCase {
 
         // Subscribe BEFORE submitting so no streamed event is missed.
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events {
+            for await event in eventStream {
                 collector.append(event)
             }
         }
@@ -686,8 +687,9 @@ final class ConversationClientTests: XCTestCase {
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events {
+            for await event in eventStream {
                 collector.append(event)
             }
         }
@@ -754,8 +756,9 @@ final class ConversationClientTests: XCTestCase {
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         _ = try await client.submitPrompt(sessionID: "sess-001", text: "go")
         _ = await collector.waitForTerminal(timeout: .seconds(3))
@@ -802,8 +805,9 @@ final class ConversationClientTests: XCTestCase {
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         _ = try await client.submitPrompt(sessionID: "sess-001", text: "go")
         _ = await collector.waitForTerminal(timeout: .seconds(3))
@@ -843,8 +847,9 @@ final class ConversationClientTests: XCTestCase {
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         _ = try await client.submitPrompt(sessionID: "sess-001", text: "go")
         _ = await collector.waitForTerminal(timeout: .seconds(3))
@@ -899,8 +904,9 @@ final class ConversationClientTests: XCTestCase {
         // Subscribe and iterate the stream concurrently with the RPCs; the
         // subscription itself must not emit any request.
         let collector = EventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
 
         _ = try await client.createSession(title: "t", profile: "p", model: nil, provider: nil, cols: nil)

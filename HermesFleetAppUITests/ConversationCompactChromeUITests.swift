@@ -395,7 +395,9 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_REASONING_DEMO"] = "1"
-        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] = "3000"
+        // Keep the first message delta visible long enough for the UI test to
+        // observe the assistant row's live Streaming accessibility value.
+        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] = "5000"
         if accessibilityText {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName",
                                     "UICTContentSizeCategoryAccessibilityXL"]
@@ -420,11 +422,18 @@ final class ConversationCompactChromeUITests: XCTestCase {
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.stop").exists,
                       "Stop must be shown while the turn is pending")
 
-        // Mid-stream (message deltas arriving): still one indicator, same x.
-        let midStream = NSPredicate(format: "label CONTAINS[c] 'slowly'")
-        let reply = app.staticTexts.matching(midStream).firstMatch
-        _ = reply.waitForExistence(timeout: 10)
+        // The assistant row exists during reasoning, so wait for its
+        // accessibility label to include the first message delta. Target the
+        // identified row instead of scanning every StaticText in the large
+        // transcript tree on iOS 27.
+        let streamingRow = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@",
+                        "fleet.conversation.row.", "slowly")
+        ).firstMatch
+        XCTAssertTrue(streamingRow.waitForExistence(timeout: 20), "assistant row must display streamed message text")
         XCTAssertEqual(working.count, 1, "exactly one indicator while streaming message text")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.stop").exists,
+                      "Stop must remain shown while message text is streaming")
         XCTAssertEqual(toggle.frame.minX, streamingMinX, accuracy: 1,
                        "reasoning toggle must not shift while the reply streams")
 
