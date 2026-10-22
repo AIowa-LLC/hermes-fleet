@@ -30,7 +30,7 @@ require_success "hosted units" "${CI_GATE_UNITS_RESULT:-}"
 
 case "$EVENT" in
   pull_request)
-    require_success "focused UI preflight" "${CI_GATE_UI_PREFLIGHT_RESULT:-}"
+    require_skipped "focused UI preflight" "${CI_GATE_UI_PREFLIGHT_RESULT:-}"
     require_skipped "critical merge smoke" "${CI_GATE_CRITICAL_SMOKE_RESULT:-}"
     ;;
   merge_group)

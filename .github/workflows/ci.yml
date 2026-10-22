@@ -121,8 +121,8 @@ jobs:
   critical-smoke:
     name: Critical UI smoke (merge candidate)
     # This fixed, small journey set is required on the exact merge-group
-    # candidate. PRs use changed-area preflight; remaining suites stay in the
-    # separate full regression workflow.
+    # candidate. PRs use the fast lane (static guards, packages, units);
+    # remaining suites stay in the separate full regression workflow.
     if: github.event_name == 'merge_group'
     runs-on: xcode-27
     env:
@@ -152,10 +152,13 @@ jobs:
 
   ui-preflight:
     name: UI preflight ${{ matrix.shard }}/12 (changed area)
-    # Each job executes changed-area UI or validates trusted identical-tree
-    # PR evidence. Missing/mismatched proof runs fresh UI. Critical smoke
-    # always executes on the exact merge-group candidate.
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    # Merge-group candidates only. PRs run the fast lane (static guards,
+    # packages, units) so iteration stays cheap; the full changed-area UI
+    # runs exactly once, here, on the exact tree that will land. Each job
+    # still validates trusted identical-tree evidence when it exists and
+    # runs fresh UI otherwise. Critical smoke also executes on the
+    # exact merge-group candidate.
+    if: github.event_name == 'merge_group'
     runs-on: xcode-27
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
