@@ -51,6 +51,16 @@ elif args[:3] == ["simctl", "list", "devices"]:
         print(f"    {device['name']} ({device['udid']}) ({device['state']})")
 elif args[:2] == ["simctl", "create"]:
     name, dtype, runtime = args[2:5]
+    pair = f"{dtype}|{runtime}"
+    incompatible_pairs = set(filter(None, os.environ.get("STUB_INCOMPATIBLE_PAIRS", "").split(",")))
+    if pair in incompatible_pairs:
+        print("An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=403):", file=sys.stderr)
+        print("Incompatible device", file=sys.stderr)
+        sys.exit(1)
+    create_error = os.environ.get("STUB_CREATE_ERROR")
+    if create_error:
+        print(create_error, file=sys.stderr)
+        sys.exit(1)
     state["counter"] += 1
     udid = str(uuid.UUID(int=state["counter"])).upper()
     state["devices"].append({"name": name, "udid": udid, "state": "Shutdown",
@@ -155,6 +165,43 @@ class LaneSimulatorContracts(unittest.TestCase):
         self.assertRegex(create[2], r"^HF-[0-9a-f]{8}-[0-9a-f]{8}$")
         self.assertEqual(create[3], "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro")
         self.assertEqual(create[4], "com.apple.CoreSimulator.SimRuntime.iOS-27-0")
+
+    def test_create_falls_back_to_an_older_compatible_runtime(self):
+        incompatible = (
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro|"
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0"
+        )
+        result = self.lane(self.repo, "ensure", STUB_INCOMPATIBLE_PAIRS=incompatible)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        creates = [c for c in self.calls() if c[:2] == ["simctl", "create"]]
+        self.assertEqual([c[4] for c in creates], [
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+        ])
+        own = next(d for d in self.devices() if d["name"].startswith(f"HF-{self.repo_id}-"))
+        self.assertEqual(own["runtime"], "com.apple.CoreSimulator.SimRuntime.iOS-26-4")
+
+    def test_create_falls_back_to_another_device_type_when_needed(self):
+        incompatible = ",".join([
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro|"
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro|"
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro|"
+            "com.apple.CoreSimulator.SimRuntime.iOS-9-3",
+        ])
+        result = self.lane(self.repo, "ensure", STUB_INCOMPATIBLE_PAIRS=incompatible)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        creates = [c for c in self.calls() if c[:2] == ["simctl", "create"]]
+        self.assertEqual(creates[-1][3], "com.apple.CoreSimulator.SimDeviceType.iPhone-Air",
+                         f"creates={creates!r} stderr={result.stderr!r}")
+        self.assertEqual(creates[-1][4], "com.apple.CoreSimulator.SimRuntime.iOS-27-0")
+
+    def test_create_does_not_fallback_for_other_core_simulator_errors(self):
+        result = self.lane(self.repo, "ensure", STUB_CREATE_ERROR="CoreSimulator service unavailable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CoreSimulator service unavailable", result.stderr)
+        self.assertEqual(sum(c[:2] == ["simctl", "create"] for c in self.calls()), 1)
 
     def test_missing_preferred_type_falls_back_to_newest_similar(self):
         self.lane(self.repo, "ensure", HERMES_FLEET_LANE_SIM_IPHONE_TYPE="iPhone 99 Imaginary")
