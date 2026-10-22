@@ -61,6 +61,26 @@ final class FileConversationPinStoreTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: UserDefaultsConversationPinStore.storageKey))
     }
 
+    func testCorruptProtectedFileKeepsValidLegacyFallback() async throws {
+        let legacy = try JSONEncoder().encode([pin("old")])
+        defaults.set(legacy, forKey: UserDefaultsConversationPinStore.storageKey)
+        let corrupt = Data("not-json".utf8)
+        try corrupt.write(to: url)
+
+        do {
+            _ = try await FileConversationPinStore(url: url, legacy: .suite(suite)).loadPins()
+            XCTFail("a corrupt protected file must still report its decoding failure")
+        } catch {
+            // The caller can recover the protected file later and still has
+            // the last valid pins available in the legacy copy.
+        }
+
+        XCTAssertEqual(defaults.data(forKey: UserDefaultsConversationPinStore.storageKey), legacy,
+                       "valid legacy pins must survive when the protected copy is corrupt")
+        XCTAssertEqual(try Data(contentsOf: url), corrupt,
+                       "migration must not replace an existing protected file")
+    }
+
     func testMissingFileLoadsEmpty() async throws {
         let pins = try await FileConversationPinStore(url: url, legacy: .suite(suite)).loadPins()
         XCTAssertTrue(pins.isEmpty)

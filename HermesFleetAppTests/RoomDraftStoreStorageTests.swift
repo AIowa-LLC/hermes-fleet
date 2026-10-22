@@ -69,4 +69,30 @@ final class RoomDraftStoreStorageTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: legacyKey), "old plaintext draft",
                        "legacy copy must remain until a durable protected copy exists")
     }
+
+    func testGatewayRemovalPurgesMatchingLegacyDraftWhenProtectedFileIsUnreadable() throws {
+        let otherGateway = GatewayID(rawValue: "gw-draft-test:port")
+        let matchingKey = "fleet.room.draft.v1." + room.storageKey
+        let lookalikeRoom = FleetRoomID(
+            provenance: .hosted, gatewayID: otherGateway, key: "r1")
+        let lookalikeKey = "fleet.room.draft.v1." + lookalikeRoom.storageKey
+        UserDefaults.standard.set("removed gateway draft", forKey: matchingKey)
+        UserDefaults.standard.set("other gateway draft", forKey: lookalikeKey)
+        addTeardownBlock {
+            UserDefaults.standard.removeObject(forKey: matchingKey)
+            UserDefaults.standard.removeObject(forKey: lookalikeKey)
+        }
+        try Data("not-json".utf8).write(to: fileURL)
+        RoomDraftStore.useStoreURLForTesting(fileURL)
+
+        RoomDraftStore.clearAll(
+            forGateway: room.gatewayID,
+            otherGatewayIDs: [otherGateway],
+            defaults: .standard)
+
+        XCTAssertNil(UserDefaults.standard.string(forKey: matchingKey),
+                     "gateway removal must purge its plaintext draft even if the file is unreadable")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: lookalikeKey), "other gateway draft",
+                       "a colon-containing gateway ID must not be mistaken for the removed gateway")
+    }
 }
