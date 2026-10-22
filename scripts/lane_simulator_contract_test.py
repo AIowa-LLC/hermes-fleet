@@ -29,7 +29,9 @@ with open(os.environ["STUB_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
 def save():
     state_path.write_text(json.dumps(state))
-if args[:3] == ["simctl", "list", "devicetypes"]:
+if args == ["--sdk", "iphonesimulator", "--show-sdk-version"]:
+    print(os.environ.get("STUB_SDK_VERSION", "27.0"))
+elif args[:3] == ["simctl", "list", "devicetypes"]:
     print("== Device Types ==")
     for name, ident in [
         ("iPhone 18 Pro", "iPhone-18-Pro"), ("iPhone 17 Pro", "iPhone-17-Pro"),
@@ -43,6 +45,7 @@ if args[:3] == ["simctl", "list", "devicetypes"]:
 elif args[:3] == ["simctl", "list", "runtimes"]:
     print("== Runtimes ==")
     print("iOS 9.3 (9.3 - 13E233) - com.apple.CoreSimulator.SimRuntime.iOS-9-3")
+    print("iOS 27.1 (27.1 - 24A94425) - com.apple.CoreSimulator.SimRuntime.iOS-27-1")
     print("iOS 27.0 (27.0 - 24A434) - com.apple.CoreSimulator.SimRuntime.iOS-27-0")
     print("iOS 26.4 (26.4 - 23E244) - com.apple.CoreSimulator.SimRuntime.iOS-26-4")
     print("watchOS 27.0 (27.0 - 24R1) - com.apple.CoreSimulator.SimRuntime.watchOS-27-0")
@@ -155,7 +158,7 @@ class LaneSimulatorContracts(unittest.TestCase):
         self.assertRegex(first.stdout.strip(), r"^[0-9A-F-]{36}$")
         self.assertEqual(sum(c[:2] == ["simctl", "create"] for c in self.calls()), 1)
 
-    def test_create_uses_chosen_iphone_type_and_newest_runtime(self):
+    def test_create_uses_chosen_iphone_type_and_newest_runtime_at_or_below_sdk(self):
         self.lane(self.repo, "ensure")
         create = next(c for c in self.calls() if c[:2] == ["simctl", "create"])
         self.assertRegex(create[2], r"^HF-[0-9a-f]{8}-[0-9a-f]{8}$")

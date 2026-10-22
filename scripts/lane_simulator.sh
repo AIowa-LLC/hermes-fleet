@@ -84,11 +84,27 @@ device_type_candidates() {
 }
 
 newest_ios_runtime() {
-  local runtime
+  local sdk_version runtime
+  sdk_version=$(xcrun --sdk iphonesimulator --show-sdk-version) || die "cannot read the active iOS Simulator SDK version"
   runtime=$(xcrun simctl list runtimes available | sed -nE \
-    's/^iOS ([0-9.]+) .* - (com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+)$/\1 \2/p' \
+    's/^iOS ([0-9.]+) .* - (com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+)$/\1|\2/p' \
+    | awk -F'|' -v sdk="$sdk_version" '
+      function version_cmp(a, b, left, right, left_count, right_count, part_count, i, left_value, right_value) {
+        left_count = split(a, left, ".")
+        right_count = split(b, right, ".")
+        part_count = left_count > right_count ? left_count : right_count
+        for (i = 1; i <= part_count; i++) {
+          left_value = i <= left_count ? left[i] + 0 : 0
+          right_value = i <= right_count ? right[i] + 0 : 0
+          if (left_value < right_value) return -1
+          if (left_value > right_value) return 1
+        }
+        return 0
+      }
+      version_cmp($1, sdk) <= 0 { print $1, $2 }
+    ' \
     | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | awk '{ print $2 }')
-  [ -n "$runtime" ] || die "no iOS simulator runtime is installed"
+  [ -n "$runtime" ] || die "no iOS simulator runtime at or below SDK $sdk_version is installed"
   printf '%s' "$runtime"
 }
 
