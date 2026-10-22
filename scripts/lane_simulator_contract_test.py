@@ -32,10 +32,12 @@ def save():
 if args[:3] == ["simctl", "list", "devicetypes"]:
     print("== Device Types ==")
     for name, ident in [
-        ("iPhone 4s", "iPhone-4s"), ("iPhone 16", "iPhone-16"),
-        ("iPhone 17 Pro", "iPhone-17-Pro"), ("iPhone Air", "iPhone-Air"),
+        ("iPhone 18 Pro", "iPhone-18-Pro"), ("iPhone 17 Pro", "iPhone-17-Pro"),
+        ("iPhone 16 Pro", "iPhone-16-Pro"), ("iPhone 16", "iPhone-16"),
+        ("iPhone Air", "iPhone-Air"), ("iPhone 4s", "iPhone-4s"),
+        ("iPad Pro 11-inch (M5) (16GB)", "iPad-Pro-11-inch-M5-16GB"),
+        ("iPad Pro 11-inch (M5) (12GB)", "iPad-Pro-11-inch-M5-12GB"),
         ("iPad Pro 11-inch (M4) (16GB)", "iPad-Pro-11-inch-M4-16GB"),
-        ("iPad Pro 11-inch (M5)", "iPad-Pro-11-inch-M5-12GB"),
     ]:
         print(f"{name} (com.apple.CoreSimulator.SimDeviceType.{ident})")
 elif args[:3] == ["simctl", "list", "runtimes"]:
@@ -51,6 +53,10 @@ elif args[:3] == ["simctl", "list", "devices"]:
         print(f"    {device['name']} ({device['udid']}) ({device['state']})")
 elif args[:2] == ["simctl", "create"]:
     name, dtype, runtime = args[2:5]
+    if dtype == os.environ.get("STUB_FAIL_DEVICE_TYPE"):
+        print("An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=403):", file=sys.stderr)
+        print("Incompatible device", file=sys.stderr)
+        sys.exit(103)
     state["counter"] += 1
     udid = str(uuid.UUID(int=state["counter"])).upper()
     state["devices"].append({"name": name, "udid": udid, "state": "Shutdown",
@@ -159,7 +165,20 @@ class LaneSimulatorContracts(unittest.TestCase):
     def test_missing_preferred_type_falls_back_to_newest_similar(self):
         self.lane(self.repo, "ensure", HERMES_FLEET_LANE_SIM_IPHONE_TYPE="iPhone 99 Imaginary")
         create = next(c for c in self.calls() if c[:2] == ["simctl", "create"])
-        self.assertEqual(create[3], "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro")
+        self.assertEqual(create[3], "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro")
+
+    def test_incompatible_preferred_type_retries_next_installed_candidate(self):
+        preferred = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+        result = self.lane(self.repo, "ensure", HERMES_FLEET_LANE_SIM_IPHONE_TYPE="iPhone 17 Pro",
+                           STUB_FAIL_DEVICE_TYPE=preferred)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        creates = [c for c in self.calls() if c[:2] == ["simctl", "create"]]
+        self.assertEqual([c[3] for c in creates], [
+            preferred,
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+        ])
+        self.assertIn("Incompatible device", result.stderr)
+        self.assertEqual(len(self.devices()), len(FOREIGN) + 1)
 
     def test_second_worktree_gets_a_different_simulator(self):
         a = self.lane(self.repo, "ensure")
@@ -187,7 +206,7 @@ class LaneSimulatorContracts(unittest.TestCase):
         self.assertEqual(pad.stdout, self.lane(self.repo, "ensure", "ipad").stdout)
         creates = [c for c in self.calls() if c[:2] == ["simctl", "create"]]
         self.assertTrue(creates[1][2].endswith("-iPad"))
-        self.assertEqual(creates[1][3], "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB")
+        self.assertEqual(creates[1][3], "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-16GB")
 
     def test_boot_on_demand_boots_once(self):
         first = self.lane(self.repo, "ensure", "--boot")

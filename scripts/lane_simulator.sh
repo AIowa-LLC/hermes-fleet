@@ -22,7 +22,8 @@
 #
 # Overrides: HERMES_FLEET_LANE_SIM_IPHONE_TYPE (default "iPhone 17 Pro") and
 # HERMES_FLEET_LANE_SIM_IPAD_TYPE (default "iPad Pro 11-inch (M5)") name the
-# device type to clone; if missing, the newest similar installed type is used.
+# preferred device type. If its pairing with the newest installed runtime is
+# rejected, compatible candidates from the installed device list are tried.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd -P)"
@@ -58,25 +59,28 @@ hf_devices() {
 udid_for_name() { hf_devices | awk -v n="$1" '$1 == n { print $2; exit }'; }
 state_for_udid() { hf_devices | awk -v u="$1" '$2 == u { print $3; exit }'; }
 
-pick_device_type() {
-  local family="$1" preferred fallback_re types line
+device_type_candidates() {
+  local family="$1" preferred fallback_re family_re types preferred_id
   if [ "$family" = iphone ]; then
     preferred="${HERMES_FLEET_LANE_SIM_IPHONE_TYPE:-iPhone 17 Pro}"
     fallback_re='^iPhone [0-9]+ Pro$'
+    family_re='^iPhone '
   else
     preferred="${HERMES_FLEET_LANE_SIM_IPAD_TYPE:-iPad Pro 11-inch (M5)}"
     fallback_re='^iPad Pro 11-inch'
+    family_re='^iPad '
   fi
   types=$(xcrun simctl list devicetypes | sed -nE \
     's/^(.+) \((com\.apple\.CoreSimulator\.SimDeviceType\.[^)]+)\)$/\1|\2/p') || true
-  # Exact name first, then the newest (last listed) similar type, then the
-  # newest device type of the family.
-  line=$(printf '%s\n' "$types" | awk -F'|' -v p="$preferred" '$1 == p { print; exit }')
-  [ -n "$line" ] || line=$(printf '%s\n' "$types" | awk -F'|' -v re="$fallback_re" '$1 ~ re { l = $0 } END { print l }')
-  [ -n "$line" ] || line=$(printf '%s\n' "$types" | awk -F'|' -v f="$family" \
-    'tolower($1) ~ "^" f { l = $0 } END { print l }')
-  [ -n "$line" ] || die "no $family device type is installed"
-  printf '%s' "${line#*|}"
+  [ -n "$types" ] || return 0
+  preferred_id=$(printf '%s\n' "$types" | awk -F'|' -v p="$preferred" '$1 == p { print $2; exit }')
+  {
+    [ -z "$preferred_id" ] || printf '%s\n' "$preferred_id"
+    # simctl lists the newest installed device types first on supported
+    # runners. Keep that order for fallback after trying the exact preference.
+    printf '%s\n' "$types" | awk -F'|' -v re="$fallback_re" '$1 ~ re { print $2 }'
+    printf '%s\n' "$types" | awk -F'|' -v re="$family_re" '$1 ~ re { print $2 }'
+  } | awk 'NF && !seen[$0]++ && count < 8 { print; count++ }'
 }
 
 newest_ios_runtime() {
@@ -89,7 +93,7 @@ newest_ios_runtime() {
 }
 
 cmd_ensure() {
-  local family=iphone boot=0 name udid type runtime state
+  local family=iphone boot=0 name udid type runtime state candidates create_output create_error
   while [ $# -gt 0 ]; do
     case "$1" in
       iphone|ipad) family="$1" ;;
@@ -101,10 +105,21 @@ cmd_ensure() {
   name="$(name_for "$family")"
   udid="$(udid_for_name "$name")"
   if [ -z "$udid" ]; then
-    type="$(pick_device_type "$family")"
     runtime="$(newest_ios_runtime)"
-    log "creating $name"
-    udid="$(xcrun simctl create "$name" "$type" "$runtime")" || die "simctl create failed for $name"
+    candidates="$(device_type_candidates "$family")"
+    [ -n "$candidates" ] || die "no $family device type is installed"
+    create_error=""
+    while IFS= read -r type; do
+      [ -n "$type" ] || continue
+      log "creating $name with $type on $runtime"
+      if create_output="$(xcrun simctl create "$name" "$type" "$runtime" 2>&1)"; then
+        udid="$(printf '%s\n' "$create_output" | tail -n 1 | tr -d '\r')"
+        break
+      fi
+      create_error="${create_output//$'\n'/; }"
+      log "simctl create rejected $type on $runtime ($create_error); trying the next candidate"
+    done <<< "$candidates"
+    [ -n "$udid" ] || die "simctl create failed for $name with all device candidates; last error: $create_error"
     [ -n "$udid" ] || die "simctl create returned no UDID for $name"
   fi
   if [ "$boot" -eq 1 ]; then
