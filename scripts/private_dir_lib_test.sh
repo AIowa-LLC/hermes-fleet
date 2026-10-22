@@ -286,6 +286,21 @@ else
   fail "launcher symlink-parent guard rc=$rc state=$(test -e "$UNSAFE_STATE_TARGET/new-state" && echo created || echo absent)"
 fi
 
+# A `..` component after a symlinked parent must be checked against its real
+# shared-writable destination before state creation or external tool execution.
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+  REVIEWER_PUBLIC_URL=https://reviewer.example \
+  REVIEWER_ENV_DIR="$T/unsafe-dotdot-link/../launcher-dotdot-state" \
+  bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ ! -e "$UNSAFE_PARENT/launcher-dotdot-state" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a symlink-parent .. alias before state creation or external work"
+else
+  fail "launcher symlink-parent .. guard rc=$rc state=$(test -e "$UNSAFE_PARENT/launcher-dotdot-state" && echo created || echo absent)"
+fi
+
 # A final-component symlink must remain refused even though the launcher
 # canonicalizes safe parent aliases. In particular, purge must not resolve the
 # link and remove the target directory, including with a trailing slash.
