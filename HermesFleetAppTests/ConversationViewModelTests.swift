@@ -2226,23 +2226,29 @@ final class ConversationViewModelTests: XCTestCase {
     func testRepeatedForegroundCyclesKeepOneSessionAndNoDuplicateRows() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
         await viewModel.start()
-        await viewModel.send("hello")
+        let submitted = await viewModel.send("hello")
+        XCTAssertTrue(submitted, "the setup prompt must be accepted before streaming events are pushed")
         scripted.push(.messageStart(sessionID: "s-1"))
         scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
         scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
         await flush()
+        XCTAssertEqual(viewModel.transcript.count, 2,
+                       "the submitted prompt and streamed reply must render before recovery; history=\(scripted.historyCallCount), submitted=\(scripted.submittedTexts)")
         let creates = scripted.createCallCount
         let resumes = scripted.resumeCallCount
         let rowsBefore = viewModel.transcript.count
+        XCTAssertEqual(rowsBefore, 2, "the reconnect loop must start with the submitted and streamed rows")
 
         scripted.replayOutcomes = .success(Array(repeating: .nothingToReplay, count: 25))
-        for _ in 0..<4 {
+        for cycle in 0..<4 {
             scripted.statusValue = .offline
             viewModel.forceDisconnectedForTesting()
             scripted.statusValue = .online
             await viewModel.appBecameActive()
             XCTAssertEqual(viewModel.phase, .ready)
             XCTAssertNil(viewModel.replayNotice)
+            XCTAssertEqual(viewModel.transcript.count, rowsBefore,
+                           "foreground cycle \(cycle) must preserve the existing transcript; history=\(scripted.historyCallCount), resumes=\(scripted.resumedSessionIDs)")
         }
 
         XCTAssertEqual(scripted.createCallCount, creates,
@@ -2257,6 +2263,27 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.filter { $0.text == "again" }.count, 1,
                        "one live event must yield exactly one row (no duplicate subscriptions)")
         XCTAssertEqual(viewModel.transcript.count, rowsBefore + 1)
+    }
+
+    func testLateEmptyOpeningHistoryCannotEraseNewLiveRows() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        let sent = await viewModel.send("hello")
+        XCTAssertTrue(sent)
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
+        await flush()
+        XCTAssertEqual(viewModel.transcript.count, 2)
+
+        // The empty projection's request began at revision zero. Model its
+        // task reaching the history seam only after both live rows were added.
+        let outcome = await viewModel.refetchAuthoritativeHistory(
+            sessionID: "s-1", originRevision: 0, originWasEmpty: true)
+
+        XCTAssertEqual(outcome, .rejectedStale)
+        XCTAssertEqual(viewModel.transcript.count, 2)
+        XCTAssertEqual(viewModel.transcript.last?.text, "Hi")
     }
 
     // MARK: - H1 history hydration UX (t_01c9d411)

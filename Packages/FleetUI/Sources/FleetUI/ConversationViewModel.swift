@@ -2372,7 +2372,18 @@ public final class ConversationViewModel {
             // settles. Whether the cache already rendered rows or not, this
             // is what settles the transcript authoritatively (and swaps
             // ids-preserving when the cache is showing).
-            Task { await refetchAuthoritativeHistory(sessionID: opened.sessionID) }
+            // Capture the transcript revision at open time, before the
+            // unstructured task is scheduled. If the resume projection is
+            // empty and live rows arrive first, a late empty history response
+            // must not treat those newer rows as part of its initial snapshot.
+            let openingRevision = transcriptMutationRevision
+            let openingTranscriptWasEmpty = allRows.isEmpty
+            Task {
+                await refetchAuthoritativeHistory(
+                    sessionID: opened.sessionID,
+                    originRevision: openingRevision,
+                    originWasEmpty: openingTranscriptWasEmpty)
+            }
         }
         sessionTitle = opened.profileName
         sessionProfileName = opened.profileName ?? route.profileSlug.rawValue
@@ -2739,9 +2750,14 @@ public final class ConversationViewModel {
     /// `GapRecoveryGovernor`.
     @discardableResult
     func refetchAuthoritativeHistory(
-        sessionID: String, fencedBy token: Int? = nil, allowDuringStream: Bool = false
+        sessionID: String,
+        fencedBy token: Int? = nil,
+        allowDuringStream: Bool = false,
+        originRevision: UInt64? = nil,
+        originWasEmpty: Bool? = nil
     ) async -> HistoryRefetchOutcome {
-        let originRevision = transcriptMutationRevision
+        let requestOriginRevision = originRevision ?? transcriptMutationRevision
+        let requestOriginWasEmpty = originWasEmpty ?? allRows.isEmpty
         for _ in 0..<Self.maxRefetchAttempts {
             guard !Task.isCancelled else { return .cancelled }
             // A turn is streaming: the snapshot may lack the in-progress reply
@@ -2750,7 +2766,8 @@ public final class ConversationViewModel {
             // opts out: its stream is already broken and history IS the repair.
             if isStreaming, !allowDuringStream { break }
             let outcome = await refetchHistoryOnce(
-                sessionID: sessionID, fencedBy: token, originRevision: originRevision,
+                sessionID: sessionID, fencedBy: token, originRevision: requestOriginRevision,
+                originWasEmpty: requestOriginWasEmpty,
                 allowDuringStream: allowDuringStream)
             if outcome == .failed, historyMayBeIncomplete {
                 // A failed refresh (possibly the newer request that superseded
@@ -2772,7 +2789,11 @@ public final class ConversationViewModel {
 
     @MainActor
     private func refetchHistoryOnce(
-        sessionID: String, fencedBy token: Int?, originRevision: UInt64, allowDuringStream: Bool
+        sessionID: String,
+        fencedBy token: Int?,
+        originRevision: UInt64,
+        originWasEmpty: Bool,
+        allowDuringStream: Bool
     ) async -> HistoryRefetchOutcome {
         refetchSequence += 1
         let sequence = refetchSequence
@@ -2800,10 +2821,13 @@ public final class ConversationViewModel {
             // (messageStart bumps it); one still open now must not be replaced.
             if isStreaming, !allowDuringStream { return .rejectedStale }
             if messages.isEmpty {
-                // An empty snapshot is authoritative only for the moment the CALL
-                // began: if live rows arrived since (even between retries), a
-                // server that has not persisted them yet must not erase them.
-                guard transcriptMutationRevision == originRevision else {
+                // An empty snapshot can settle an already-empty transcript.
+                // It cannot erase existing cache/live rows: a successful send
+                // may not have reached durable history yet, and the empty
+                // server response is not proof that the local transcript was
+                // removed. Also reject an opening fetch if rows arrived since
+                // its request was scheduled.
+                guard originWasEmpty, transcriptMutationRevision == originRevision else {
                     hydratedFromCache = false
                     isHistoryHydrationInProgress = false
                     historyLoadError = nil
@@ -2880,7 +2904,8 @@ public final class ConversationViewModel {
                 enterPagedHistory()
                 return await refetchHistoryOnce(
                     sessionID: sessionID, fencedBy: token,
-                    originRevision: originRevision, allowDuringStream: allowDuringStream)
+                    originRevision: originRevision, originWasEmpty: originWasEmpty,
+                    allowDuringStream: allowDuringStream)
             }
             if let paging = error as? SessionHistoryPagingError {
                 if case .unsupported = paging {
