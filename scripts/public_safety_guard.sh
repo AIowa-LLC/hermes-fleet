@@ -52,7 +52,9 @@ note "tracked-tree residue scan"
 # Hit lines are NOT echoed in full for private-denylist matches: printing the
 # matched text would copy the private value into logs/CI output.
 HITS=$(git grep -n -I -E "$PATTERN" -- . ":!$GUARD_REL" 2>/dev/null || true)
-HOME_HITS=$(git grep -n -I -E "$HOME_PATH" -- . ":!$GUARD_REL" 2>/dev/null | grep -v -E "$HOME_ALLOWED" || true)
+# Filter each path match independently. Filtering whole source lines would let
+# one allowed placeholder mask a real home path elsewhere on the same line.
+HOME_HITS=$(git grep -n -o -I -E "$HOME_PATH" -- . ":!$GUARD_REL" 2>/dev/null | grep -v -E "$HOME_ALLOWED" || true)
 if [ -n "$HITS$HOME_HITS" ]; then
   echo "FAIL: private residue present in tracked files:"
   printf '%s\n%s\n' "$HITS" "$HOME_HITS" | grep -v '^$' | cut -d: -f1,2 | head -40

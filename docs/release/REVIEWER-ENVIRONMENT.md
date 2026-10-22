@@ -320,6 +320,10 @@ bash scripts/reviewer_env_launch.sh stop
 bash scripts/reviewer_env_launch.sh clean --purge   # destroys everything
 ```
 
+`clean --purge` removes a non-empty state directory only after the launcher
+has marked it while resolving credentials. An older or unrelated unmarked
+directory is preserved for inspection; an empty directory can still be removed.
+
 The launcher never creates or runs tunnels; it prints the exact cloudflared
 commands for the operator. A named tunnel (stable hostname, TLS at edge)
 is the review-window transport; quick tunnels are rehearsals only.

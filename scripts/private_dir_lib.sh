@@ -13,15 +13,22 @@
 #   hf_private_name <base>  prints "${TMPDIR:-/tmp}/<base>-<uid>" so two users
 #                           on one host never contend for the same name.
 
-hf__stat_field() { # <owner|mode> <path>
+hf__stat_field() { # <owner|mode|links> <path>
   local what="$1" p="$2" out
   # GNU first: on BSD `stat -c` fails, whereas GNU `stat -f` succeeds with
   # unrelated filesystem output.
-  if [ "$what" = owner ]; then
-    out=$(stat -c %u "$p" 2>/dev/null) || out=$(stat -f %u "$p" 2>/dev/null) || return 1
-  else
-    out=$(stat -c %a "$p" 2>/dev/null) || out=$(stat -f %Lp "$p" 2>/dev/null) || return 1
-  fi
+  case "$what" in
+    owner) out=$(stat -c %u "$p" 2>/dev/null) || out=$(stat -f %u "$p" 2>/dev/null) || return 1 ;;
+    mode)
+      out=$(stat -c %a "$p" 2>/dev/null) || {
+        out=$(stat -f %p "$p" 2>/dev/null) || return 1
+        out=${out: -4}
+        case "$out" in 0[0-7][0-7][0-7]) out=${out#0} ;; esac
+      }
+      ;;
+    links) out=$(stat -c %h "$p" 2>/dev/null) || out=$(stat -f %l "$p" 2>/dev/null) || return 1 ;;
+    *) return 1 ;;
+  esac
   printf '%s' "$out"
 }
 
@@ -29,19 +36,76 @@ hf_private_name() {
   printf '%s/%s-%s' "${TMPDIR:-/tmp}" "$1" "$(id -u)"
 }
 
+hf_private_path_is_symlink_leaf() {
+  local path="${1:-}" parent leaf
+  [ -n "$path" ] || return 1
+  while [ "$path" != / ]; do
+    case "$path" in
+      */) path=${path%/} ;;
+      */.) path=${path%/.} ;;
+      *) break ;;
+    esac
+  done
+  [ "$path" != / ] || return 1
+  # Resolve the parent before inspecting the final component. On macOS, a
+  # lexical path containing a symlinked parent followed by `..` can otherwise
+  # make a final symlink check depend on how the shell normalizes that path.
+  # This still permits safe symlinked parent aliases while checking the real
+  # directory entry that the canonical state path would use.
+  parent=$(hf_canonical_path "$(dirname "$path")") || return 1
+  leaf=$(basename "$path") || return 1
+  [ -L "$parent/$leaf" ]
+}
+
+hf_private_parent_safe() {
+  local path="${1:-}" parent owner mode numeric writable sticky
+  [ -n "$path" ] || return 1
+  path=$(hf_canonical_path "$path") || return 1
+  parent=$(dirname "$path")
+  # A configured path may have a not-yet-created tail. Check the complete
+  # existing ancestor chain before creating that tail; canonicalization above
+  # resolves any symlink in the existing prefix first.
+  while [ "$parent" != / ] && [ ! -e "$parent" ]; do
+    parent=$(dirname "$parent")
+  done
+  while [ -n "$parent" ]; do
+    owner=$(hf__stat_field owner "$parent") || return 1
+    mode=$(hf__stat_field mode "$parent") || return 1
+    case "$mode" in ''|*[!0-7]*) return 1 ;; esac
+    numeric=$((8#$mode))
+    writable=$((numeric & 18)) # group/world write bits (0022)
+    sticky=$((numeric & 512)) # sticky bit (01000)
+    if [ "$writable" -ne 0 ] \
+       && { [ "$sticky" -eq 0 ] || { [ "$owner" != 0 ] && [ "$owner" != "$(id -u)" ]; }; }; then
+      echo "FAIL: private path has a shared-writable parent without safe sticky ownership" >&2
+      return 1
+    fi
+    [ "$parent" = / ] && break
+    parent=$(dirname "$parent")
+  done
+  return 0
+}
+
 hf_private_dir() {
-  local d="${1:-}" owner mode
+  local d="${1:-}" owner mode physical
   if [ -z "$d" ]; then echo "FAIL: empty private directory path" >&2; return 1; fi
-  if [ -L "$d" ]; then echo "FAIL: $d is a symlink; refusing to use it" >&2; return 1; fi
+  if hf_private_path_is_symlink_leaf "$d"; then echo "FAIL: $d is a symlink; refusing to use it" >&2; return 1; fi
+  physical=$(hf_canonical_path "$d") || { echo "FAIL: cannot resolve private directory path" >&2; return 1; }
+  d="$physical"
   if [ ! -e "$d" ]; then
-    # Missing parents are created as before (mkdir -p), but only the leaf is
-    # the private, validated directory.
+    # Validate the real existing ancestor chain before mkdir -p can follow a
+    # symlink in a configured path or create sensitive state under a shared
+    # writable non-sticky parent.
+    hf_private_parent_safe "$d" || return 1
     mkdir -p "$(dirname "$d")" 2>/dev/null || true
     # Non-recursive and mode-atomic. Losing a creation race is fine: the
     # validation below then rejects anything that is not ours and private.
     (umask 077; mkdir -m 700 "$d") 2>/dev/null || true
   fi
   if [ ! -d "$d" ] || [ -L "$d" ]; then echo "FAIL: $d is not a real directory" >&2; return 1; fi
+  physical=$(hf_canonical_path "$d") || return 1
+  [ "$physical" = "$d" ] || { echo "FAIL: private directory path changed during validation" >&2; return 1; }
+  hf_private_parent_safe "$d" || return 1
   owner=$(hf__stat_field owner "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
   mode=$(hf__stat_field mode "$d") || { echo "FAIL: cannot stat $d" >&2; return 1; }
   if [ "$owner" != "$(id -u)" ]; then
@@ -99,7 +163,7 @@ hf_is_legacy_reviewer_path() {
 # Validate before any credential bytes are parsed; print an absolute physical
 # filename on success. Explicit legacy opt-in does not relax file safety.
 hf_reviewer_credential_file() {
-  local p="${1:-}" physical owner mode rc
+  local p="${1:-}" physical owner mode links rc
   if hf_is_legacy_reviewer_path "$p"; then
     if [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != 1 ]; then
       echo "FAIL: credential file is inside the legacy reviewer state directory; provision fresh credentials" >&2
@@ -117,11 +181,51 @@ hf_reviewer_credential_file() {
     return 1
   fi
   physical=$(hf_canonical_path "$p") || return 1
+  # File ownership and mode do not protect its directory entry. A peer with
+  # write access to a non-sticky parent could replace the credential pathname
+  # after validation but before a consumer reads it.
+  hf_private_parent_safe "$physical" || return 1
   owner=$(hf__stat_field owner "$physical") || return 1
   mode=$(hf__stat_field mode "$physical") || return 1
+  links=$(hf__stat_field links "$physical") || return 1
   if [ "$owner" != "$(id -u)" ] || [ "$mode" != 600 ]; then
     echo "FAIL: reviewer credential file must be owned by the current user with mode 600" >&2
     return 1
   fi
+  if [ "$links" != "1" ]; then
+    echo "FAIL: reviewer credential file must not have hard-link aliases" >&2
+    return 1
+  fi
   printf '%s\n' "$physical"
+}
+
+# A non-empty reviewer state directory may be purged only after the launcher
+# explicitly adopts it while resolving credentials. This small marker protects
+# unrelated private directories that happen to contain a file named
+# `credentials`.
+hf_reviewer_state_dir_marked() {
+  local d="${1:-}" marker owner mode contents
+  [ -n "$d" ] || return 1
+  d=$(hf_private_dir "$d") || return 1
+  marker="$d/.hermes-fleet-reviewer-state"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  owner=$(hf__stat_field owner "$marker") || return 1
+  mode=$(hf__stat_field mode "$marker") || return 1
+  [ "$owner" = "$(id -u)" ] && [ "$mode" = "600" ] || return 1
+  contents=$(cat "$marker" 2>/dev/null) || return 1
+  [ "$contents" = "hermes-fleet-reviewer-state-v1" ]
+}
+
+hf_mark_reviewer_state_dir() {
+  local d="${1:-}" marker
+  [ -n "$d" ] || return 1
+  d=$(hf_private_dir "$d") || return 1
+  marker="$d/.hermes-fleet-reviewer-state"
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    hf_reviewer_state_dir_marked "$d"
+    return $?
+  fi
+  ( umask 077; set -C; printf 'hermes-fleet-reviewer-state-v1\n' > "$marker" ) || return 1
+  chmod 600 "$marker" 2>/dev/null || return 1
+  hf_reviewer_state_dir_marked "$d"
 }

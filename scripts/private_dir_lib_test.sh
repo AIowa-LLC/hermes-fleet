@@ -21,6 +21,51 @@ mode_of() { hf__stat_field mode "$1"; }
 # 2. Re-validating our own directory succeeds (stable across script runs).
 hf_private_dir "$T/fresh" >/dev/null && pass "existing private directory is reused" || fail "reuse"
 
+# A private leaf is still unsafe when another user can rename it through a
+# shared-writable parent. Root-owned/current-user sticky parents remain valid.
+UNSAFE_PARENT="$T/shared-writable"; mkdir -m 777 "$UNSAFE_PARENT"
+if hf_private_dir "$UNSAFE_PARENT/private" >/dev/null 2>&1; then
+  fail "private directory accepted under shared-writable non-sticky parent"
+else
+  pass "shared-writable non-sticky parent is refused"
+fi
+UNSAFE_LINK="$T/shared-parent-link"; ln -s "$UNSAFE_PARENT" "$UNSAFE_LINK"
+if hf_private_dir "$UNSAFE_LINK/symlink-child" >/dev/null 2>&1; then
+  fail "private directory accepted through a symlink to a shared-writable parent"
+else
+  pass "symlink to shared-writable non-sticky parent is refused"
+fi
+[ ! -e "$UNSAFE_PARENT/symlink-child" ] \
+  && pass "unsafe symlink parent is refused before creating its target" \
+  || fail "private directory was created through an unsafe symlink parent"
+SAFE_PARENT="$T/private-parent"; mkdir -m 700 "$SAFE_PARENT"
+ln -s "$SAFE_PARENT" "$T/private-parent-link"
+CANONICAL_PARENT=$(hf_canonical_path "$SAFE_PARENT")
+CANONICAL_DIR=$(hf_private_dir "$T/private-parent-link/child")
+[ "$CANONICAL_DIR" = "$CANONICAL_PARENT/child" ] \
+  && pass "safe symlink parent returns and creates the physical path" \
+  || fail "safe symlink parent did not return its physical path"
+mkdir -m 700 "$SAFE_PARENT/alias-child" "$SAFE_PARENT/dotdot-target"
+ln -s "$SAFE_PARENT/alias-child" "$T/private-dotdot-link"
+CANONICAL_DOTDOT=$(hf_private_dir "$T/private-dotdot-link/../dotdot-target")
+[ "$CANONICAL_DOTDOT" = "$(hf_canonical_path "$SAFE_PARENT/dotdot-target")" ] \
+  && pass "safe symlink-parent .. alias resolves to a private target" \
+  || fail "safe symlink-parent .. alias resolved unexpectedly: $CANONICAL_DOTDOT"
+mkdir -m 700 "$UNSAFE_PARENT/branch"
+ln -s "$UNSAFE_PARENT/branch" "$T/unsafe-dotdot-link"
+if hf_private_dir "$T/unsafe-dotdot-link/../dotdot-target" >/dev/null 2>&1; then
+  fail "symlink-parent .. alias accepted under shared-writable parent"
+else
+  pass "symlink-parent .. alias into shared-writable parent is refused"
+fi
+[ ! -e "$UNSAFE_PARENT/dotdot-target" ] \
+  && pass "unsafe symlink-parent .. alias is refused before creating its target" \
+  || fail "unsafe symlink-parent .. target was created"
+STICKY_PARENT="$T/sticky-parent"; mkdir -m 1777 "$STICKY_PARENT"
+hf_private_dir "$STICKY_PARENT/private" >/dev/null \
+  && pass "sticky private-owned parent is accepted" \
+  || fail "sticky private-owned parent was refused"
+
 # 3. A pre-created group/world-accessible directory (another user squatting
 #    the predictable name) is refused, not silently repaired and used.
 mkdir "$T/squat" && chmod 755 "$T/squat"
@@ -33,6 +78,9 @@ if hf_private_dir "$T/squat777" >/dev/null 2>&1; then fail "777 directory accept
 mkdir "$T/target" && chmod 700 "$T/target"
 ln -s "$T/target" "$T/link"
 if hf_private_dir "$T/link" >/dev/null 2>&1; then fail "symlink accepted"; else pass "symlink to a private directory refused"; fi
+if hf_private_dir "$T/link/" >/dev/null 2>&1; then fail "symlink with trailing slash accepted"; else pass "symlink with trailing slash refused"; fi
+if hf_private_dir "$T/link/." >/dev/null 2>&1; then fail "symlink with terminal dot accepted"; else pass "symlink with terminal dot refused"; fi
+if hf_private_dir "$T/link/./" >/dev/null 2>&1; then fail "symlink with terminal dot and slash accepted"; else pass "symlink with terminal dot and slash refused"; fi
 ln -s "$T/does-not-exist" "$T/dangling"
 if hf_private_dir "$T/dangling" >/dev/null 2>&1; then fail "dangling symlink accepted"; else pass "dangling symlink refused"; fi
 [ ! -e "$T/does-not-exist" ] && pass "refused symlink was not followed to create its target" || fail "symlink target created"
@@ -125,13 +173,24 @@ exit 86
 STUB
   chmod 755 "$TOOLS/$tool"
 done
+cat > "$TOOLS/sudo" <<'STUB'
+#!/bin/sh
+exit 86
+STUB
+chmod 755 "$TOOLS/sudo"
 FRESH="$T/fresh-reviewer"; mkdir -m 700 "$FRESH"
 ln -s "$LEG/credentials" "$FRESH/credentials"
 printf 'password=synthetic-fresh\n' > "$ALIAS/safe"; chmod 600 "$ALIAS/safe"
 cp "$ALIAS/safe" "$ALIAS/public"; chmod 644 "$ALIAS/public"
 ln -s safe "$ALIAS/safe-link"
+ln "$LEG/credentials" "$ALIAS/hardlink"
+if TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/hardlink" >/dev/null 2>&1; then
+  fail "hard link to legacy credentials accepted"
+else
+  pass "hard link to legacy credentials refused"
+fi
 for alias in "$ALIAS/direct" "$ALIAS/chained" "$ALIAS/dangling" "$ALIAS/loop-a" \
-             "$T/legacy-link/credentials" "$ALIAS/public" "$ALIAS/safe-link"; do
+             "$T/legacy-link/credentials" "$ALIAS/hardlink" "$ALIAS/public" "$ALIAS/safe-link"; do
   for consumer in scripts/reviewer_env_check.sh scripts/reviewer_containment_test.sh; do
     rm -f "$T/tool-used"
     out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
@@ -145,16 +204,219 @@ out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
   HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$FRESH" \
   bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses linked credentials before Docker"; else fail "launcher credential-link guard rc=$rc"; fi
+HARDLINK_DIR="$T/hardlink-reviewer"; mkdir -m 700 "$HARDLINK_DIR"
+ln "$LEG/credentials" "$HARDLINK_DIR/credentials"
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$HARDLINK_DIR" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses hard-linked legacy credentials before Docker"
+else
+  fail "launcher hard-link credential guard rc=$rc"
+fi
 rm -f "$T/tool-used"
 out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
   HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$ALIAS/loop-a" \
   bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses unresolvable state before Docker"; else fail "launcher state resolution rc=$rc"; fi
+
+# A credentials-named file is not proof that an unrelated private directory
+# belongs to this launcher. Only a marked state directory may be recursively
+# removed by clean --purge.
+UNRELATED="$T/unrelated-private-dir"; mkdir -m 700 "$UNRELATED"
+printf 'keep this unrelated file\n' > "$UNRELATED/credentials"; chmod 600 "$UNRELATED/credentials"
+rm -f "$T/tool-used"
+out=$(env PATH="$TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$UNRELATED" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -f "$UNRELATED/credentials" ] && [ ! -e "$T/tool-used" ]; then
+  pass "purge refuses an unrelated private directory before external work"
+else
+  fail "unrelated directory purge rc=$rc external=$(test -e "$T/tool-used" && echo yes || echo no)"
+fi
+
+# A failed credential validation must not mark an unrelated directory and
+# make a later explicit purge treat it as adopted reviewer state.
+START_TOOLS="$T/start-mock-tools"; mkdir "$START_TOOLS"
+cat > "$START_TOOLS/docker" <<'STUB'
+#!/bin/bash
+if [ "$1" = "network" ] && [ "$2" = "inspect" ]; then
+  case "$*" in
+    *EnableIPv6*) echo false; exit 0 ;;
+    *Subnet*) echo 172.25.0.0/24; exit 0 ;;
+    *Gateway*) echo 172.17.0.1; exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 0
+STUB
+cat > "$START_TOOLS/sudo" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat > "$START_TOOLS/openssl" <<'STUB'
+#!/bin/sh
+if [ -n "${HF_TEST_CREDENTIAL_TARGET:-}" ] \
+   && [ ! -e "$HF_TEST_CREDENTIAL_TARGET" ] \
+   && [ ! -L "$HF_TEST_CREDENTIAL_TARGET" ]; then
+  ln -s "$HF_TEST_CREDENTIAL_VICTIM" "$HF_TEST_CREDENTIAL_TARGET" || exit 86
+fi
+case "${2:-}" in
+  -base64) printf 'dGVzdC1wYXNzd29yZA==\n' ;;
+  -hex) printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' ;;
+  *) exit 86 ;;
+esac
+STUB
+chmod 755 "$START_TOOLS/docker" "$START_TOOLS/sudo" "$START_TOOLS/openssl"
+
+# A symlinked path to a shared-writable non-sticky parent is rejected before
+# reviewer state or first-run credentials are created, and before Docker is used.
+UNSAFE_STATE_TARGET="$T/unsafe-state-target"; mkdir -m 777 "$UNSAFE_STATE_TARGET"
+UNSAFE_STATE_LINK="$T/unsafe-state-link"; ln -s "$UNSAFE_STATE_TARGET" "$UNSAFE_STATE_LINK"
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+  REVIEWER_PUBLIC_URL=https://reviewer.example \
+  REVIEWER_ENV_DIR="$UNSAFE_STATE_LINK/new-state" \
+  bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ ! -e "$UNSAFE_STATE_TARGET/new-state" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a symlinked shared-writable parent before creating state or using Docker"
+else
+  fail "launcher symlink-parent guard rc=$rc state=$(test -e "$UNSAFE_STATE_TARGET/new-state" && echo created || echo absent)"
+fi
+
+# A `..` component after a symlinked parent must be checked against its real
+# shared-writable destination before state creation or external tool execution.
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+  REVIEWER_PUBLIC_URL=https://reviewer.example \
+  REVIEWER_ENV_DIR="$T/unsafe-dotdot-link/../launcher-dotdot-state" \
+  bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ ! -e "$UNSAFE_PARENT/launcher-dotdot-state" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a symlink-parent .. alias before state creation or external work"
+else
+  fail "launcher symlink-parent .. guard rc=$rc state=$(test -e "$UNSAFE_PARENT/launcher-dotdot-state" && echo created || echo absent)"
+fi
+
+# A final-component symlink must remain refused even though the launcher
+# canonicalizes safe parent aliases. In particular, purge must not resolve the
+# link and remove the target directory, including with a trailing slash.
+SYMLINK_STATE_TARGET="$T/symlink-state-target"; mkdir -m 700 "$SYMLINK_STATE_TARGET"
+SYMLINK_STATE_LINK="$T/symlink-state-link"; ln -s "$SYMLINK_STATE_TARGET" "$SYMLINK_STATE_LINK"
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$SYMLINK_STATE_LINK/" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -d "$SYMLINK_STATE_TARGET" ] && [ -L "$SYMLINK_STATE_LINK" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a symlink leaf before purge or external work, including a trailing slash"
+else
+  fail "launcher symlink-leaf purge rc=$rc target=$(test -d "$SYMLINK_STATE_TARGET" && echo present || echo removed)"
+fi
+
+# Dot components must not hide the final symlink from the pre-purge check.
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$SYMLINK_STATE_LINK/./" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -d "$SYMLINK_STATE_TARGET" ] && [ -L "$SYMLINK_STATE_LINK" ] \
+   && [ ! -e "$T/tool-used" ]; then
+  pass "launcher refuses a dotted symlink leaf before purge or external work"
+else
+  fail "launcher dotted symlink purge rc=$rc target=$(test -d "$SYMLINK_STATE_TARGET" && echo present || echo removed)"
+fi
+
+# Darwin can normalize `symlink-parent/../leaf` differently across shell path
+# checks. Resolve the parent physically and ensure a final symlink remains a
+# symlink before clean --purge can canonicalize or remove its target.
+if [ "$(uname -s)" = Darwin ]; then
+  DARWIN_PARENT="$T/darwin-parent"; mkdir -m 700 "$DARWIN_PARENT"
+  mkdir -m 700 "$DARWIN_PARENT/child"
+  DARWIN_PARENT_LINK="$T/darwin-parent-link"; ln -s "$DARWIN_PARENT/child" "$DARWIN_PARENT_LINK"
+  DARWIN_STATE_TARGET="$T/darwin-state-target"; mkdir -m 700 "$DARWIN_STATE_TARGET"
+  DARWIN_STATE_LINK="$DARWIN_PARENT/state-alias"; ln -s "$DARWIN_STATE_TARGET" "$DARWIN_STATE_LINK"
+  rm -f "$T/tool-used"
+  out=$(env -u REVIEWER_ALLOW_LEGACY_DIR PATH="$TOOLS:$PATH" \
+    HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+    REVIEWER_ENV_DIR="$DARWIN_PARENT_LINK/../state-alias" \
+    bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+  if [ "$rc" != 0 ] && [ -d "$DARWIN_STATE_TARGET" ] \
+     && [ -L "$DARWIN_STATE_LINK" ] && [ ! -e "$T/tool-used" ]; then
+    pass "macOS symlink-parent .. path refuses final symlink before purge or external work"
+  else
+    fail "macOS symlink-parent .. purge rc=$rc target=$(test -d "$DARWIN_STATE_TARGET" && echo present || echo removed)"
+  fi
+else
+  pass "macOS symlink-parent regression skipped on non-Darwin host"
+fi
+
+# Inject a credential symlink after initial validation but before creation.
+# Exclusive final-name creation must fail without modifying the victim.
+RACE_STATE="$T/credential-race-state"; VICTIM="$T/credential-race-victim"
+printf 'preserve synthetic victim\n' > "$VICTIM"; chmod 600 "$VICTIM"
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" \
+  HF_TEST_CREDENTIAL_TARGET="$RACE_STATE/credentials" HF_TEST_CREDENTIAL_VICTIM="$VICTIM" \
+  REVIEWER_PUBLIC_URL=https://reviewer.example REVIEWER_ENV_DIR="$RACE_STATE" \
+  bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -L "$RACE_STATE/credentials" ] \
+   && [ "$(cat "$VICTIM")" = "preserve synthetic victim" ] \
+   && [ ! -e "$T/tool-used" ] && [ ! -e "$RACE_STATE/.hermes-fleet-reviewer-state" ]; then
+  pass "first-run credential symlink substitution is refused without changing its target"
+else
+  fail "first-run credential substitution guard rc=$rc victim=$(cat "$VICTIM")"
+fi
+
+FAILED_ADOPTION="$T/failed-adoption"; mkdir -m 700 "$FAILED_ADOPTION"
+printf 'malformed unrelated credential material\n' > "$FAILED_ADOPTION/credentials"
+chmod 644 "$FAILED_ADOPTION/credentials"
+BEFORE_FAILED_ADOPTION=$(cat "$FAILED_ADOPTION/credentials")
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" REVIEWER_PUBLIC_URL=https://reviewer.example \
+  REVIEWER_ENV_DIR="$FAILED_ADOPTION" bash scripts/reviewer_env_launch.sh start 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$FAILED_ADOPTION/.hermes-fleet-reviewer-state" ] \
+   && [ "$(cat "$FAILED_ADOPTION/credentials")" = "$BEFORE_FAILED_ADOPTION" ]; then
+  pass "failed credential validation does not mark or alter unrelated state"
+else
+  fail "failed credential validation adoption rc=$rc"
+fi
+out=$(env -u REVIEWER_CRED_FILE -u REVIEWER_PROVIDER_ENV_FILE -u REVIEWER_ALLOW_LEGACY_DIR \
+  PATH="$START_TOOLS:$PATH" REVIEWER_ENV_DIR="$FAILED_ADOPTION" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ -f "$FAILED_ADOPTION/credentials" ] \
+   && [ ! -e "$FAILED_ADOPTION/.hermes-fleet-reviewer-state" ]; then
+  pass "later purge refuses the directory after failed credential resolution"
+else
+  fail "post-failure purge rc=$rc"
+fi
+
+MANAGED="$T/managed-reviewer-state"; mkdir -m 700 "$MANAGED"
+hf_mark_reviewer_state_dir "$MANAGED" || fail "state marker creation"
+[ "$(mode_of "$MANAGED/.hermes-fleet-reviewer-state")" = 600 ] \
+  && pass "launcher state marker is private" || fail "state marker mode"
+rm -f "$T/tool-used"
+out=$(env PATH="$TOOLS:$PATH" HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$MANAGED" \
+  bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" = 0 ] && [ ! -e "$MANAGED" ]; then pass "marked reviewer state directory can be purged"; else fail "marked purge rc=$rc"; fi
+[ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
+  && pass "purge decisions preserve legacy credentials" || fail "purge changed legacy fixture"
 [ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
   && pass "all alias refusals preserve synthetic legacy contents and mode" || fail "alias refusal changed legacy fixture"
 
 # 14. Positive controls: regular private files still work; deliberate legacy
 # opt-in permits a safe regular file but never relaxes the file/link policy.
+rm -f "$ALIAS/hardlink" "$HARDLINK_DIR/credentials"
+UNSAFE_CREDENTIAL_PARENT="$T/unsafe-credential-parent"; mkdir -m 777 "$UNSAFE_CREDENTIAL_PARENT"
+printf 'password=synthetic-shared-parent\n' > "$UNSAFE_CREDENTIAL_PARENT/credentials"; chmod 600 "$UNSAFE_CREDENTIAL_PARENT/credentials"
+if hf_reviewer_credential_file "$UNSAFE_CREDENTIAL_PARENT/credentials" >/dev/null 2>&1; then
+  fail "credential file accepted under shared-writable non-sticky parent"
+else
+  pass "credential file under shared-writable non-sticky parent is refused"
+fi
 SAFE_CANONICAL=$(hf_canonical_path "$ALIAS/safe")
 out=$(TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/safe" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "regular private credential file accepted" || fail "safe regular file rc=$rc"

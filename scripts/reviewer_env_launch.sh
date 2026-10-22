@@ -47,6 +47,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REVIEWER_IMAGE="${REVIEWER_IMAGE:-hermes-agent:0.21.1-reviewer}"
 . "$SCRIPT_DIR/private_dir_lib.sh"
 REVIEWER_ENV_DIR="${REVIEWER_ENV_DIR:-$(hf_private_name hermes-fleet-reviewer)}"
+if hf_private_path_is_symlink_leaf "$REVIEWER_ENV_DIR"; then
+  printf 'FAIL: reviewer state directory must not be a symlink\n' >&2
+  exit 2
+fi
 CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
 # Old credentials in the pre-rename default directory are preserved but never
 # read, moved, overwritten or reused unless the operator opts in explicitly.
@@ -62,6 +66,19 @@ else
     exit 2
   fi
 fi
+# Keep every later filesystem operation on the same physical path. The helper
+# resolves existing symlinked parents without accepting their lexical mode.
+REVIEWER_ENV_DIR=$(hf_canonical_path "$REVIEWER_ENV_DIR") || {
+  printf 'FAIL: cannot resolve reviewer state directory\n' >&2
+  exit 2
+}
+# Validate the complete existing parent chain before any command path can
+# reach Docker or create first-run state, including when the leaf is absent.
+hf_private_parent_safe "$REVIEWER_ENV_DIR" || {
+  printf 'FAIL: reviewer state directory has an unsafe parent chain\n' >&2
+  exit 2
+}
+CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
 # An existing credential-file alias must not enter a run (or a purge/status
 # command) before Docker is consulted. A missing fresh file is generated later.
 if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
@@ -87,7 +104,9 @@ require_docker() {
 
 # ---------------------------------------------------------------- credentials
 resolve_credentials() {
-  hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
+  local temporary_credentials
+  REVIEWER_ENV_DIR=$(hf_private_dir "$REVIEWER_ENV_DIR") || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
+  CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
   if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
     CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") || die "refusing unsafe reviewer credentials"
   fi
@@ -103,11 +122,26 @@ resolve_credentials() {
     REVIEWER_USERNAME="reviewer"
     REVIEWER_PASSWORD="$(openssl rand -base64 24 | tr -d '=+/' | head -c 24)"
     REVIEWER_SECRET="$(openssl rand -hex 32)"
+    temporary_credentials=$(umask 077; mktemp "$REVIEWER_ENV_DIR/.credentials.XXXXXX") \
+      || die "cannot create a private temporary credential file"
     printf 'username=%s\npassword=%s\nsecret=%s\n' \
-      "$REVIEWER_USERNAME" "$REVIEWER_PASSWORD" "$REVIEWER_SECRET" > "$CREDS_FILE"
-    chmod 600 "$CREDS_FILE" || die "chmod 600 $CREDS_FILE failed"
+      "$REVIEWER_USERNAME" "$REVIEWER_PASSWORD" "$REVIEWER_SECRET" > "$temporary_credentials" \
+      || { rm -f "$temporary_credentials"; die "cannot write temporary reviewer credentials"; }
+    chmod 600 "$temporary_credentials" \
+      || { rm -f "$temporary_credentials"; die "chmod 600 temporary reviewer credentials failed"; }
+    # ln creates the final name exclusively: a file or symlink substituted
+    # after the earlier existence check cannot redirect or overwrite secrets.
+    ln "$temporary_credentials" "$CREDS_FILE" \
+      || { rm -f "$temporary_credentials"; die "refusing a substituted reviewer credential path"; }
+    rm -f "$temporary_credentials" || die "cannot remove temporary reviewer credential name"
+    CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") \
+      || die "refusing unsafe newly created reviewer credentials"
     info "generated fresh reviewer credentials (0600) at $CREDS_FILE"
   fi
+  # Do not adopt a directory until existing credentials pass validation or
+  # fresh credentials have been created successfully. A failed setup must not
+  # leave behind the marker that authorizes a later recursive purge.
+  hf_mark_reviewer_state_dir "$REVIEWER_ENV_DIR" || die "cannot mark reviewer state directory"
 }
 
 # ------------------------------------------------------------- network setup
@@ -400,11 +434,14 @@ do_clean() {
     [ "$REVIEWER_ENV_DIR" = "$HOME" ] && die "REFUSING to purge \$HOME"
     # Only ever delete a directory that is verifiably ours (not a symlink,
     # not another user's, not world/group accessible).
-    hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "REFUSING to purge $REVIEWER_ENV_DIR: not a private directory owned by this user"
-    # ...and only one this launcher created (holds its credentials file) or an
-    # empty one; never an arbitrary directory you happen to own.
-    if [ -n "$(ls -A "$REVIEWER_ENV_DIR" 2>/dev/null)" ] && [ ! -f "$CREDS_FILE" ]; then
-      die "REFUSING to purge $REVIEWER_ENV_DIR: not a reviewer state directory (no credentials file)"
+    REVIEWER_ENV_DIR=$(hf_private_dir "$REVIEWER_ENV_DIR") \
+      || die "REFUSING to purge $REVIEWER_ENV_DIR: not a private directory owned by this user"
+    CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
+    # ...and only one the launcher has adopted with its private state marker,
+    # or an empty one; a credentials-named file alone proves nothing.
+    if [ -n "$(ls -A "$REVIEWER_ENV_DIR" 2>/dev/null)" ] \
+       && ! hf_reviewer_state_dir_marked "$REVIEWER_ENV_DIR"; then
+      die "REFUSING to purge $REVIEWER_ENV_DIR: not a marked reviewer state directory"
     fi
   fi
   do_stop

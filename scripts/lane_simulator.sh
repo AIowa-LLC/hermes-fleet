@@ -22,8 +22,8 @@
 #
 # Overrides: HERMES_FLEET_LANE_SIM_IPHONE_TYPE (default "iPhone 17 Pro") and
 # HERMES_FLEET_LANE_SIM_IPAD_TYPE (default "iPad Pro 11-inch (M5)") name the
-# preferred device type. If its pairing with the newest installed runtime is
-# rejected, compatible candidates from the installed device list are tried.
+# preferred device type. If simctl rejects a type/runtime pair, supported
+# device types and older installed runtimes are tried in order.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd -P)"
@@ -83,10 +83,10 @@ device_type_candidates() {
   } | awk 'NF && !seen[$0]++ && count < 8 { print; count++ }'
 }
 
-newest_ios_runtime() {
-  local sdk_version runtime
+available_ios_runtimes() {
+  local sdk_version runtimes
   sdk_version=$(xcrun --sdk iphonesimulator --show-sdk-version) || die "cannot read the active iOS Simulator SDK version"
-  runtime=$(xcrun simctl list runtimes available | sed -nE \
+  runtimes=$(xcrun simctl list runtimes available | sed -nE \
     's/^iOS ([0-9.]+) .* - (com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+)$/\1|\2/p' \
     | awk -F'|' -v sdk="$sdk_version" '
       function version_cmp(a, b, left, right, left_count, right_count, part_count, i, left_value, right_value) {
@@ -101,15 +101,19 @@ newest_ios_runtime() {
         }
         return 0
       }
-      version_cmp($1, sdk) <= 0 { print $1, $2 }
+      version_cmp($1, sdk) <= 0 {
+        split($1, parts, ".")
+        printf "%d %d %d %s\n", parts[1], parts[2], parts[3], $2
+      }
     ' \
-    | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | awk '{ print $2 }')
-  [ -n "$runtime" ] || die "no iOS simulator runtime at or below SDK $sdk_version is installed"
-  printf '%s' "$runtime"
+    | sort -k1,1nr -k2,2nr -k3,3nr | awk '{ print $4 }')
+  [ -n "$runtimes" ] || die "no iOS simulator runtime at or below SDK $sdk_version is installed"
+  printf '%s\n' "$runtimes"
 }
 
 cmd_ensure() {
-  local family=iphone boot=0 name udid type runtime state candidates create_output create_error
+  local family=iphone boot=0 name udid type runtime state candidates create_output create_error last_error candidate
+  local device_types=() runtimes=()
   while [ $# -gt 0 ]; do
     case "$1" in
       iphone|ipad) family="$1" ;;
@@ -121,21 +125,43 @@ cmd_ensure() {
   name="$(name_for "$family")"
   udid="$(udid_for_name "$name")"
   if [ -z "$udid" ]; then
-    runtime="$(newest_ios_runtime)"
     candidates="$(device_type_candidates "$family")"
     [ -n "$candidates" ] || die "no $family device type is installed"
-    create_error=""
-    while IFS= read -r type; do
-      [ -n "$type" ] || continue
-      log "creating $name with $type on $runtime"
-      if create_output="$(xcrun simctl create "$name" "$type" "$runtime" 2>&1)"; then
-        udid="$(printf '%s\n' "$create_output" | tail -n 1 | tr -d '\r')"
-        break
-      fi
-      create_error="${create_output//$'\n'/; }"
-      log "simctl create rejected $type on $runtime ($create_error); trying the next candidate"
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      device_types[${#device_types[@]}]="$candidate"
     done <<< "$candidates"
-    [ -n "$udid" ] || die "simctl create failed for $name with all device candidates; last error: $create_error"
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      runtimes[${#runtimes[@]}]="$candidate"
+    done < <(available_ios_runtimes)
+    [ "${#runtimes[@]}" -gt 0 ] || die "no supported iOS simulator runtime is installed"
+
+    last_error=""
+    for runtime in "${runtimes[@]}"; do
+      for type in "${device_types[@]}"; do
+        log "creating $name with $type on $runtime"
+        if create_output="$(xcrun simctl create "$name" "$type" "$runtime" 2>&1)"; then
+          udid="$(printf '%s\n' "$create_output" | tail -n 1 | tr -d '\r')"
+          break 2
+        fi
+        create_error="${create_output//$'\n'/; }"
+        case "$create_output" in
+          *"Incompatible device"*)
+            last_error="$create_error"
+            log "simctl create rejected $type on $runtime ($create_error); trying the next compatible pair"
+            ;;
+          *)
+            printf '%s\n' "$create_output" >&2
+            die "simctl create failed for $name"
+            ;;
+        esac
+      done
+    done
+    if [ -z "$udid" ]; then
+      [ -z "$last_error" ] || printf '%s\n' "$last_error" >&2
+      die "no compatible iOS device type/runtime pair is installed for $name"
+    fi
     [ -n "$udid" ] || die "simctl create returned no UDID for $name"
   fi
   if [ "$boot" -eq 1 ]; then

@@ -2796,12 +2796,15 @@ public final class AppEnvironment {
         }()
         let review = try Self.validatedReview(
             tlsReview, for: edits.endpoint ?? previous?.endpoint, required: endpointChanged)
-        let gateway = try await registry.updateGateway(id, edits: edits)
         if endpointChanged {
             // A pin or approval for the OLD endpoint must never carry over.
+            // Clear trust BEFORE persisting the new endpoint: if Keychain
+            // cleanup fails, the old endpoint stays registered and its old
+            // trust cannot silently authorize the replacement endpoint.
             try await tlsPinStore?.deletePin(for: id)
             try await tlsApprovalStore?.resetFirstUseApproval(for: id)
         }
+        let gateway = try await registry.updateGateway(id, edits: edits)
         if let review {
             try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: review.fingerprint)
         }

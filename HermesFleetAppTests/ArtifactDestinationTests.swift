@@ -430,6 +430,21 @@ final class ArtifactDestinationTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(50))
     }
 
+    /// Wait for the scripted stream and its cache write to reach observable
+    /// state instead of assuming a fixed delay is enough on every simulator.
+    private func eventually(
+        timeout: Duration = .seconds(5),
+        _ condition: @MainActor () async -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
+    }
+
     func testGenerationResultAttachesArtifactToTheCitingToolRow() async {
         let session = ScriptedSession(gatewayID: gateway)
         let model = makeViewModel(session: session)
@@ -528,7 +543,12 @@ final class ArtifactDestinationTests: XCTestCase {
         session.push(.messageComplete(
             sessionID: "s-1", text: "Here: https://fal.media/files/cat.png enjoy",
             status: nil, error: nil))
-        await flush()
+
+        let transcriptRendered = await eventually {
+            model.transcript.contains { $0.kind == .tool }
+                && model.transcript.first { $0.kind == .assistant }?.text == "Here:  enjoy"
+        }
+        XCTAssertTrue(transcriptRendered, "the scripted tool and assistant events must reach the transcript")
 
         // No gateway-local path ⇒ nothing retrievable ⇒ no inline artifact.
         XCTAssertNil(model.transcript.first { $0.kind == .tool }?.artifacts)
@@ -537,6 +557,12 @@ final class ArtifactDestinationTests: XCTestCase {
         // raw wire text.
         let assistant = model.transcript.first { $0.kind == .assistant }
         XCTAssertEqual(assistant?.text, "Here:  enjoy")
+        let transcriptPersisted = await eventually {
+            let history = try? await cache.loadHistory(sessionID: "s-1", for: gateway)
+            return history?.messages.first { $0.role == .assistant }?.text
+                == "Here: https://fal.media/files/cat.png enjoy"
+        }
+        XCTAssertTrue(transcriptPersisted, "the raw streamed assistant text must reach persistent history")
         let persisted = try? await cache.loadHistory(sessionID: "s-1", for: gateway)
         XCTAssertEqual(persisted?.messages.first { $0.role == .assistant }?.text,
                        "Here: https://fal.media/files/cat.png enjoy")
