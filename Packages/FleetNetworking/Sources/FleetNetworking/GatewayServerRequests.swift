@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import os
 import FleetCore
 
@@ -158,10 +159,11 @@ final class ServerRequestBox: @unchecked Sendable {
         var open: [Open] = []
         var subscribers: [UUID: AsyncStream<ServerRequest>.Continuation] = [:]
         var conversationSubscribers: [UUID: BoundedQueue<ConversationEvent>] = [:]
-        /// Ids answered locally or withdrawn by the gateway, newest last.
-        /// A stale `open_requests` snapshot that races the settlement must not
-        /// resurrect a prompt the user already answered or the gateway cancelled.
-        var settled: [String] = []
+        /// Digests of ids answered locally or withdrawn by the gateway, newest
+        /// last. A stale `open_requests` snapshot that races the settlement must
+        /// not resurrect a prompt. Fixed-size digests keep peer-supplied ids from
+        /// making this bounded-count history unbounded in bytes.
+        var settled: [Data] = []
     }
 
     /// Bound on simultaneously open requests: a wedged or hostile peer cannot
@@ -189,9 +191,10 @@ final class ServerRequestBox: @unchecked Sendable {
 
     /// Record an open request and deliver it to every subscriber.
     func admit(_ open: Open) -> Admission {
+        let settledKey = Self.settledKey(for: open.request.id)
         let (admission, evicted): (Admission, [BoundedQueue<ConversationEvent>.Entry]) = lock.withLock { state in
             let id = open.request.id
-            if state.settled.contains(id) { return (.settled, []) }
+            if state.settled.contains(settledKey) { return (.settled, []) }
             if state.open.contains(where: { $0.request.id == id }) { return (.duplicate, []) }
             guard state.open.count < Self.maxOpen else { return (.full, []) }
             state.open.append(open)
@@ -211,8 +214,10 @@ final class ServerRequestBox: @unchecked Sendable {
             for queue in state.conversationSubscribers.values {
                 // Pinned: an approval prompt is not evicted for overflow, but
                 // admitting it may evict an older ordinary event: report it.
-                evictedEntries += queue.push(.init(value: .serverRequest(open.request), bytes: 256,
-                                                   sessionID: open.request.sessionID, pinned: true))
+                evictedEntries += queue.push(.init(
+                    value: .serverRequest(open.request),
+                    bytes: GatewayEventBudget.estimatedBytes(of: open.request),
+                    sessionID: open.request.sessionID, pinned: true))
             }
             return (.admitted, evictedEntries)
         }
@@ -233,7 +238,8 @@ final class ServerRequestBox: @unchecked Sendable {
             var dropped: [BoundedQueue<ConversationEvent>.Entry] = []
             for queue in state.conversationSubscribers.values {
                 dropped += queue.push(.init(
-                    value: .serverRequest(open.request), bytes: 256,
+                    value: .serverRequest(open.request),
+                    bytes: GatewayEventBudget.estimatedBytes(of: open.request),
                     sessionID: open.request.sessionID, pinned: true))
             }
             return dropped
@@ -267,7 +273,8 @@ final class ServerRequestBox: @unchecked Sendable {
                 let r = open.request
                 queue.push(.init(value: .serverRequest(ServerRequest(
                     id: r.id, sessionID: r.sessionID, kind: r.kind, replayed: true)),
-                                 bytes: 256, sessionID: r.sessionID, pinned: true))
+                                 bytes: GatewayEventBudget.estimatedBytes(of: r),
+                                 sessionID: r.sessionID, pinned: true))
             }
             state.conversationSubscribers[token] = queue
         }
@@ -308,20 +315,27 @@ final class ServerRequestBox: @unchecked Sendable {
         lock.withLock { state in state.open.first(where: { $0.request.id == id })?.wireID }
     }
 
+    private static func settledKey(for id: String) -> Data {
+        let canonicalID = id.precomposedStringWithCanonicalMapping
+        return Data(SHA256.hash(data: Data(canonicalID.utf8)))
+    }
+
     /// Whether this id was already answered / withdrawn.
     func isSettled(_ id: String) -> Bool {
-        lock.withLock { $0.settled.contains(id) }
+        let key = Self.settledKey(for: id)
+        return lock.withLock { $0.settled.contains(key) }
     }
 
     /// Remove `id` from the open set and remember it as settled. Returns
     /// whether it was open.
     @discardableResult
     func settle(_ id: String) -> Bool {
-        lock.withLock { state in
+        let key = Self.settledKey(for: id)
+        return lock.withLock { state in
             let wasOpen = state.open.contains(where: { $0.request.id == id })
             state.open.removeAll { $0.request.id == id }
-            if !state.settled.contains(id) {
-                state.settled.append(id)
+            if !state.settled.contains(key) {
+                state.settled.append(key)
                 if state.settled.count > Self.maxSettled {
                     state.settled.removeFirst(state.settled.count - Self.maxSettled)
                 }

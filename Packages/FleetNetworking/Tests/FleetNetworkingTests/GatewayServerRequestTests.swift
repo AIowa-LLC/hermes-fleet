@@ -17,6 +17,41 @@ final class GatewayServerRequestTests: XCTestCase {
 
     private let sid = "abc12345"
 
+    func testSettledHistoryRetainsLargeUnknownIDsWithoutKeepingTheirPayload() {
+        let box = ServerRequestBox()
+        let id = "srq-" + String(repeating: "x", count: 64 * 1024)
+
+        XCTAssertFalse(box.settle(id), "the cancellation arrived before its request")
+        XCTAssertTrue(box.isSettled(id))
+        XCTAssertFalse(box.isSettled(id + "different"))
+
+        let request = ServerRequest(
+            id: id,
+            sessionID: sid,
+            kind: .sudo(SudoPrompt(sessionID: sid, command: "true")))
+        guard case .settled = box.admit(.init(wireID: .string(id), request: request)) else {
+            return XCTFail("a late snapshot must not resurrect a previously cancelled request")
+        }
+    }
+
+    func testSettledIDsPreserveCanonicalUnicodeEquality() {
+        let box = ServerRequestBox()
+        let composed = "srq-caf\u{00E9}"
+        let decomposed = "srq-cafe\u{0301}"
+        XCTAssertEqual(composed, decomposed)
+
+        XCTAssertFalse(box.settle(composed))
+        XCTAssertTrue(box.isSettled(decomposed))
+
+        let request = ServerRequest(
+            id: decomposed,
+            sessionID: sid,
+            kind: .sudo(SudoPrompt(sessionID: sid, command: "true")))
+        guard case .settled = box.admit(.init(wireID: .string(decomposed), request: request)) else {
+            return XCTFail("canonically equivalent IDs must match the settled history")
+        }
+    }
+
     func testStalledServerRequestSubscriberIsBoundedAndTerminatedOnOverflow() async throws {
         let box = ServerRequestBox()
         let (stream, continuation) = AsyncStream<ServerRequest>.makeStream(
