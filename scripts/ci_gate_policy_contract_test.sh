@@ -36,15 +36,15 @@ base=(
   CI_GATE_UNITS_RESULT=success
 )
 
-expect_pass "pull request requires focused preflight" \
-  env "${base[@]}" CI_GATE_EVENT_NAME=pull_request \
-    CI_GATE_UI_PREFLIGHT_RESULT=success CI_GATE_CRITICAL_SMOKE_RESULT=skipped
-expect_fail "pull request cannot skip focused preflight" \
+expect_pass "pull request intentionally skips focused preflight" \
   env "${base[@]}" CI_GATE_EVENT_NAME=pull_request \
     CI_GATE_UI_PREFLIGHT_RESULT=skipped CI_GATE_CRITICAL_SMOKE_RESULT=skipped
+expect_fail "pull request cannot run focused preflight" \
+  env "${base[@]}" CI_GATE_EVENT_NAME=pull_request \
+    CI_GATE_UI_PREFLIGHT_RESULT=success CI_GATE_CRITICAL_SMOKE_RESULT=skipped
 expect_fail "pull request cannot substitute merge smoke" \
   env "${base[@]}" CI_GATE_EVENT_NAME=pull_request \
-    CI_GATE_UI_PREFLIGHT_RESULT=success CI_GATE_CRITICAL_SMOKE_RESULT=success
+    CI_GATE_UI_PREFLIGHT_RESULT=skipped CI_GATE_CRITICAL_SMOKE_RESULT=success
 
 expect_pass "merge group requires focused preflight and critical smoke" \
   env "${base[@]}" CI_GATE_EVENT_NAME=merge_group \
@@ -73,9 +73,8 @@ expect_fail "unsupported event fails closed" \
 # Negative coverage for each dependency: missing/cancelled/failed jobs must
 # never become green through aggregation or matrix cancellation.
 for event in pull_request merge_group push; do
-  preflight=success; smoke=skipped
-  [ "$event" != merge_group ] || smoke=success
-  [ "$event" != push ] || preflight=skipped
+  preflight=skipped; smoke=skipped
+  [ "$event" != merge_group ] || { preflight=success; smoke=success; }
   for field in STATIC PACKAGES UNITS UI_PREFLIGHT CRITICAL_SMOKE; do
     expected=success
     [ "$field" != UI_PREFLIGHT ] || expected="$preflight"
