@@ -177,18 +177,25 @@ public struct GatewayConversationClient: ConversationProviding {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
-        let params: JSONValue = .object([
-            "session_id": .string(sessionID),
-            "last_seen": .number(Double(lastEventID)),
-        ])
         do {
-            let result = try await transport.request(method: "session.events.since", params: params)
-            let batch = try GatewayReplayClient.decode(sessionID: sessionID, result)
+            let replayClient = GatewayReplayClient(gatewayID: gatewayID, transport: transport)
+            let batch = try await replayClient.fetchEventsSince(sessionID: sessionID, lastSeen: lastEventID)
             if batch.truncated {
                 throw ConversationError.gapUnrecoverable(sessionID: sessionID, afterEventID: lastEventID)
             }
             return batch.events.compactMap(Self.decodeEvent)
         } catch let error as ConversationError {
+            throw error
+        } catch let error as ReplayError {
+            switch error {
+            case .notConnected:
+                throw ConversationError.notConnected
+            case .malformedPayload(let detail):
+                throw ConversationError.malformedPayload(detail)
+            case .rpcFailed(let detail):
+                throw ConversationError.rpcFailed(detail)
+            }
+        } catch let error as CancellationError {
             throw error
         } catch let error as JSONRPCError {
             throw Self.mapRPCError(error)

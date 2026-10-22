@@ -26,6 +26,7 @@ public actor GatewayReplayEngine: ReplayProviding {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
     private let history: any SessionHistoryProviding
+    private let replayClient: GatewayReplayClient
 
     /// The replay epoch adopted at the last successful connect (nil before the
     /// first). Compared against the fresh epoch after each reconnect.
@@ -44,6 +45,7 @@ public actor GatewayReplayEngine: ReplayProviding {
         self.gatewayID = gatewayID
         self.transport = transport
         self.history = history
+        self.replayClient = GatewayReplayClient(gatewayID: gatewayID, transport: transport)
     }
 
     // MARK: ReplayProviding
@@ -102,27 +104,35 @@ public actor GatewayReplayEngine: ReplayProviding {
             return [.epochChanged(from: previousEpoch, to: newEpoch)]
         }
 
-        // 3. Epoch matches: replay each watermarked session (§9.2).
-        let watermarks = await transport.allWatermarks()
+        // 3. Epoch matches: atomically begin the hold and snapshot the
+        // watermarks (§9.2). A live frame is either included in this snapshot
+        // or parked by the hold; there is no gap between the two states.
+        let watermarks = await transport.beginReplayHold()
         guard !watermarks.isEmpty else {
+            await transport.endReplayHold()
             return [.nothingToReplay]
         }
 
-        // Park live frames during replay (§10 replayHold) so replayed events
-        // inject in order; flush seq-gated afterwards (dedupe).
-        await transport.beginReplayHold()
         var outcomes: [ReplayOutcome] = []
-        for sessionID in watermarks.keys.sorted() {
-            let lastSeen = watermarks[sessionID] ?? 0
-            do {
-                let outcome = try await replaySession(sessionID: sessionID, lastSeen: lastSeen)
-                outcomes.append(outcome)
-            } catch let error as ReplayError {
-                // Best-effort (§10): record and continue; retried next reconnect.
-                outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
-            } catch {
-                outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
+        do {
+            for sessionID in watermarks.keys.sorted() {
+                try Task.checkCancellation()
+                let lastSeen = watermarks[sessionID] ?? 0
+                do {
+                    let outcome = try await replaySession(sessionID: sessionID, lastSeen: lastSeen)
+                    outcomes.append(outcome)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as ReplayError {
+                    // Best-effort (§10): record and continue; retried next reconnect.
+                    outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
+                } catch {
+                    outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
+                }
             }
+        } catch {
+            await transport.endReplayHold()
+            throw error
         }
         await transport.endReplayHold()
         // Live frames dropped by the hold cap leave a gap the watermark never
@@ -136,15 +146,25 @@ public actor GatewayReplayEngine: ReplayProviding {
     // MARK: per-session replay
 
     private func replaySession(sessionID: String, lastSeen: Int) async throws -> ReplayOutcome {
-        // Issue `session.events.since` directly over the transport (same
-        // request/correlation the replay client uses); the client's static
-        // decode is reused so wire-shape handling stays in one place.
-        let params: JSONValue = .object([
-            "session_id": .string(sessionID),
-            "last_seen": .number(Double(lastSeen)),
-        ])
-        let result = try await transport.request(method: "session.events.since", params: params)
-        let batch = try GatewayReplayClient.decode(sessionID: sessionID, result)
+        let batch: ReplayBatch
+        do {
+            batch = try await replayClient.fetchEventsSince(sessionID: sessionID, lastSeen: lastSeen)
+        } catch let error as ReplayError {
+            guard case .malformedPayload = error else { throw error }
+            let validationDetail = error.errorDescription ?? "malformed replay payload"
+            do {
+                try Task.checkCancellation()
+                _ = try await history.fetchSessionHistory(sessionID: sessionID)
+                try Task.checkCancellation()
+                return .failed(sessionID: sessionID, detail: "\(validationDetail); authoritative history refetched")
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return .failed(
+                    sessionID: sessionID,
+                    detail: "\(validationDetail); history refetch failed: \(Redaction.safeErrorDescription(error))")
+            }
+        }
 
         // 4. Truncation (§9.5): the ring evicted events between lastSeen and
         // its oldest retained seq — refetch authoritative history instead of
@@ -154,12 +174,20 @@ public actor GatewayReplayEngine: ReplayProviding {
             || batchBytes > GatewayEventBudget.maxReplayBatchBytes {
             // Best-effort authoritative refetch; a failure here is recorded on
             // the outcome, not thrown (the client still knows to rehydrate).
+            var historyRefetched = false
             do {
+                try Task.checkCancellation()
                 _ = try await history.fetchSessionHistory(sessionID: sessionID)
+                try Task.checkCancellation()
+                historyRefetched = true
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 // History refetch failed; the outcome still signals truncation.
             }
-            await transport.advanceWatermark(to: batch.latestSeq, for: sessionID)
+            if historyRefetched {
+                await transport.advanceWatermark(to: batch.latestSeq, for: sessionID)
+            }
             return .truncated(sessionID: sessionID)
         }
 

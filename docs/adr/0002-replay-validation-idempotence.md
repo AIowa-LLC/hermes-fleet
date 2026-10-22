@@ -1,6 +1,6 @@
 # ADR-0002: Replay validation and idempotence
 
-**Status:** Accepted, implementation pending
+**Status:** Accepted, landed
 
 ## Context
 
@@ -29,4 +29,11 @@ Atomic hold/snapshot prevents the live-versus-replay interleaving that can other
 
 ## Current implementation note
 
-This policy is accepted architecture, but the public source should be treated as pre-hardening until the atomic hold/snapshot and strict replay-envelope validation are fully present in the implementation and regression suite.
+`GatewayWebSocketTransport.beginReplayHold()` now starts the hold and returns
+the watermark snapshot in one actor operation. `GatewayReplayClient` strictly
+validates the envelope and each event, and both reconnect replay and manual
+resume use that one request path. Malformed batches trigger an authoritative
+history refetch and a `.failed` outcome without injecting their events or
+advancing their watermark. Cancellation removes the pending RPC and releases
+the replay hold. `ReconnectReplayTests` covers the live/replay race, strict
+validation, recovery, cancellation, truncation, and `open_requests` retention.

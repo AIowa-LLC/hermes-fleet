@@ -1,6 +1,6 @@
 import XCTest
 import FleetCore
-import FleetNetworking
+@testable import FleetNetworking
 
 /// P4 (M6) — reconnect + replay suite (spec §36 "Reconnect tests").
 ///
@@ -108,6 +108,48 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
         XCTAssertEqual(transport.state, .connected, "reconnect after clean disconnect must succeed")
         XCTAssertEqual(server.connectionCount, 2, "reconnect must open a fresh connection")
+        await transport.disconnect()
+    }
+
+    /// The snapshot and hold are one actor operation: once the returned
+    /// watermark is 3, a live seq 4 is parked. Replaying seq 4 advances the
+    /// watermark first, so flushing the held copy emits it exactly once.
+    func testReplayHoldAtomicallySnapshotsAndDedupesConcurrentLiveEvent() async throws {
+        let server = try InProcessWebSocketServer(script: .init(onOpen: [
+            Self.readyFrame(),
+            Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 3),
+        ]))
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
+
+        let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
+        let subscription = Task {
+            for await event in eventStream { collector.append(event) }
+        }
+        let snapshot = await transport.beginReplayHold()
+        XCTAssertEqual(snapshot["s1"], 3)
+
+        server.sendText(Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 4))
+        await waitUntil({ await transport.replayHoldBufferedBytes > 0 }, timeout: .seconds(3))
+        let heldWatermark = await transport.watermark(for: "s1")
+        XCTAssertEqual(heldWatermark, 3, "held live frames must not advance the snapshot")
+
+        let replayEvent = GatewayEvent(
+            type: .messageDelta, rawType: "message.delta", sessionID: "s1", seq: 4,
+            payload: .object(["text": .string("same event")]))
+        await transport.injectReplayedEvents([replayEvent])
+        await transport.endReplayHold()
+        await waitUntil({ collector.all.filter { $0.seq == 4 }.count == 1 }, timeout: .seconds(3))
+        XCTAssertEqual(collector.all.filter { $0.seq == 4 }.count, 1)
+        let watermark = await transport.watermark(for: "s1")
+        XCTAssertEqual(watermark, 4)
+
+        subscription.cancel()
         await transport.disconnect()
     }
 
@@ -219,6 +261,10 @@ final class ReconnectReplayTests: XCTestCase {
             "truncated": .bool(false),
             "count": .number(2),
             "epoch": .string("epoch-1"),
+            "open_requests": .array([.object([
+                "id": .string("server-request-1"),
+                "method": .string("approval.request"),
+            ])]),
         ])
         let batch = try GatewayReplayClient.decode(sessionID: "s1", result)
         XCTAssertEqual(batch.sessionID, "s1")
@@ -231,6 +277,7 @@ final class ReconnectReplayTests: XCTestCase {
         XCTAssertEqual(batch.events[0].seq, 4)
         XCTAssertEqual(batch.events[0].sessionID, "s1")
         XCTAssertEqual(batch.events[1].seq, 5)
+        XCTAssertEqual(batch.openRequests, result["open_requests"], "preserve open_requests without rewriting it")
     }
 
     func testReplayClientDecodesTruncatedBatch() throws {
@@ -245,6 +292,73 @@ final class ReconnectReplayTests: XCTestCase {
         XCTAssertTrue(batch.truncated)
         XCTAssertEqual(batch.latestSeq, 50)
         XCTAssertTrue(batch.events.isEmpty)
+    }
+
+    func testReplayClientRejectsMalformedEnvelopesAndEvents() {
+        func event(_ sessionID: String = "s1", _ seq: JSONValue = .number(4)) -> JSONValue {
+            .object([
+                "type": .string("message.delta"),
+                "session_id": .string(sessionID),
+                "seq": seq,
+            ])
+        }
+        func envelope(
+            _ events: JSONValue,
+            latest: JSONValue = .number(5),
+            truncated: JSONValue = .bool(false),
+            count: JSONValue = .number(1)
+        ) -> JSONValue {
+            .object(["events": events, "latest_seq": latest, "truncated": truncated, "count": count])
+        }
+
+        let cases: [(String, JSONValue)] = [
+            ("missing events", .object(["latest_seq": .number(5), "truncated": .bool(false), "count": .number(0)])),
+            ("events is not an array", envelope(.string("bad"))),
+            ("malformed event element", envelope(.array([.string("bad")]))),
+            ("foreign session", envelope(.array([event("s2")]))),
+            ("negative seq", envelope(.array([event("s1", .number(-1))]))),
+            ("fractional seq", envelope(.array([event("s1", .number(4.5))]))),
+            ("duplicate seq", envelope(.array([event("s1", .number(4)), event("s1", .number(4))]), latest: .number(4), count: .number(2))),
+            ("decreasing seq", envelope(.array([event("s1", .number(5)), event("s1", .number(4))]), latest: .number(5), count: .number(2))),
+            ("seq at last_seen", envelope(.array([event("s1", .number(3))]), latest: .number(3))),
+            ("count mismatch", envelope(.array([event()]), count: .number(0))),
+            ("latest below max seq", envelope(.array([event()]), latest: .number(3))),
+            ("latest does not reach complete batch", envelope(.array([event()]), latest: .number(5))),
+            ("missing truncation flag", .object(["events": .array([]), "latest_seq": .number(3), "count": .number(0)])),
+            ("missing latest_seq", .object(["events": .array([]), "truncated": .bool(false), "count": .number(0)])),
+            ("missing count", .object(["events": .array([]), "latest_seq": .number(3), "truncated": .bool(false)])),
+            ("fractional latest_seq", envelope(.array([event()]), latest: .number(5.5))),
+        ]
+
+        for (name, result) in cases {
+            XCTAssertThrowsError(
+                try GatewayReplayClient.decode(sessionID: "s1", result, lastSeen: 3),
+                "expected rejection for \(name)"
+            )
+        }
+        XCTAssertThrowsError(
+            try GatewayReplayClient.decode(
+                sessionID: "s1", envelope(.array([]), latest: .number(0), count: .number(0)), lastSeen: -1),
+            "negative last_seen must fail before replay"
+        )
+    }
+
+    func testTruncatedReplayMayCarryPartialEventsAndRetainsOpenRequests() throws {
+        let openRequests: JSONValue = .array([.object(["id": .string("opaque-id"), "method": .string("approval.request")])])
+        let result: JSONValue = .object([
+            "events": .array([.object([
+                "type": .string("message.delta"), "session_id": .string("s1"), "seq": .number(4),
+            ])]),
+            "latest_seq": .number(10),
+            "truncated": .bool(true),
+            "count": .number(10),
+            "open_requests": openRequests,
+        ])
+        let batch = try GatewayReplayClient.decode(sessionID: "s1", result, lastSeen: 3)
+        XCTAssertTrue(batch.truncated)
+        XCTAssertEqual(batch.events.count, 1)
+        XCTAssertEqual(batch.count, 10)
+        XCTAssertEqual(batch.openRequests, openRequests)
     }
 
     func testReplayClientSendsSessionIDAndLastSeen() async throws {
@@ -299,13 +413,14 @@ final class ReconnectReplayTests: XCTestCase {
                 return []
             }
         )
-        // Connection 2 (reconnect): same epoch, answers session.events.since.
+        // Connection 2 (reconnect): the live seq 4 races the replay response,
+        // which also contains seq 4. The hold must forward exactly one copy.
         let second = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
             onText: { frame in
                 guard let (id, method) = Self.extractRequest(frame) else { return [] }
                 if method == "session.events.since" {
-                    return [Self.sinceResponse(
+                    return [Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 4), Self.sinceResponse(
                         id: id,
                         events: [
                             Self.bareEvent(type: "message.delta", sessionID: "s1", seq: 4, payload: ["text": "c"]),
@@ -384,14 +499,70 @@ final class ReconnectReplayTests: XCTestCase {
         await transport.disconnect()
     }
 
-    /// spec §9.3 "deduplicate replay overlap": even if `session.events.since`
-    /// returns events at/below the watermark, they are dropped — never
-    /// re-applied.
-    func testReplayDedupesOverlap() async throws {
+    func testCancellingReplayEndsHoldAndForwardsSubsequentLiveEvent() async throws {
+        let first = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame(), Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 3)]
+        )
+        let captured = ReplayParamCapture()
+        let second = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (_, method) = Self.extractRequest(frame), method == "session.events.since",
+                      let data = frame.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return [] }
+                captured.record(object["params"] as? [String: Any] ?? [:])
+                return [] // hold the RPC open until the replay task is cancelled
+            }
+        )
+        let server = try InProcessWebSocketServer(scripts: [first, second])
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
+        let engine = GatewayReplayEngine(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport, history: StubHistoryProvider())
+        _ = try await engine.replayAfterReconnect()
+
+        server.abortConnection()
+        await waitUntil({ transport.state != .connected }, timeout: .seconds(3))
+        try await transport.connect()
+
+        let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
+        let subscription = Task {
+            for await event in eventStream { collector.append(event) }
+        }
+        let replay = Task { try await engine.replayAfterReconnect() }
+        await waitUntil({ captured.sessionID == "s1" }, timeout: .seconds(3))
+        replay.cancel()
+        do {
+            _ = try await replay.value
+            XCTFail("cancelling an in-flight replay should propagate cancellation")
+        } catch is CancellationError {
+            // Expected: cancellation removes the pending RPC and releases the hold.
+        }
+
+        server.sendText(Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 4))
+        await waitUntil({ collector.all.filter { $0.seq == 4 }.count == 1 }, timeout: .seconds(3))
+        XCTAssertEqual(collector.all.filter { $0.seq == 4 }.count, 1)
+        let finalWatermark = await transport.watermark(for: "s1")
+        XCTAssertEqual(finalWatermark, 4)
+        subscription.cancel()
+        await transport.disconnect()
+    }
+
+    /// Strict replay rejects an overlapping batch as a whole, refetches
+    /// authoritative history, and neither injects the partial batch nor
+    /// advances its watermark.
+    func testInvalidReplayOverlapRefetchesHistoryWithoutAdvancingWatermark() async throws {
         let first = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame(), Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 1)]
         )
-        // since returns seq 1 (overlap!) and 2 — the engine must drop 1.
+        // since returns seq 1 at/below the watermark plus seq 2. It is not a
+        // coherent complete batch, so neither event may be injected.
         let second = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
             onText: { frame in
@@ -416,10 +587,11 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
         await waitUntil({ await transport.watermark(for: "s1") == 1 }, timeout: .seconds(3))
 
+        let historyStub = StubHistoryProvider()
         let engine = GatewayReplayEngine(
             gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
-            history: StubHistoryProvider()
+            history: historyStub
         )
         _ = try await engine.replayAfterReconnect() // first connect: adopt
 
@@ -433,15 +605,17 @@ final class ReconnectReplayTests: XCTestCase {
             for await event in eventStream { collector.append(event) }
         }
         let outcomes = try await engine.replayAfterReconnect()
-        XCTAssertEqual(outcomes, [.replayed(sessionID: "s1", count: 1)],
-                       "only the strictly-newer event is counted as replayed")
-        await waitUntil({ collector.all.filter { $0.seq == 2 }.count == 1 }, timeout: .seconds(3))
+        guard case .failed(let failedSession, let detail)? = outcomes.first else {
+            return XCTFail("malformed overlap must surface an explicit failed outcome: \(outcomes)")
+        }
+        XCTAssertEqual(failedSession, "s1")
+        XCTAssertTrue(detail.contains("malformed replay payload"))
+        XCTAssertTrue(historyStub.historyRequestedForS1, "invalid batches must trigger authoritative history refetch")
         subscription.cancel()
 
-        let replayed = collector.all.filter { $0.seq != nil && $0.seq != 1 }
-        XCTAssertEqual(replayed.map(\.seq), [2], "overlap seq 1 must be dropped; only seq 2 applied")
-        let wmDedupe = await transport.watermark(for: "s1")
-        XCTAssertEqual(wmDedupe, 2)
+        XCTAssertTrue(collector.all.filter { $0.seq != nil }.isEmpty, "invalid replay events must not be forwarded")
+        let watermark = await transport.watermark(for: "s1")
+        XCTAssertEqual(watermark, 1, "validation failure must not advance the watermark")
 
         await transport.disconnect()
     }
@@ -514,7 +688,7 @@ final class ReconnectReplayTests: XCTestCase {
         // Pre-rendered (id-less) body: the closure may only capture Sendable values.
         let oversizedBody = try XCTUnwrap(String(
             data: JSONSerialization.data(withJSONObject: [
-                "events": oversizedEvents, "latest_seq": 99_999,
+                "events": oversizedEvents, "latest_seq": 5_004,
                 "truncated": false, "count": oversizedEvents.count, "epoch": "epoch-1",
             ]), encoding: .utf8))
         let second = InProcessWebSocketServer.Script(

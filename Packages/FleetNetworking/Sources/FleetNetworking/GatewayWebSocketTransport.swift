@@ -474,15 +474,17 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     // MARK: P4 — replay hold
 
-    /// Park inbound event frames for watermarked sessions until
-    /// `endReplayHold()` is called. Used by the replay engine so a replayed
-    /// `session.events.since` batch can be injected in order before live
-    /// frames resume (spec §10 "park live frames during replay").
-    public func beginReplayHold() {
+    /// Atomically park inbound event frames and capture the watermark snapshot
+    /// used by replay. Because both operations happen in one actor turn, a
+    /// live frame cannot advance a watermark after the snapshot but before the
+    /// hold begins.
+    @discardableResult
+    public func beginReplayHold() -> [String: Int] {
         replayHoldActive = true
         replayHoldBuffer.removeAll()
         replayHoldOverflowSessions.removeAll()
         replayHoldBytes = 0
+        return sessionWatermarks
     }
 
     /// Resume forwarding, flushing parked frames seq-gated: frames with
@@ -573,27 +575,40 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let frame = JSONRPCRequest(id: id, method: method, params: params)
         let line = try JSONRPCCodec.encode(.request(frame))
 
-        let result = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, any Error>) in
-            pendingRequests[id] = cont
-            // Send on a detached task so a send failure can fail the pending
-            // continuation rather than leaving it dangling.
-            Task { [weak self] in
-                guard let self else {
-                    cont.resume(throwing: TransportError.transportFailure("transport deallocated"))
+        let result = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, any Error>) in
+                // Cancellation can race continuation registration. Check
+                // inside the synchronous registration closure as well; after
+                // this point the actor-isolated pending map is visible to the
+                // cancellation handler's actor hop.
+                guard !Task.isCancelled else {
+                    cont.resume(throwing: CancellationError())
                     return
                 }
-                do {
-                    try await session.send(.text(line))
-                } catch {
-                    await self.failPending(id: id, error: TransportError.transportFailure("send failed: \(Redaction.safeErrorDescription(error))"))
+                pendingRequests[id] = cont
+                // Send on a detached task so a send failure can fail the pending
+                // continuation rather than leaving it dangling.
+                Task { [weak self] in
+                    guard let self else {
+                        cont.resume(throwing: TransportError.transportFailure("transport deallocated"))
+                        return
+                    }
+                    do {
+                        try await session.send(.text(line))
+                    } catch {
+                        await self.failPending(id: id, error: TransportError.transportFailure("send failed: \(Redaction.safeErrorDescription(error))"))
+                    }
+                }
+                // Timeout race: fail the pending continuation if no response
+                // arrived within requestTimeout.
+                Task { [weak self, config] in
+                    try? await Task.sleep(for: config.requestTimeout)
+                    await self?.failPending(id: id, error: TransportError.requestTimeout)
                 }
             }
-            // Timeout race: fail the pending continuation if no response
-            // arrived within requestTimeout.
-            Task { [weak self, config] in
-                try? await Task.sleep(for: config.requestTimeout)
-                await self?.failPending(id: id, error: TransportError.requestTimeout)
-            }
+        } onCancel: {
+            Task { await self.failPending(id: id, error: CancellationError()) }
         }
         // P0.1 reconnect contract: `session.resume` / `session.activate` /
         // `session.events.since` answer with `open_requests` — the server→
