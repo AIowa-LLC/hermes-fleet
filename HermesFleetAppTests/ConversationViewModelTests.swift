@@ -973,7 +973,12 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.requestCancelled(
             sessionID: "s-1", requestID: "srq-clarify1", method: "clarify", reason: "timeout", seq: 2))
         scripted.push(.messageDelta(sessionID: "s-1", text: "hi", rendered: nil, seq: 3))
-        await flush()
+        // Events apply in order, so once seq 3's text is on screen the cancel
+        // at seq 2 has been handled too. A fixed sleep raced CI load.
+        let drained = await waitUntil(timeout: .seconds(5)) {
+            viewModel.transcript.contains { $0.text.contains("hi") }
+        }
+        XCTAssertTrue(drained, "the scripted events through seq 3 must apply")
 
         XCTAssertTrue(scripted.resumeEventsRequests.isEmpty, "seq 1,2,3 is contiguous: no gap recovery")
         XCTAssertNil(viewModel.serverPromptViewModel?.pending)
