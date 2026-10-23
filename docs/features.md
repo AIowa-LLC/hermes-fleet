@@ -176,6 +176,26 @@ Kanban is read-only when a gateway has no board operator. When that capability
 is available, the client sends task creation, updates, and bulk changes to the
 gateway; failed writes do not appear as successful local changes.
 
+## Approval notifications (local)
+
+Settings > Notifications turns on on-device notifications for new inbox items
+(approvals, questions, and sudo or secret prompts). Off by default.
+
+- One notification per new pending request. A re-delivered request does not
+  notify again, and a resolved request's notification is removed.
+- Lock-screen text is generic: "<agent> needs your approval". "Show request
+  details" adds a shortened command, and it is hidden while App Lock is on.
+- Approval notifications have two actions. **Deny** is sent in the background
+  and needs the gateway connection to be open; if it cannot be sent, the
+  notification says so and a tap opens the item. **Review** opens the item in
+  the app at `hermes-fleet://inbox?item=<id>` (`hermes-fleet-dev` in Fleet Dev).
+- **Approve is not a notification action.** Approving needs the full review of a
+  long command and a Face ID or passcode check, and both happen in the app.
+- Questions, sudo, and secret prompts open the item when tapped. They have no
+  actions, because an answer needs the typed value.
+- Build 99 has local notifications only. Remote push (the relay described in
+  `docs/notification-routing.md`) is deferred.
+
 ## Settings and About
 
 Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and server connection setup. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.

@@ -30,6 +30,12 @@ struct HermesFleetApp: App {
     @State private var watchLink = FleetWatchLink()
     #endif
 
+    init() {
+        // B3: installed before the first scene so a cold-launch notification
+        // tap is delivered. Requests no permission.
+        FleetNotificationRouter.shared.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             FleetThemeRoot(controller: themeController) {
@@ -65,6 +71,9 @@ struct HermesFleetApp: App {
             .task {
                 HermesFleetShortcuts.updateAppShortcutParameters()
                 FleetMetricKitSubscriber.shared.register() // F0: on-device only
+                // B3: local approval notifications observe the inbox from here on.
+                await environment.inboxNotifications.start()
+                FleetNotificationRouter.shared.attach(environment.inboxNotifications)
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
@@ -87,6 +96,7 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            environment.inboxNotifications.setAppActive(phase == .active)
             #if FLEET_DEV
             watchLink.scenePhaseChanged(phase, environment: environment, lock: lockController)
             #endif

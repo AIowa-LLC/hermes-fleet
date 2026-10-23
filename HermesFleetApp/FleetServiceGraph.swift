@@ -280,6 +280,10 @@ enum FleetServiceGraph {
             biometrics: makeApprovalBiometrics(),
             liveOpsFactory: makeLiveOpsFactory(credentialStore: credentialStore, pinStore: pinStore),
             inboxHistory: FileInboxHistoryStore(),
+            // B3: local approval notifications (system in release; scripted
+            // in the DEBUG simulator so tests never see a permission prompt).
+            localNotifier: makeLocalNotifier(),
+            inboxURLScheme: FleetAppIdentity.current.conversationURLScheme,
             seedRegistrations: [],
             // R10-T4: the REAL on-device voice engine (Speech framework STT +
             // AVSpeechSynthesizer TTS) — a documented client-side deviation:
@@ -359,6 +363,16 @@ enum FleetServiceGraph {
     /// DEBUG SIMULATOR only (deterministic UI tests via
     /// `HERMES_FLEET_APPROVAL_BIOMETRIC`: `success` default, `fail`,
     /// `unavailable`).
+    /// B3: the local notifier. Release posts through UNUserNotificationCenter;
+    /// the DEBUG simulator records posts in process instead.
+    static func makeLocalNotifier() -> any FleetLocalNotifier {
+        #if DEBUG && targetEnvironment(simulator)
+        return ScriptedLocalNotifier()
+        #else
+        return SystemLocalNotifier()
+        #endif
+    }
+
     static func makeApprovalBiometrics() -> any AppLockBiometricAuth {
         #if DEBUG && targetEnvironment(simulator)
         switch ProcessInfo.processInfo.environment["HERMES_FLEET_APPROVAL_BIOMETRIC"] {

@@ -292,6 +292,13 @@ public final class AppEnvironment {
         requestScreen(.inbox)
     }
 
+    /// B3: local notifications for new inbox items. Off until the user opts in
+    /// in Settings; the composition root starts it.
+    public let inboxNotifications: InboxNotificationCoordinator
+    /// Synced from `connectionStates` changes; set at the end of init so the
+    /// observer cannot run before `inbox` exists.
+    @ObservationIgnored private var inboxSync: (@MainActor () -> Void)?
+
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
     /// 30-day retention, pruned when a gateway is removed. No secrets.
@@ -703,6 +710,8 @@ public final class AppEnvironment {
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         liveOpsFactory: FleetLiveOpsFactory? = nil,
         inboxHistory: (any InboxHistoryStoring)? = nil,
+        localNotifier: (any FleetLocalNotifier)? = nil,
+        inboxURLScheme: String = "hermes-fleet",
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
@@ -791,9 +800,15 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
-        self.inbox = InboxStore(
+        let inboxStore = InboxStore(
             history: inboxHistory ?? InMemoryInboxHistoryStore(),
             biometrics: biometrics)
+        self.inbox = inboxStore
+        self.inboxNotifications = InboxNotificationCoordinator(
+            inbox: inboxStore,
+            notifier: localNotifier ?? UnavailableLocalNotifier(),
+            settings: InboxNotificationSettingsStore(),
+            urlScheme: inboxURLScheme)
         artifactImages.protectionReporter = { failure in
             diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
         }
