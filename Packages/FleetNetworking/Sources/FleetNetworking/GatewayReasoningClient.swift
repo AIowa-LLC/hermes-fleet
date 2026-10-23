@@ -44,7 +44,7 @@ public struct GatewayReasoningClient: ReasoningProviding {
             "session_id": .string(sessionID),
         ])
         do {
-            let result = try await transport.request(method: "config.get", params: params)
+            let result = try await transport.readRequest(method: "config.get", params: params)
             // `_cfg_get_reasoning` always carries `value` (defaults
             // "medium"); a missing/empty value is a malformed payload,
             // never a guess.
@@ -124,8 +124,8 @@ public struct GatewayReasoningClient: ReasoningProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .rpcFailed(GatewayRequestCatalog.timeoutMessage(forMethod: method))
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

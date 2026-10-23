@@ -82,7 +82,7 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         let rows: [JSONValue]
         do {
             try await ensureTransportConnected()
-            let result = try await transport.request(method: "session.active_list", params: .object([:]))
+            let result = try await transport.readRequest(method: "session.active_list", params: .object([:]))
             guard let reportedRows = result["sessions"]?.arrayValue else {
                 return LiveOpsGatewaySnapshot(
                     gatewayID: gatewayID, coverage: .failed(reason: "Malformed live session response"),
@@ -140,7 +140,7 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
     /// "delegation status unavailable this refresh."
     private func fetchSubagentsByOwner() async -> [String: [LiveOpsSubagent]]? {
         do {
-            let result = try await transport.request(method: "delegation.status", params: .object([:]))
+            let result = try await transport.readRequest(method: "delegation.status", params: .object([:]))
             guard let rows = result["active"]?.arrayValue else { return nil }
             var grouped: [String: [LiveOpsSubagent]] = [:]
             for row in rows.prefix(Self.maxSubagentRows) {
@@ -160,7 +160,7 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
             try await ensureTransportConnected()
-            let result = try await transport.request(method: "subagent.list", params: params)
+            let result = try await transport.readRequest(method: "subagent.list", params: params)
             let rows = result["subagents"]?.arrayValue ?? []
             return rows.prefix(Self.maxSubagentRows).compactMap(Self.decodeSubagent)
         } catch let error as JSONRPCError {
@@ -181,7 +181,7 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         ])
         do {
             try await ensureTransportConnected()
-            let result = try await transport.request(method: "subagent.tail", params: params)
+            let result = try await transport.readRequest(method: "subagent.tail", params: params)
             return LiveOpsSubagentTail(
                 available: result["available"]?.boolValue ?? false,
                 text: result["text"]?.stringValue ?? "",

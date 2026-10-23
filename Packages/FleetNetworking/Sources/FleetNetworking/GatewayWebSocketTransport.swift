@@ -10,7 +10,9 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     case unableToBuildURL
     case connectTimeout
     case readyTimeout
-    case requestTimeout
+    /// A JSON-RPC request got no response within its timeout. `method` names
+    /// the RPC so callers can say what timed out.
+    case requestTimeout(method: String)
     case connectionClosed(DisconnectReason)
     case transportFailure(String)
     /// Authentication (ticket mint / loopback token lookup) failed before the
@@ -32,7 +34,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .unableToBuildURL: return "unable to build WebSocket URL"
         case .connectTimeout: return "WebSocket connect timed out"
         case .readyTimeout: return "gateway.ready handshake timed out"
-        case .requestTimeout: return "request timed out"
+        case .requestTimeout(let method): return "request timed out: \(method)"
         case .connectionClosed(let r): return "connection closed: \(r.debugDescription)"
         case .transportFailure(let s): return "transport failure: \(s)"
         case .authenticationFailed(let s): return "authentication failed: \(s)"
@@ -581,6 +583,47 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// yields a classification (`requestTimeout` / `connectionClosed`) instead
     /// of a hung caller, and a late response to a timed-out request is a no-op.
     public func request(method: String, params: JSONValue? = nil) async throws -> JSONValue {
+        try await send(method: method, params: params, timeout: config.requestTimeout)
+    }
+
+    /// `request` for idempotent reads: a timed-out attempt is retried under
+    /// `RequestRetryPolicy.idempotentRead` (3 attempts, bounded backoff). A
+    /// method outside `GatewayRequestCatalog.idempotentReads` is sent once.
+    /// Use `request` for every send, approval, config write, or session
+    /// mutation so a timeout is never repeated silently.
+    public func readRequest(method: String, params: JSONValue? = nil) async throws -> JSONValue {
+        try await readRequest(
+            method: method,
+            params: params,
+            policy: .idempotentRead,
+            sleep: { try await Task.sleep(for: $0) },
+            jitter: { Double.random(in: 0...1) }
+        )
+    }
+
+    /// Seam for `readRequest` with an injectable policy, sleep, and jitter.
+    func readRequest(
+        method: String,
+        params: JSONValue?,
+        policy: RequestRetryPolicy,
+        sleep: @escaping @Sendable (Duration) async throws -> Void,
+        jitter: @escaping @Sendable () -> Double
+    ) async throws -> JSONValue {
+        try await RequestRetry.run(
+            method: method,
+            policy: policy,
+            sleep: sleep,
+            jitter: jitter
+        ) { attemptTimeout in
+            try await self.send(
+                method: method,
+                params: params,
+                timeout: attemptTimeout ?? self.config.requestTimeout
+            )
+        }
+    }
+
+    private func send(method: String, params: JSONValue?, timeout: Duration) async throws -> JSONValue {
         guard connectionState == .open else {
             throw TransportError.invalidState("request from \(connectionState)")
         }
@@ -620,10 +663,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
                     }
                 }
                 // Timeout race: fail the pending continuation if no response
-                // arrived within requestTimeout.
-                Task { [weak self, config] in
-                    try? await Task.sleep(for: config.requestTimeout)
-                    await self?.failPending(id: id, error: TransportError.requestTimeout)
+                // arrived within this attempt's timeout.
+                Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    await self?.failPending(id: id, error: TransportError.requestTimeout(method: method))
                 }
             }
         } onCancel: {

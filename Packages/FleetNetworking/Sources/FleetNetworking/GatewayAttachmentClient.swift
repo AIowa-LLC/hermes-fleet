@@ -206,8 +206,8 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .rpcFailed(GatewayRequestCatalog.timeoutMessage(forMethod: method))
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

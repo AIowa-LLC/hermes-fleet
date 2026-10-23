@@ -30,7 +30,7 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         guard case .connected = transport.state else { throw SessionHistoryError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
-            let result = try await transport.request(method: "session.history", params: params)
+            let result = try await transport.readRequest(method: "session.history", params: params)
             return try Self.decodeHistory(sessionID: sessionID, result)
         } catch let error as SessionHistoryError {
             // Decode-level failures (malformed payload) pass through unchanged.
@@ -52,7 +52,7 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         guard case .connected = transport.state else { throw SessionHistoryError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
-            let result = try await transport.request(method: "session.status", params: params)
+            let result = try await transport.readRequest(method: "session.status", params: params)
             return try Self.decodeStatus(sessionID: sessionID, result)
         } catch let error as SessionHistoryError {
             // Decode-level failures (malformed payload) pass through unchanged.
@@ -179,8 +179,8 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .requestTimedOut(method: method)
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

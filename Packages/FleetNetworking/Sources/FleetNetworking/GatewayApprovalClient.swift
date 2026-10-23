@@ -125,7 +125,7 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         try await ensureConnected()
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
-            let result = try await transport.request(method: "approval.pending", params: params)
+            let result = try await transport.readRequest(method: "approval.pending", params: params)
             let rows = result["approvals"]?.arrayValue ?? []
             // Same tolerant decode as the push event: rows without a
             // request_id are dropped (never surfaced, never fatal).
@@ -189,8 +189,8 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .rpcFailed(GatewayRequestCatalog.timeoutMessage(forMethod: method))
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

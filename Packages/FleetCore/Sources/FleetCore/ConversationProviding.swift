@@ -113,11 +113,16 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
     /// lineage size the gateway reported, when it was parseable. Recoverable by
     /// resuming with `omitMessages: true` and paging history.
     case sessionTooLongToReload(messageCount: Int?)
+    /// The gateway did not answer the RPC in time. `method` is the JSON-RPC
+    /// method that timed out; the user-facing sentence comes from
+    /// `GatewayRequestCatalog`.
+    case requestTimedOut(method: String)
 
     public var errorDescription: String? {
         switch self {
         case .notConnected: return "gateway not connected"
         case .malformedPayload(let s): return "malformed conversation payload: \(s)"
+        case .requestTimedOut(let method): return GatewayRequestCatalog.timeoutMessage(forMethod: method)
         case .rpcFailed(let s): return "conversation RPC failed: \(s)"
         case .sessionNotFound(let s): return "session not found: \(s)"
         case .invalidRequest(let s): return "invalid conversation request: \(s)"
