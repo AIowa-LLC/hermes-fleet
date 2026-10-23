@@ -1978,6 +1978,13 @@ enum ConversationHeaderChips {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: FleetTheme.spacingSm) {
                 modelChipButton(model)
+                // Reasoning level beside the model it applies to. Hidden when
+                // the session has no reasoning seam (honest absence).
+                if let reasoningModel = model.reasoningViewModel {
+                    ReasoningHeaderChip(model: reasoningModel) {
+                        showingReasoningSlider = true
+                    }
+                }
                 folderChip(model)
                 if let toolingModel = model.toolingViewModel {
                     ContextMeterView(model: toolingModel) {
