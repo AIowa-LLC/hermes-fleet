@@ -407,6 +407,8 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
             request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
         case .cookie(let cookie):
             request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
+        case .bearer(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         let data: Data

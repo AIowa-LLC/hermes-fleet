@@ -48,6 +48,7 @@ struct GatewayAuthSheet: View {
                         if strategy == .deviceCredential {
                             Text("Fleet Device (managed)").tag(GatewayAuthConfiguration.Strategy.deviceCredential)
                         }
+                        Text("Sign in with OAuth").tag(GatewayAuthConfiguration.Strategy.oauthNative)
                     }
                     .accessibilityIdentifier("fleet.gateways.auth.strategy")
                     .disabled(strategy == .deviceCredential)
@@ -95,6 +96,23 @@ struct GatewayAuthSheet: View {
                             .disabled(isBusy)
                             .accessibilityIdentifier("fleet.gateways.auth.clear-token")
                     }
+                    if strategy == .oauthNative {
+                        Button {
+                            signInWithOAuth()
+                        } label: {
+                            if isBusy {
+                                ProgressView()
+                            } else {
+                                Label(credentialStored ? "Sign In Again" : "Continue with OAuth", systemImage: "person.crop.circle.badge.checkmark")
+                            }
+                        }
+                        .disabled(isBusy)
+                        .accessibilityIdentifier("fleet.gateways.auth.oauth-sign-in")
+                        Text("Sign-in opens the system browser. Tokens stay in Keychain and are never shown. If native sign-in is unsupported, canceled, or unavailable, choose another existing strategy above.")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                            .accessibilityIdentifier("fleet.gateways.auth.oauth-hint")
+                    }
                 }
 
                 if let errorText {
@@ -129,7 +147,7 @@ struct GatewayAuthSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword, .deviceCredential: return false
+        case .usernamePassword, .deviceCredential, .oauthNative: return false
         }
     }
 
@@ -191,6 +209,20 @@ struct GatewayAuthSheet: View {
         }
     }
 
+    private func signInWithOAuth() {
+        isBusy = true
+        errorText = nil
+        Task {
+            do {
+                try await environment.signInWithNativeOAuth(for: gatewayID)
+                credentialStored = true
+            } catch {
+                errorText = GatewaysView.describe(error)
+            }
+            isBusy = false
+        }
+    }
+
     private func clearCredential() {
         isBusy = true
         errorText = nil
@@ -198,6 +230,7 @@ struct GatewayAuthSheet: View {
             do {
                 try await environment.clearCredential(for: gatewayID)
                 credentialStored = false
+                strategy = .none
             } catch {
                 errorText = GatewaysView.describe(error)
             }

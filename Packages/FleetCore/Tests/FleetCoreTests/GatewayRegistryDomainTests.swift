@@ -18,7 +18,7 @@ final class GatewayRegistryDomainTests: XCTestCase {
     func testAuthConfigurationStrategyCases() {
         XCTAssertEqual(
             Set(GatewayAuthConfiguration.Strategy.allCases),
-            Set([.none, .sessionToken, .bearerToken, .loopbackToken, .usernamePassword, .deviceCredential]))
+            Set([.none, .sessionToken, .bearerToken, .loopbackToken, .usernamePassword, .deviceCredential, .oauthNative]))
     }
 
     func testAuthConfigurationCodableRoundTrip() throws {

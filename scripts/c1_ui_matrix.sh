@@ -86,6 +86,8 @@ UI_CLASSES=(
   # DEV19 #188: long Bot Chats open newest-first and page older history
   # (scripted 25,000-message fixture; no live gateway).
   LongChatPaging
+  # Build 99 native OAuth entry-point fallback (deterministic settings UI).
+  NativeOAuthSettings
 )
 
 # C1 measured suite runtimes, rounded up to tenths of a minute. Source:
@@ -98,7 +100,7 @@ UI_WEIGHT_TENTHS_OF_MINUTE=(
   72 29 35 70 72 70 96 82 84 40 170 139
   80 101 54 46 112 91 48 87 70 60 29 99
   52 49 64 46 46 58 176 51 54 43 25 58
-  40 30
+  40 30 30
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

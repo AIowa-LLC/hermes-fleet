@@ -32,6 +32,17 @@ public typealias FleetConversationFactory = @Sendable (
     _ credential: GatewayCredential?
 ) -> any ConversationSessionProviding
 
+/// Starts native OAuth for a gateway. Browser presentation stays in the app
+/// target; FleetUI only invokes this injected handler.
+public typealias FleetNativeOAuthSignInHandler = @MainActor @Sendable (
+    _ gateway: FleetGateway
+) async throws -> Void
+
+/// Deletes the gateway's native OAuth token pair from secure storage.
+public typealias FleetNativeOAuthSignOutHandler = @Sendable (
+    _ gatewayID: GatewayID
+) async throws -> Void
+
 /// Builds a per-gateway kanban board watcher (t_3b321b7b). Lives in FleetUI
 /// for the same M0-guard reason as the factories above: SwiftUI depends only
 /// on the FleetCore `KanbanBoardWatching` seam — never on the transport
@@ -476,6 +487,8 @@ public final class AppEnvironment {
     private let tlsPinStore: (any TLSPinStoring)?
     private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
     private let tlsKeyProbe: (any TLSKeyProbing)?
+    private let nativeOAuthSignIn: FleetNativeOAuthSignInHandler?
+    private let nativeOAuthSignOut: FleetNativeOAuthSignOutHandler?
     /// ADR-0012: the launch cache (last-good roster + session lists).
     /// Defaults to an in-memory store; the composition root injects the
     /// SwiftData-backed concrete. Structurally non-secret.
@@ -681,7 +694,9 @@ public final class AppEnvironment {
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
         recoveryTiming: ConnectionRecoveryTiming = .standard,
         ownerEnrollment: (any OwnerEnrollmentProviding)? = nil,
-        pairingService: (any GatewayPairing)? = nil
+        pairingService: (any GatewayPairing)? = nil,
+        nativeOAuthSignIn: FleetNativeOAuthSignInHandler? = nil,
+        nativeOAuthSignOut: FleetNativeOAuthSignOutHandler? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -736,6 +751,8 @@ public final class AppEnvironment {
         self.recoveryTiming = recoveryTiming
         self.ownerEnrollment = ownerEnrollment
         self.pairingService = pairingService
+        self.nativeOAuthSignIn = nativeOAuthSignIn
+        self.nativeOAuthSignOut = nativeOAuthSignOut
         self.pairing = PairingCoordinator(service: pairingService)
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
@@ -3118,8 +3135,27 @@ public final class AppEnvironment {
         await reloadGateways()
     }
 
+    /// Run native browser sign-in and persist its non-secret configured flag.
+    public func signInWithNativeOAuth(for id: GatewayID) async throws {
+        guard let gateway = gateway(for: id) else { throw GatewayRegistryError.notFound(id) }
+        guard let nativeOAuthSignIn else {
+            throw NativeOAuthError.internalError("Native sign-in is unavailable")
+        }
+        try await nativeOAuthSignIn(gateway)
+        _ = try await updateGateway(
+            id,
+            edits: GatewayEdit(authConfiguration: GatewayAuthConfiguration(
+                strategy: .oauthNative, credentialStored: true)))
+    }
+
     /// Clear the stored credential for a gateway (no-op when absent).
     public func clearCredential(for id: GatewayID) async throws {
+        if gateway(for: id)?.authConfiguration.strategy == .oauthNative {
+            guard let nativeOAuthSignOut else {
+                throw NativeOAuthError.internalError("Native sign-out is unavailable")
+            }
+            try await nativeOAuthSignOut(id)
+        }
         try await registry.clearCredential(for: id)
         await gatewaySessionInvalidator?(id)
         await reloadGateways()

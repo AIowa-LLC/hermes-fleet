@@ -35,6 +35,8 @@ public struct GatewayArtifactClient: ArtifactRetrieving {
         case none
         case sessionTokenHeader(String)
         case cookie(SessionCookie)
+        /// Native OAuth access token, sent as `Authorization: Bearer`.
+        case bearer(String)
     }
 
     private let credential: @Sendable () async throws -> HTTPCredential
@@ -95,6 +97,8 @@ public struct GatewayArtifactClient: ArtifactRetrieving {
             request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
         case .cookie(let cookie):
             request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
+        case .bearer(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         let outcome = await channel.transfer(request)
