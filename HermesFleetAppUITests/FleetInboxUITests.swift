@@ -76,7 +76,14 @@ final class FleetInboxUITests: XCTestCase {
                            "the drawer row carries no pending count when nothing is waiting")
         }
         for _ in 0..<4 {
-            row.tap()
+            // The row can report not hittable while the drawer is presenting
+            // (XCTest's hit point is not yet the row). Tap its center then, as
+            // UITabNavigation's drawer destination helper does.
+            if row.isHittable {
+                row.tap()
+            } else {
+                row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
             usleep(700_000)
             if firstMatch(app, "fleet.inbox").waitForExistence(timeout: 3) { return }
             if !app.buttons["fleet.drawer.open"].exists { break }
@@ -136,6 +143,13 @@ final class FleetInboxUITests: XCTestCase {
 
         let approve = firstMatch(app, "fleet.inbox.detail.approve")
         XCTAssertTrue(approve.waitForExistence(timeout: 10), "Approve once is offered")
+        // Approve is disabled until the gateway reports connected. Wait for the
+        // enabled state (bounded) instead of tapping a control that is still
+        // disabled, which silently does nothing.
+        let enabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"), object: approve)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed,
+                       "Approve once must become enabled once the gateway is connected")
         approve.tap()
 
         XCTAssertTrue(firstMatch(app, "fleet.inbox.section.history").waitForExistence(timeout: 15),

@@ -146,12 +146,19 @@ struct HermesFleetApp: App {
 
     private func connectScriptedLiveOpsIfNeeded() async {
         #if DEBUG && targetEnvironment(simulator)
-        guard scenePhase == .active, !lockController.isLocked,
-              ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" else { return }
+        guard scenePhase == .active, !lockController.isLocked else { return }
         // Preserve the connected-only synthetic fixture whether authentication
         // settles in the initial task or in a later active/unlock transition.
-        for id in ["workstation", "render-box", "arch"] {
-            await environment.connect(to: GatewayID(rawValue: id))
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" {
+            for id in ["workstation", "render-box", "arch"] {
+                await environment.connect(to: GatewayID(rawValue: id))
+            }
+        }
+        // The inbox fixture's approval is answerable only while its gateway is
+        // connected (Approve is disabled offline). Connect the scripted
+        // workstation for the connected fixture; the offline knob skips this.
+        if ScriptedInboxFixture.seeded, !ScriptedInboxFixture.offline {
+            await environment.connect(to: ScriptedInboxFixture.gatewayID)
         }
         #endif
     }
