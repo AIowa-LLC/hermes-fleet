@@ -2,34 +2,35 @@ import Foundation
 import Observation
 import FleetCore
 
-/// Builds the inbox feed for ONE gateway (the concrete transport-backed feed
-/// is constructed at the composition root). `nil` when the gateway has no
-/// endpoint (fail closed: that gateway contributes no inbox items).
-public typealias FleetInboxFeedFactory = @Sendable (_ gateway: FleetGateway) -> (any InboxGatewayFeed)?
-
 /// Phase B — the app-level approvals inbox.
 ///
-/// Lives for the app's lifetime (it is NOT per conversation). Every attached
-/// gateway feeds it: live server requests, legacy `approval.request` events,
-/// and `request.cancel` withdrawals from ALL sessions. It reconciles against
-/// `approval.pending` on refresh, so an item survives a relaunch while still
-/// pending.
+/// Lives for the app's lifetime. It opens NO connection of its own. It learns
+/// about requests from sources the app already has:
+/// - open conversations: each registers its answer seams (`registerSource`) and
+///   forwards the server requests, legacy `approval.request` events, and
+///   `request.cancel` withdrawals it receives (`record`). Live delivery for a
+///   session is therefore only as complete as the conversation transports the
+///   app currently holds.
+/// - the Live Ops `approval.pending` poll (`setPollSource`): cross-session
+///   discovery. It runs only while Home or an Operation Detail polls, so an
+///   approval on a session that is not open and not being polled is seen on the
+///   next poll or refresh, not instantly.
 ///
 /// Rules this store enforces:
 /// - Identity: an item is keyed by gateway + session + request id, so the same
-///   request from a conversation banner, a re-delivery, or a second path is ONE
-///   item (see `InboxItemID`).
-/// - Withdrawal is never a denial. `request.cancel` → `.cancelled`, nothing sent.
+///   request from a conversation and from the poll is ONE item.
+/// - Answering: a server request (`srq-`) is answered ONLY on the source that
+///   delivered it. A legacy approval may be answered by the poll source
+///   (`approval.respond`). If the source is gone the decision fails with
+///   `.gatewayUnavailable` and nothing is sent.
+/// - Withdrawal is never a denial. `request.cancel` → `.cancelled`.
 /// - Approve needs (1) full review of a long command and (2) a verified user
-///   presence check (`AppLockBiometricAuth`, the same gate the banner uses),
-///   both BEFORE anything reaches the wire. Deny is ungated.
-/// - A gateway that is not attached cannot be answered: `.gatewayUnavailable`.
-/// - Every decision attempt is audited with its outcome. Values (answers,
-///   secrets) are never audited, stored, or logged.
-/// - Banner ↔ inbox agreement: a decision made on a conversation banner is
-///   reported via `noteConversationDecision`, and every pending → terminal
-///   transition is published on `resolutions()` so an open banner dismisses
-///   the same request.
+///   presence check before any wire call. Deny is ungated.
+/// - Every decision attempt is audited with its outcome. Answer values and
+///   secrets are never audited, stored, or logged.
+/// - Banner ↔ inbox agreement: a banner or prompt decision is reported via
+///   `noteConversationDecision`, and every pending → terminal transition is
+///   published on `resolutions()` so an open banner or prompt dismisses it.
 @MainActor
 @Observable
 public final class InboxStore: InboxProviding {
@@ -39,8 +40,12 @@ public final class InboxStore: InboxProviding {
     public private(set) var items: [InboxItem] = []
     public private(set) var auditTrail: [InboxDecisionRecord] = []
 
-    /// Gateways currently attached to a live feed.
-    public var attachedGatewayIDs: Set<GatewayID> { Set(feeds.keys) }
+    // MARK: Constants
+
+    /// Cadence of the periodic reconcile while the app is foregrounded.
+    public static let reconcileInterval: Duration = .seconds(60)
+    /// Restored pending items older than this, with no reachable gateway, expire.
+    public static let restoredMaxAge: TimeInterval = 60 * 60
 
     // MARK: Injected seams
 
@@ -48,14 +53,12 @@ public final class InboxStore: InboxProviding {
     private let decider: InboxDecider
     private let now: @Sendable () -> Date
     private let history: any InboxHistoryStoring
-    private let feedFactory: FleetInboxFeedFactory
+    /// The periodic-reconcile clock. Tests inject a controllable sleep.
+    private let sleep: @Sendable (Duration) async throws -> Void
 
-    /// Restored pending items older than this, with no attached gateway, expire.
-    public static let restoredMaxAge: TimeInterval = 60 * 60
-
-    /// Session ids to reconcile for a gateway (the Live Ops `.waiting` sessions,
-    /// supplied by the composition root). Never a fan-out over the roster.
+    /// Session ids to reconcile for a gateway (the Live Ops `.waiting` sessions).
     private var sessionProvider: @MainActor (GatewayID) -> [String] = { _ in [] }
+    private var pollSourceProvider: @MainActor (GatewayID) -> (any InboxAnswerSource)? = { _ in nil }
     private var gatewaysProvider: @MainActor () -> [FleetGateway] = { [] }
     private var connectionStateProvider: @MainActor (GatewayID) -> GatewayConnectionState = { _ in .idle }
 
@@ -64,43 +67,50 @@ public final class InboxStore: InboxProviding {
     @ObservationIgnored private var ledger = InboxLedger()
     @ObservationIgnored private var reviewTracker = ApprovalReviewTracker()
     @ObservationIgnored private var audit: [InboxDecisionRecord] = []
-    @ObservationIgnored private var feeds: [GatewayID: Attachment] = [:]
+    @ObservationIgnored private var sources: [UUID: Registration] = [:]
+    @ObservationIgnored private var itemSource: [InboxItemID: UUID] = [:]
     @ObservationIgnored private var inFlight: Set<InboxItemID> = []
     @ObservationIgnored private var updateObservers: [UUID: AsyncStream<[InboxItem]>.Continuation] = [:]
     @ObservationIgnored private var resolutionObservers: [UUID: AsyncStream<InboxResolution>.Continuation] = [:]
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    @ObservationIgnored private var reconcileLoop: Task<Void, Never>?
 
-    private struct Attachment {
-        let feed: any InboxGatewayFeed
+    private struct Registration {
+        let gatewayID: GatewayID
         let label: String
-        let consumer: Task<Void, Never>
+        let source: any InboxAnswerSource
     }
 
     public init(
         history: any InboxHistoryStoring,
         biometrics: any AppLockBiometricAuth,
-        feedFactory: @escaping FleetInboxFeedFactory = { _ in nil },
         ownerName: String? = nil,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.history = history
         self.biometrics = biometrics
-        self.feedFactory = feedFactory
         self.decider = .thisDevice(ownerName: ownerName)
         self.now = now
+        self.sleep = sleep
         loadTask = Task { @MainActor [weak self] in
             await self?.load()
         }
     }
 
-    /// Supply the per-gateway session list used by `refresh()`.
+    /// Wire the per-gateway session list (Live Ops `.waiting` sessions).
     public func setSessionProvider(_ provider: @escaping @MainActor (GatewayID) -> [String]) {
         sessionProvider = provider
     }
 
-    /// Supply the live gateway list and per-gateway connection state that
-    /// `syncConnections()` reads (mirrors `LiveOpsStore.setProviders`).
+    /// Wire the cross-session discovery source: the gateway's approvals seam
+    /// used for `approval.pending`. Nil when the gateway has no seam.
+    public func setPollSource(_ provider: @escaping @MainActor (GatewayID) -> (any InboxAnswerSource)?) {
+        pollSourceProvider = provider
+    }
+
+    /// Wire the live gateway list and per-gateway connection state.
     public func setProviders(
         gateways: @escaping @MainActor () -> [FleetGateway],
         connectionState: @escaping @MainActor (GatewayID) -> GatewayConnectionState
@@ -108,28 +118,6 @@ public final class InboxStore: InboxProviding {
         gatewaysProvider = gateways
         connectionStateProvider = connectionState
     }
-
-    /// Attach a feed for every CONNECTED gateway, detach gateways that dropped
-    /// off, and forget gateways that were removed. Called on connection-state
-    /// changes and on foreground. A newly attached gateway is reconciled
-    /// against `approval.pending` right away.
-    public func syncConnections() {
-        let gateways = gatewaysProvider()
-        let known = Set(gateways.map(\.id))
-        for id in feeds.keys where !known.contains(id) {
-            forget(gatewayID: id)
-        }
-        for gateway in gateways {
-            let connected = connectionStateProvider(gateway.id) == .connected
-            if connected {
-                guard feeds[gateway.id] == nil, let feed = feedFactory(gateway) else { continue }
-                attach(feed, label: gateway.displayName)
-            } else {
-                detach(gatewayID: gateway.id)
-            }
-        }
-    }
-
 
     /// Resolves once the persisted state has been loaded.
     public func awaitLoaded() async {
@@ -150,8 +138,7 @@ public final class InboxStore: InboxProviding {
         return stream
     }
 
-    /// Every pending → terminal transition, from any source. A conversation
-    /// banner subscribes so it dismisses a request the inbox resolved.
+    /// Every pending → terminal transition, from any source.
     public func resolutions() -> AsyncStream<InboxResolution> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<InboxResolution>.makeStream(bufferingPolicy: .unbounded)
@@ -162,104 +149,118 @@ public final class InboxStore: InboxProviding {
         return stream
     }
 
-    // MARK: Feed attachment
+    // MARK: Sources
 
-    /// Attach a connected gateway's feed. Idempotent per gateway: a second
-    /// attach replaces the first. Starts the feed's connection, then consumes
-    /// its events for as long as it stays attached.
-    public func attach(_ feed: any InboxGatewayFeed, label: String) {
-        let gatewayID = feed.gatewayID
-        feeds[gatewayID]?.consumer.cancel()
-        let consumer = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.awaitLoaded()
-            // Subscribe BEFORE connecting so no live request is missed in
-            // between; the transport replays already-open requests on subscribe.
-            let events = feed.events()
-            do {
-                try await feed.start()
-            } catch {
-                return
-            }
-            // Reconcile the restart window: anything the gateway still holds
-            // as pending is confirmed, anything it no longer lists expires.
-            await self.reconcile(gatewayID: gatewayID, sessionIDs: self.sessionProvider(gatewayID))
-            for await event in events {
-                if Task.isCancelled { break }
-                self.apply(event, gatewayID: gatewayID)
-            }
-        }
-        feeds[gatewayID] = Attachment(feed: feed, label: label, consumer: consumer)
+    /// Register an open conversation's answer seams. Returns the id its events
+    /// are recorded under. The caller unregisters it when the conversation ends.
+    public func registerSource(_ source: any InboxAnswerSource, label: String?) -> UUID {
+        let id = UUID()
+        let resolved = label ?? gatewayLabel(source.gatewayID)
+        sources[id] = Registration(gatewayID: source.gatewayID, label: resolved, source: source)
+        return id
     }
 
-    /// The gateway disconnected or was switched off. Pending items are kept
-    /// (they reconcile when it returns) but cannot be answered while detached.
-    public func detach(gatewayID: GatewayID) {
-        guard let attachment = feeds.removeValue(forKey: gatewayID) else { return }
-        attachment.consumer.cancel()
-        let feed = attachment.feed
-        Task { await feed.stop() }
+    /// Remove a source. Items it delivered stay pending, but can no longer be
+    /// answered through it.
+    public func unregisterSource(_ id: UUID) {
+        sources.removeValue(forKey: id)
     }
 
-    /// The gateway was removed from the fleet: its pending items fail.
-    public func forget(gatewayID: GatewayID) {
-        detach(gatewayID: gatewayID)
-        commit { $0.removeGateway(gatewayID, at: now()) }
+    /// Gateways that currently have a registered source.
+    public var sourceGatewayIDs: Set<GatewayID> {
+        Set(sources.values.map(\.gatewayID))
     }
 
-    // MARK: Ingest
-
-    private func apply(_ event: InboxFeedEvent, gatewayID: GatewayID) {
-        guard let attachment = feeds[gatewayID] else { return }
+    /// Record one inbox-relevant event delivered on a registered source.
+    public func record(_ event: InboxFeedEvent, sourceID: UUID) {
+        guard let registration = sources[sourceID] else { return }
         let at = now()
         switch event {
         case .serverRequest(let request):
-            let agent = identity(gatewayID, attachment.label, session: request.sessionID)
-            ingest(.make(from: request, agent: agent, at: at))
+            ingest(.make(from: request, agent: identity(registration, session: request.sessionID), at: at), sourceID: sourceID)
         case .legacyApproval(let approval):
-            let agent = identity(gatewayID, attachment.label, session: approval.sessionID)
-            ingest(.approval(from: approval, agent: agent, at: at))
+            ingest(.approval(from: approval, agent: identity(registration, session: approval.sessionID), at: at), sourceID: sourceID)
         case .withdrawn(let wireID):
             commit { $0.cancel(wireRequestID: wireID, at: at) }
         }
     }
 
-    private func identity(_ gatewayID: GatewayID, _ label: String, session: String) -> InboxAgentIdentity {
-        InboxAgentIdentity(gatewayID: gatewayID, gatewayLabel: label, sessionID: session)
+    /// A gateway was removed from the fleet: its pending items fail and its
+    /// sources are dropped.
+    public func forget(gatewayID: GatewayID) {
+        sources = sources.filter { $0.value.gatewayID != gatewayID }
+        let at = now()
+        commit { $0.removeGateway(gatewayID, at: at) }
     }
 
-    private func ingest(_ item: InboxItem) {
-        guard ledger.ingest(item) != .ignoredTerminal else { return }
+    private func identity(_ registration: Registration, session: String) -> InboxAgentIdentity {
+        InboxAgentIdentity(gatewayID: registration.gatewayID, gatewayLabel: registration.label, sessionID: session)
+    }
+
+    private func ingest(_ item: InboxItem, sourceID: UUID) {
+        let result = ledger.ingest(item)
+        guard result != .ignoredTerminal else { return }
+        // Keep the first source still registered: a srq item must stay answerable
+        // on the transport that delivered it.
+        if itemSource[item.id].flatMap({ sources[$0] }) == nil {
+            itemSource[item.id] = sourceID
+        }
         publish()
     }
 
-    // MARK: Reconcile
+    // MARK: Reconcile and periodic refresh
 
-    /// Reconcile every attached gateway against `approval.pending`, then expire
-    /// restored items whose gateway never came back.
-    public func refresh() async {
-        await awaitLoaded()
-        for gatewayID in Array(feeds.keys) {
-            await reconcile(gatewayID: gatewayID, sessionIDs: sessionProvider(gatewayID))
+    /// Start the periodic reconcile while the app is foregrounded, or stop it.
+    /// Cancellable: backgrounding stops it.
+    public func setForeground(_ active: Bool) {
+        reconcileLoop?.cancel()
+        reconcileLoop = nil
+        guard active else { return }
+        reconcileLoop = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                do {
+                    try await self.sleep(Self.reconcileInterval)
+                } catch {
+                    return
+                }
+                if Task.isCancelled { return }
+                await self.refresh()
+            }
         }
-        let at = now()
-        let attached = attachedGatewayIDs
-        commit { $0.expireUnattended(attachedGateways: attached, at: at, maxAge: Self.restoredMaxAge) }
     }
 
-    /// Reconcile one gateway for the given sessions. Fail-soft per session: a
-    /// session whose `approval.pending` read fails is left untouched.
+    /// Whether the periodic reconcile is running.
+    public var isReconcilingPeriodically: Bool { reconcileLoop != nil }
+
+    /// Reconcile every connected gateway that has a poll source against
+    /// `approval.pending`, then expire restored items whose gateway is not reachable.
+    public func refresh() async {
+        await awaitLoaded()
+        var reachable: Set<GatewayID> = sourceGatewayIDs
+        for gateway in gatewaysProvider() where connectionStateProvider(gateway.id) == .connected {
+            guard pollSourceProvider(gateway.id) != nil else { continue }
+            reachable.insert(gateway.id)
+            await reconcile(gatewayID: gateway.id, sessionIDs: sessionProvider(gateway.id))
+        }
+        let at = now()
+        commit { $0.expireUnattended(attachedGateways: reachable, at: at, maxAge: Self.restoredMaxAge) }
+    }
+
+    /// Reconcile one gateway's sessions against its poll source. Fail-soft per
+    /// session: a failed read is not an answer, so nothing expires.
     public func reconcile(gatewayID: GatewayID, sessionIDs: [String]) async {
-        guard let attachment = feeds[gatewayID] else { return }
+        guard let poll = pollSourceProvider(gatewayID) else { return }
+        let label = gatewayLabel(gatewayID)
         for sessionID in sessionIDs {
             let started = now()
             let live: [ApprovalRequest]
             do {
-                live = try await attachment.feed.pendingApprovals(sessionID: sessionID)
+                live = try await poll.approvals.pendingApprovals(sessionID: sessionID)
             } catch {
                 continue
             }
-            let agent = identity(gatewayID, attachment.label, session: sessionID)
+            let agent = InboxAgentIdentity(gatewayID: gatewayID, gatewayLabel: label, sessionID: sessionID)
             for request in live {
                 ledger.ingest(.approval(from: request, agent: agent, at: started))
             }
@@ -271,6 +272,13 @@ public final class InboxStore: InboxProviding {
             let liveIDs = Set(live.map(\.requestID)).union(recent)
             commit { $0.reconcile(gatewayID: gatewayID, sessionID: sessionID, livePendingRequestIDs: liveIDs, at: started) }
         }
+    }
+
+    private func gatewayLabel(_ gatewayID: GatewayID) -> String {
+        if let registration = sources.values.first(where: { $0.gatewayID == gatewayID }) {
+            return registration.label
+        }
+        return gatewaysProvider().first(where: { $0.id == gatewayID })?.displayName ?? ApprovalOrigin.unknownValue
     }
 
     // MARK: Decisions
@@ -287,21 +295,21 @@ public final class InboxStore: InboxProviding {
             guard let presence = PresenceAction(approvalChoice: choice) else {
                 throw InboxError.unsupportedKind(.approval)
             }
-            let feed = try attachedFeed(for: item)
+            let source = try answerSource(for: item)
             inFlight.insert(itemID)
             defer { inFlight.remove(itemID) }
             // Presence comes BEFORE any wire call. A failed check sends nothing.
             let result = await biometrics.verifyPresence(presence)
             guard result == .verified else { throw InboxError.presenceNotVerified(result) }
             guard ledger.item(itemID)?.status == .pending else { throw InboxError.notPending }
-            return try await sendApproval(item: item, request: request, choice: choice, feed: feed, action: action)
+            return try await sendApproval(item: item, request: request, choice: choice, source: source, action: action)
 
         case (.approval, .deny):
-            let feed = try attachedFeed(for: item)
+            let source = try answerSource(for: item)
             inFlight.insert(itemID)
             defer { inFlight.remove(itemID) }
             return try await sendApproval(
-                item: item, request: Self.approvalRequest(item), choice: .deny, feed: feed, action: action)
+                item: item, request: Self.approvalRequest(item), choice: .deny, source: source, action: action)
 
         case (.question, .answer(let text)) where !item.context.isBatchQuestion:
             return try await sendAnswer(item: item, value: text, action: action, presence: nil)
@@ -332,9 +340,9 @@ public final class InboxStore: InboxProviding {
         reviewTracker.markReviewed(Self.approvalRequest(item))
     }
 
-    /// A decision the user made on a conversation banner, reported so the inbox
-    /// agrees. Audited as a successful decision on this device. A no-op for an
-    /// item that is already settled.
+    /// A decision the user made on a conversation banner or prompt, reported
+    /// so the inbox agrees. Audited as a successful decision on this device.
+    /// A no-op for an item that is already settled.
     public func noteConversationDecision(
         gatewayID: GatewayID,
         sessionID: String,
@@ -356,20 +364,27 @@ public final class InboxStore: InboxProviding {
 
     // MARK: Sending
 
-    private func attachedFeed(for item: InboxItem) throws -> any InboxGatewayFeed {
-        guard let attachment = feeds[item.agent.gatewayID] else { throw InboxError.gatewayUnavailable }
-        return attachment.feed
+    /// The source that can answer this item. A server request is answered ONLY
+    /// by the source that delivered it. A legacy approval may use the poll source.
+    private func answerSource(for item: InboxItem) throws -> any InboxAnswerSource {
+        if let id = itemSource[item.id], let registration = sources[id] {
+            return registration.source
+        }
+        if item.serverRequestID == nil, let poll = pollSourceProvider(item.agent.gatewayID) {
+            return poll
+        }
+        throw InboxError.gatewayUnavailable
     }
 
     private func sendApproval(
         item: InboxItem,
         request: ApprovalRequest,
         choice: ApprovalChoice,
-        feed: any InboxGatewayFeed,
+        source: any InboxAnswerSource,
         action: InboxDecisionAction
     ) async throws -> InboxDecisionRecord {
         do {
-            let resolved = try await feed.approvals.respond(to: request, choice: choice, all: false)
+            let resolved = try await source.approvals.respond(to: request, choice: choice, all: false)
             guard resolved > 0 else {
                 // The gateway no longer had it: answered or timed out elsewhere.
                 let message = "This request was already answered elsewhere."
@@ -394,8 +409,10 @@ public final class InboxStore: InboxProviding {
         action: InboxDecisionAction,
         presence: PresenceAction?
     ) async throws -> InboxDecisionRecord {
-        let feed = try attachedFeed(for: item)
-        guard let serverRequestID = item.serverRequestID else { throw InboxError.unsupportedKind(item.kind) }
+        let source = try answerSource(for: item)
+        guard let prompts = source.prompts, let serverRequestID = item.serverRequestID else {
+            throw InboxError.gatewayUnavailable
+        }
         if let presence, !value.isEmpty {
             // A typed sudo password or secret needs the same presence check the
             // conversation prompt uses. Nothing is sent without it.
@@ -408,9 +425,9 @@ public final class InboxStore: InboxProviding {
         do {
             switch item.kind {
             case .question:
-                try await feed.prompts.answerClarify(requestID: serverRequestID, answer: value)
+                try await prompts.answerClarify(requestID: serverRequestID, answer: value)
             case .sudo, .secret:
-                try await feed.prompts.answerValue(requestID: serverRequestID, value: value)
+                try await prompts.answerValue(requestID: serverRequestID, value: value)
             case .approval:
                 throw InboxError.unsupportedKind(.approval)
             }
@@ -483,6 +500,7 @@ public final class InboxStore: InboxProviding {
         for id in before {
             guard let item = ledger.item(id), item.status.isTerminal else { continue }
             reviewTracker.forget(requestID: item.requestID)
+            itemSource.removeValue(forKey: id)
             let resolution = InboxResolution(
                 itemID: id,
                 gatewayID: item.agent.gatewayID,
@@ -500,21 +518,30 @@ public final class InboxStore: InboxProviding {
         persist()
     }
 
+    /// Saves run in order and only after the initial load has merged, so a
+    /// save can never overwrite persisted items that have not been restored yet.
+    /// The snapshot is taken when the save runs, so it is the latest state.
     private func persist() {
-        let snapshot = InboxPersistedState(items: ledger.ordered, audit: audit)
         let previous = pendingSave
-        pendingSave = Task {
+        let loading = loadTask
+        let history = self.history
+        pendingSave = Task { @MainActor [weak self] in
+            _ = await loading?.value
             _ = await previous?.value
+            guard let self else { return }
+            let snapshot = InboxPersistedState(items: self.ledger.ordered, audit: self.audit)
             try? await history.save(snapshot)
         }
     }
 
+    /// Merge the persisted state in. Events recorded before this completes are
+    /// live and are never overwritten by the older snapshot.
     private func load() async {
         let state = await history.load()
-        ledger = InboxLedger(items: state.items)
         let at = now()
+        ledger.restore(state.items)
         ledger.expireUnattended(attachedGateways: [], at: at, maxAge: Self.restoredMaxAge)
-        audit = InboxLedger.retainedAudit(state.audit, now: at)
+        audit = InboxLedger.retainedAudit(state.audit + audit, now: at)
         items = ledger.ordered
         auditTrail = audit
     }

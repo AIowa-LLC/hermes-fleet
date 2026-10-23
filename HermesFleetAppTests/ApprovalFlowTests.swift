@@ -718,8 +718,13 @@ final class InboxStoreTests: XCTestCase {
             lock.withLock { recorded.append((requestID, choice, serverPath)) }
         }
 
+        private var reads = 0
+        /// Number of `approval.pending` reads the inbox made.
+        var pendingReads: Int { lock.withLock { reads } }
+
         private func pendingSnapshot(_ session: String) throws -> [ApprovalRequest] {
             try lock.withLock {
+                reads += 1
                 if pendingReadFails { throw ConversationError.notConnected }
                 return pendingBySession[session] ?? []
             }
@@ -764,32 +769,24 @@ final class InboxStoreTests: XCTestCase {
     }
 
     /// A feed the test pushes events into, standing in for one gateway transport.
-    private final class FakeFeed: InboxGatewayFeed, @unchecked Sendable {
+    /// A conversation-like answer source. `push` delivers an event the way a
+    /// conversation's transport would; the test wires `onEvent` to the store.
+    private final class FakeFeed: InboxAnswerSource, @unchecked Sendable {
         let gatewayID: GatewayID
         let approvalsFake: FakeApprovals
         let promptsFake: FakePrompts
-        private let stream: AsyncStream<InboxFeedEvent>
-        private let continuation: AsyncStream<InboxFeedEvent>.Continuation
+        var onEvent: (@Sendable (InboxFeedEvent) -> Void)?
 
         init(gatewayID: GatewayID, approvals: FakeApprovals = FakeApprovals(), prompts: FakePrompts = FakePrompts()) {
             self.gatewayID = gatewayID
             self.approvalsFake = approvals
             self.promptsFake = prompts
-            let pair = AsyncStream<InboxFeedEvent>.makeStream(bufferingPolicy: .unbounded)
-            self.stream = pair.stream
-            self.continuation = pair.continuation
         }
 
-        func start() async throws {}
-        func stop() async {}
-        func events() -> AsyncStream<InboxFeedEvent> { stream }
         var approvals: any ApprovalsProviding { approvalsFake }
-        var prompts: any ServerPromptResponding { promptsFake }
-        func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
-            try await approvalsFake.pendingApprovals(sessionID: sessionID)
-        }
+        var prompts: (any ServerPromptResponding)? { promptsFake }
 
-        func push(_ event: InboxFeedEvent) { continuation.yield(event) }
+        func push(_ event: InboxFeedEvent) { onEvent?(event) }
     }
 
     private let gateway = GatewayID(rawValue: "gw-synthetic")
@@ -838,12 +835,31 @@ final class InboxStoreTests: XCTestCase {
         store.items.filter { $0.status == .pending }.count
     }
 
+    /// Register a fake conversation source and route its pushed events to the store.
+    @discardableResult
+    private func attach(_ store: InboxStore, _ feed: FakeFeed, label: String) -> UUID {
+        let id = store.registerSource(feed, label: label)
+        feed.onEvent = { [weak store] event in
+            // The fake pushes from the test's main actor; the store is main actor too.
+            MainActor.assumeIsolated { store?.record(event, sourceID: id) }
+        }
+        return id
+    }
+
+    /// Wire the Live Ops poll source (approval.pending) for one connected gateway.
+    private func wirePoll(_ store: InboxStore, _ approvals: FakeApprovals, gateway: GatewayID, sessions: [String]) {
+        let fleetGateway = FleetGateway(id: gateway, displayName: "G")
+        store.setProviders(gateways: { [fleetGateway] }, connectionState: { _ in .connected })
+        store.setSessionProvider { _ in sessions }
+        store.setPollSource { id in InboxApprovalPollSource(gatewayID: id, approvals: approvals) }
+    }
+
     // MARK: Aggregation
 
     func testRequestsFromTwoSessionsAggregateIntoOneInbox() async {
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "Synthetic Gateway")
+        attach(store, feed, label: "Synthetic Gateway")
         feed.push(serverApproval("r1", session: "s-1"))
         feed.push(.legacyApproval(approvalRequest("r2", session: "s-2")))
         feed.push(.serverRequest(ServerRequest(
@@ -862,7 +878,7 @@ final class InboxStoreTests: XCTestCase {
     func testRedeliveredRequestOnLegacyAndServerPathsIsOneItem() async {
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         feed.push(.legacyApproval(approvalRequest("r1", session: "s-1")))
         await waitUntil { store.items.count == 1 }
@@ -875,7 +891,7 @@ final class InboxStoreTests: XCTestCase {
     func testWithdrawalCancelsWithoutAnyWireAnswer() async {
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
         feed.push(.withdrawn(wireRequestID: "srq-r1"))
@@ -890,7 +906,7 @@ final class InboxStoreTests: XCTestCase {
     func testApproveIsPresenceGatedAndSendsOnSuccess() async throws {
         let (store, presence) = makeStore(presence: .success)
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -908,7 +924,7 @@ final class InboxStoreTests: XCTestCase {
     func testFailedPresenceSendsNothingAndLeavesItemPending() async {
         let (store, presence) = makeStore(presence: .failed)
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -929,7 +945,7 @@ final class InboxStoreTests: XCTestCase {
     func testDenyIsFrictionFreeAndSkipsPresence() async throws {
         let (store, presence) = makeStore(presence: .failed)
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -943,7 +959,7 @@ final class InboxStoreTests: XCTestCase {
     func testLongCommandNeedsReviewBeforePresenceOrWire() async {
         let (store, presence) = makeStore(presence: .success)
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         let long = (1...8).map { "echo line \($0)" }.joined(separator: "\n")
         feed.push(serverApproval("r1", session: "s-1", command: long))
         await waitUntil { store.items.count == 1 }
@@ -966,7 +982,7 @@ final class InboxStoreTests: XCTestCase {
         let approvals = FakeApprovals()
         approvals.respondResult = .failure(ConversationError.notConnected)
         let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -987,7 +1003,7 @@ final class InboxStoreTests: XCTestCase {
         let approvals = FakeApprovals()
         approvals.respondResult = .success(0)
         let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -999,7 +1015,7 @@ final class InboxStoreTests: XCTestCase {
         let (store, _) = makeStore()
         let prompts = FakePrompts()
         let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(.serverRequest(ServerRequest(
             id: "srq-q", sessionID: "s-1",
             kind: .clarify(ClarifyPrompt(sessionID: "s-1",
@@ -1020,7 +1036,7 @@ final class InboxStoreTests: XCTestCase {
         let (store, presence) = makeStore(presence: .success)
         let prompts = FakePrompts()
         let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(.serverRequest(ServerRequest(
             id: "srq-s", sessionID: "s-1",
             kind: .secret(SecretPrompt(sessionID: "s-1", envVar: "SYNTHETIC_KEY", prompt: "Enter it")))))
@@ -1041,7 +1057,7 @@ final class InboxStoreTests: XCTestCase {
     func testBannerDecisionSettlesInboxAndPublishesResolution() async throws {
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
         let resolutions = store.resolutions()
@@ -1087,14 +1103,14 @@ final class InboxStoreTests: XCTestCase {
         let approvals = FakeApprovals()
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         feed.push(serverApproval("r2", session: "s-1"))
         await waitUntil { store.items.count == 2 }
 
         approvals.setPending([approvalRequest("r2", session: "s-1")], session: "s-1")
         // Restart window: a fresh refresh should match the gateway's snapshot.
-        store.setSessionProvider { _ in ["s-1"] }
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
         await store.refresh()
 
         XCTAssertEqual(store.items.first { $0.requestID == "r1" }?.status, .expired)
@@ -1105,12 +1121,12 @@ final class InboxStoreTests: XCTestCase {
         let (store, _) = makeStore()
         let approvals = FakeApprovals()
         let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
         // A failed `approval.pending` read is not an answer: nothing expires.
         approvals.failPendingReads()
-        store.setSessionProvider { _ in ["s-1"] }
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
         await store.refresh()
         XCTAssertEqual(store.items.first?.status, .pending)
     }
@@ -1119,7 +1135,7 @@ final class InboxStoreTests: XCTestCase {
         let history = InMemoryInboxHistoryStore()
         let (first, _) = makeStore(history: history)
         let feed = FakeFeed(gatewayID: gateway)
-        first.attach(feed, label: "G")
+        attach(first, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { first.items.count == 1 }
         try? await Task.sleep(for: .milliseconds(30))
@@ -1133,7 +1149,7 @@ final class InboxStoreTests: XCTestCase {
     func testRemovingGatewayFailsItsPendingItems() async {
         let (store, _) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
 
@@ -1146,10 +1162,10 @@ final class InboxStoreTests: XCTestCase {
     func testDecisionWithoutAttachedGatewayIsRefused() async {
         let (store, presence) = makeStore()
         let feed = FakeFeed(gatewayID: gateway)
-        store.attach(feed, label: "G")
+        let sourceID = attach(store, feed, label: "G")
         feed.push(serverApproval("r1", session: "s-1"))
         await waitUntil { store.items.count == 1 }
-        store.detach(gatewayID: gateway)
+        store.unregisterSource(sourceID)
 
         do {
             _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
@@ -1159,5 +1175,169 @@ final class InboxStoreTests: XCTestCase {
         }
         XCTAssertEqual(presence.presenceChecks, 0)
         XCTAssertEqual(store.items.first?.status, .pending, "kept for when the gateway returns")
+    }
+
+    // MARK: Routing: an answer goes only to a source that can own it
+
+    func testServerRequestIsNeverAnsweredThroughThePollSource() async {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        let sourceID = attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        store.unregisterSource(sourceID)
+        wirePoll(store, approvals, gateway: gateway, sessions: [])
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+            XCTFail("a srq- request must not be answered on another transport")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .gatewayUnavailable)
+        }
+        XCTAssertTrue(approvals.responses.isEmpty)
+        XCTAssertEqual(store.items.first?.status, .pending)
+    }
+
+    func testLegacyApprovalCanBeAnsweredThroughThePollSource() async throws {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        let sourceID = attach(store, feed, label: "G")
+        // A legacy `approval.request` carries no JSON-RPC id.
+        feed.push(.legacyApproval(ApprovalRequest(
+            requestID: "r2", sessionID: "s-1", command: "echo synthetic", choices: ["once", "deny"])))
+        await waitUntil { store.items.count == 1 }
+        store.unregisterSource(sourceID)
+        wirePoll(store, approvals, gateway: gateway, sessions: [])
+
+        _ = try await store.decide(itemID("r2", session: "s-1"), .deny)
+
+        XCTAssertEqual(approvals.responses.map(\.serverPath), [false], "answered with approval.respond")
+        XCTAssertEqual(store.items.first?.status, .denied)
+    }
+
+    // MARK: Periodic reconcile (injected clock)
+
+    func testPeriodicReconcileRunsOnlyWhileForegroundAndStopsOnBackground() async {
+        let gate = TickGate()
+        let date = clockDate
+        let store = InboxStore(
+            history: InMemoryInboxHistoryStore(),
+            biometrics: ScriptedPresence(biometrics: .success),
+            now: { date },
+            sleep: { _ in try await gate.wait() })
+        XCTAssertEqual(InboxStore.reconcileInterval, .seconds(60))
+        let approvals = FakeApprovals()
+        approvals.setPending([approvalRequest("r1", session: "s-1")], session: "s-1")
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+
+        XCTAssertFalse(store.isReconcilingPeriodically)
+        store.setForeground(true)
+        XCTAssertTrue(store.isReconcilingPeriodically)
+        await gate.tick()
+        await waitUntil { approvals.pendingReads == 1 }
+        XCTAssertEqual(store.items.first?.status, .pending, "the periodic pass ingested the gateway's pending approval")
+
+        store.setForeground(false)
+        XCTAssertFalse(store.isReconcilingPeriodically)
+        await gate.tick()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(approvals.pendingReads, 1, "no reconcile once backgrounded")
+    }
+
+    func testPeriodicReconcileSkipsGatewaysWithoutAPollSource() async {
+        let gate = TickGate()
+        let store = InboxStore(
+            history: InMemoryInboxHistoryStore(),
+            biometrics: ScriptedPresence(biometrics: .success),
+            now: { Date(timeIntervalSince1970: 1_000_000) },
+            sleep: { _ in try await gate.wait() })
+        let approvals = FakeApprovals()
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+        // Disconnected: nothing to reconcile even though a source exists.
+        store.setProviders(gateways: { [FleetGateway(id: self.gateway, displayName: "G")] },
+                           connectionState: { _ in .disconnected })
+        store.setForeground(true)
+        await gate.tick()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(approvals.pendingReads, 0)
+        store.setForeground(false)
+    }
+
+    // MARK: Conversation prompts settle the inbox
+
+    func testClarifyAnsweredInConversationSettlesTheInboxItem() async {
+        let (store, _) = makeStore()
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        let request = ServerRequest(id: "srq-c", sessionID: "s-1", kind: .clarify(ClarifyPrompt(
+            sessionID: "s-1", questions: [ClarifyQuestion(qid: "", question: "Which?")], isBatch: false)))
+        feed.push(.serverRequest(request))
+        await waitUntil { store.items.count == 1 }
+
+        let gw = gateway
+        let vm = ServerPromptViewModel(prompts: prompts, biometrics: ScriptedPresence.success)
+        vm.bind(sessionID: "s-1")
+        vm.onAnswered = { [weak store] answered, decision in
+            store?.noteConversationDecision(gatewayID: gw, sessionID: answered.sessionID,
+                                            requestID: answered.id, decision: decision)
+        }
+        vm.handle(request)
+        await vm.answerClarify("synthetic-choice")
+
+        XCTAssertEqual(prompts.answers.map(\.value), ["synthetic-choice"])
+        XCTAssertEqual(store.items.first?.status, .answered)
+        XCTAssertEqual(store.auditTrail.first?.action, .answer)
+        XCTAssertFalse(String(describing: store.auditTrail).contains("synthetic-choice"))
+    }
+
+    func testSudoSkippedInConversationSettlesWithoutPresence() async {
+        let (store, presence) = makeStore(presence: .failed)
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        let request = ServerRequest(id: "srq-s", sessionID: "s-1", kind: .sudo(SudoPrompt(sessionID: "s-1", command: "synthetic")))
+        feed.push(.serverRequest(request))
+        await waitUntil { store.items.count == 1 }
+
+        let gw = gateway
+        let vm = ServerPromptViewModel(prompts: prompts, biometrics: ScriptedPresence(biometrics: .failed))
+        vm.bind(sessionID: "s-1")
+        vm.onAnswered = { [weak store] answered, decision in
+            store?.noteConversationDecision(gatewayID: gw, sessionID: answered.sessionID,
+                                            requestID: answered.id, decision: decision)
+        }
+        vm.handle(request)
+        await vm.skipValue()
+
+        XCTAssertEqual(prompts.answers.map(\.value), [""])
+        XCTAssertEqual(store.items.first?.status, .answered)
+        XCTAssertEqual(store.auditTrail.first?.action, .skip)
+        XCTAssertEqual(presence.presenceChecks, 0, "declining needs no presence check")
+    }
+}
+
+/// Controllable periodic clock for the reconcile tests. A tick released before
+/// the loop waits is kept as a credit, so no tick is lost to scheduling.
+private actor TickGate {
+    private var waiters: [CheckedContinuation<Void, Error>] = []
+    private var credits = 0
+
+    func wait() async throws {
+        if credits > 0 {
+            credits -= 1
+            return
+        }
+        try await withCheckedThrowingContinuation { waiters.append($0) }
+    }
+
+    func tick() {
+        if waiters.isEmpty {
+            credits += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

@@ -195,9 +195,7 @@ public final class AppEnvironment {
     /// non-secret — synthesis §12).
     public private(set) var cachedWatermarkCount = 0
     /// Per-gateway connection lifecycle, observable.
-    public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:] {
-        didSet { inboxSync?() }
-    }
+    public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
 
     /// H2: latest per-gateway connection-health snapshots (uptime %,
     /// reconnects, last-disconnect reason, ping RTT). Updated by
@@ -276,12 +274,10 @@ public final class AppEnvironment {
     /// so callers can read `environment.liveOps` unconditionally.
     public let liveOps: LiveOpsStore
 
-    /// Phase B: the app-level approvals inbox. Lives for the app's lifetime and
-    /// is fed by every connected gateway's feed (see `syncConnections`).
+    /// Phase B: the app-level approvals inbox. Lives for the app's lifetime.
+    /// It opens no connection: open conversations register as sources, and the
+    /// Live Ops approvals seam is its poll source (see `InboxStore`).
     public let inbox: InboxStore
-    /// Synced from `connectionStates` changes; set at the end of init so the
-    /// observer cannot run before `inbox` exists.
-    @ObservationIgnored private var inboxSync: (@MainActor () -> Void)?
 
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
@@ -693,7 +689,6 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         liveOpsFactory: FleetLiveOpsFactory? = nil,
-        inboxFeedFactory: FleetInboxFeedFactory? = nil,
         inboxHistory: (any InboxHistoryStoring)? = nil,
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
@@ -785,8 +780,7 @@ public final class AppEnvironment {
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
         self.inbox = InboxStore(
             history: inboxHistory ?? InMemoryInboxHistoryStore(),
-            biometrics: biometrics,
-            feedFactory: inboxFeedFactory ?? { _ in nil })
+            biometrics: biometrics)
         artifactImages.protectionReporter = { failure in
             diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
         }
@@ -805,7 +799,10 @@ public final class AppEnvironment {
                   let gateway = snapshot.gateways.first(where: { $0.gatewayID == id }) else { return [] }
             return gateway.operations.filter { $0.status.isWaiting }.map { $0.id.runtimeSessionID }
         }
-        inboxSync = { [weak self] in self?.inbox.syncConnections() }
+        inbox.setPollSource { [weak self] id in
+            guard let approvals = self?.liveOps.approvalsSeam(for: id) else { return nil }
+            return InboxApprovalPollSource(gatewayID: id, approvals: approvals)
+        }
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -2426,6 +2423,7 @@ public final class AppEnvironment {
     /// file may become unavailable, then connection/recovery ownership is
     /// suspended until an unlocked foreground restore.
     public func suspendForBackground() async {
+        inbox.setForeground(false)
         beginBackgroundSuspension()
         if let backgroundTeardownTask {
             await backgroundTeardownTask.value
@@ -2494,6 +2492,8 @@ public final class AppEnvironment {
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration else { return }
         connectionsSuspended = false
+        // Phase B: reconcile pending approvals on foreground, then every minute.
+        inbox.setForeground(true)
         await restoreIntendedConnections()
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration, !connectionsSuspended else { return }

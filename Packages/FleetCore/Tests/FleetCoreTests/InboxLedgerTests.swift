@@ -253,6 +253,20 @@ final class InboxLedgerTests: XCTestCase {
         XCTAssertTrue(clarify.context.choices.isEmpty)
     }
 
+    func testRestoreMergesWithoutOverwritingLiveState() {
+        var ledger = InboxLedger()
+        // A live event arrives before the persisted snapshot finishes loading.
+        let live = approval("r1", at: t0.addingTimeInterval(5))
+        ledger.ingest(live)
+        ledger.resolve(live.id, as: .approved, at: t0.addingTimeInterval(6))
+
+        // The older persisted copy of r1 (still pending) and a distinct r2.
+        ledger.restore([approval("r1", at: t0), approval("r2", at: t0)])
+
+        XCTAssertEqual(ledger.item(live.id)?.status, .approved, "live state wins over the restored copy")
+        XCTAssertEqual(ledger.pending.map(\.requestID), ["r2"], "items missing live are restored")
+    }
+
     func testDecisionActionNeverCarriesValues() {
         XCTAssertEqual(InboxDecisionAction(.approve(.always)), .approveAlways)
         XCTAssertEqual(InboxDecisionAction(.approve(.deny)), .deny)

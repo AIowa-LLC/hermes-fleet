@@ -40,6 +40,15 @@ public struct InboxLedger: Equatable, Sendable {
         enforceCaps(at: Date.distantPast, reason: "inbox full")
     }
 
+    /// Merge restored (persisted) items into this ledger. An item already present
+    /// is left as it is: live state recorded before a restore completes always wins.
+    public mutating func restore(_ restored: [InboxItem]) {
+        for item in restored where items[item.id] == nil {
+            items[item.id] = item
+        }
+        enforceCaps(at: Date.distantPast, reason: "inbox full")
+    }
+
     // MARK: Queries
 
     public func item(_ id: InboxItemID) -> InboxItem? { items[id] }

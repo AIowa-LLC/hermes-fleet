@@ -201,6 +201,14 @@ public final class LiveOpsStore {
         return built
     }
 
+    /// Phase B: the approvals seam for a configured gateway, shared with the
+    /// Live Ops poll (one transport per gateway). Used by the approvals inbox
+    /// for `approval.pending` discovery. Nil for an unknown or unendpointed gateway.
+    public func approvalsSeam(for gatewayID: GatewayID) -> (any ApprovalsProviding)? {
+        guard let gateway = gatewaysProvider().first(where: { $0.id == gatewayID }) else { return nil }
+        return seam(for: gateway)?.approvals
+    }
+
     /// Resolve a control seam from the current fleet configuration. Detail
     /// actions can begin before the first asynchronous snapshot has populated
     /// the cache, so control authority must not depend on poll timing.

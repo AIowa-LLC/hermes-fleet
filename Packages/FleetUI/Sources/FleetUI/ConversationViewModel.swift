@@ -188,6 +188,9 @@ public final class ConversationViewModel {
     /// Dismisses a banner when the inbox resolves its request elsewhere.
     /// `nonisolated(unsafe)`: only canceled from `deinit`.
     nonisolated(unsafe) private var inboxResolutionTask: Task<Void, Never>?
+    /// This conversation's registration with the inbox (events are recorded
+    /// under it). `nonisolated(unsafe)`: read in `deinit` to unregister.
+    nonisolated(unsafe) private var inboxSourceID: UUID?
 
     // MARK: Observable state (SwiftUI renders these)
 
@@ -633,15 +636,28 @@ public final class ConversationViewModel {
             self.historyPager = capable.historyPager
         }
         if let inbox {
-            // Phase B: when the inbox settles a request this banner shows
-            // (decided on another surface, or expired/cancelled), dismiss it.
-            // Nothing is sent: a resolution is never a denial.
+            // Phase B: this conversation's transport is a source the inbox can
+            // record from and answer through. Registered at init so requests
+            // replayed on subscribe are not lost.
             let gatewayID = route.gatewayID
+            if let approvalCapable = session as? ApprovalsCapable {
+                let prompts = (session as? ServerPromptCapable)?.serverPrompts
+                inboxSourceID = inbox.registerSource(
+                    InboxConversationSource(gatewayID: gatewayID, approvals: approvalCapable.approvals, prompts: prompts),
+                    label: nil)
+            }
+            // When the inbox settles a request this conversation shows (decided
+            // on another surface, or expired/cancelled), dismiss it. Nothing is
+            // sent: a resolution is never a denial.
             let stream = inbox.resolutions()
             inboxResolutionTask = Task { @MainActor [weak self] in
                 for await resolution in stream {
-                    guard resolution.gatewayID == gatewayID, resolution.kind == .approval else { continue }
-                    self?.approvalViewModel?.resolvedElsewhere(requestID: resolution.requestID)
+                    guard resolution.gatewayID == gatewayID else { continue }
+                    if resolution.kind == .approval {
+                        self?.approvalViewModel?.resolvedElsewhere(requestID: resolution.requestID)
+                    } else {
+                        self?.serverPromptViewModel?.cancel(requestID: resolution.requestID)
+                    }
                 }
             }
         }
@@ -668,6 +684,9 @@ public final class ConversationViewModel {
         foregroundObserver?.cancel()
         foregroundRetryTask?.cancel()
         inboxResolutionTask?.cancel()
+        if let inbox, let sourceID = inboxSourceID {
+            Task { @MainActor in inbox.unregisterSource(sourceID) }
+        }
     }
 
     // MARK: Lifecycle
@@ -2608,6 +2627,16 @@ public final class ConversationViewModel {
             if let capable = session as? ServerPromptCapable {
                 let vm = ServerPromptViewModel(prompts: capable.serverPrompts, biometrics: biometrics)
                 vm.bind(sessionID: sessionID)
+                // Phase B: an accepted clarify / sudo / secret answer settles the
+                // same request in the app-level inbox.
+                let gatewayID = route.gatewayID
+                vm.onAnswered = { [weak inbox] request, decision in
+                    inbox?.noteConversationDecision(
+                        gatewayID: gatewayID,
+                        sessionID: request.sessionID,
+                        requestID: request.id,
+                        decision: decision)
+                }
                 serverPromptViewModel = vm
             }
         } else {
@@ -2750,6 +2779,12 @@ public final class ConversationViewModel {
 
     @MainActor
     private func apply(_ event: ConversationEvent) {
+        // Phase B: forward inbox-relevant events for EVERY session this
+        // transport carries, before the per-session render filter below.
+        if let inbox, let sourceID = inboxSourceID,
+           let mapped = InboxFeedEvent(conversationEvent: event) {
+            inbox.record(mapped, sourceID: sourceID)
+        }
         if runtimeResumeToken != nil,
            isRuntimeResumePromptLifecycleEvent(event),
            let sid = event.sessionID,

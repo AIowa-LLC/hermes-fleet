@@ -3,15 +3,17 @@ import Foundation
 // Phase B — the seams the approvals inbox is built on.
 //
 // FleetUI depends on `InboxProviding` (below) and FleetCore types only. The
-// concrete per-gateway feed (`InboxGatewayFeed`) is implemented in
-// FleetNetworking over the gateway transport, and wired at the composition
-// root. History persistence (`InboxHistoryStoring`) is implemented in
-// FleetPersistence. The aggregating `InboxStore` lives in FleetUI.
+// inbox learns about requests from sources that ALREADY exist in the app:
+// open conversations (their transport delivers server requests and
+// `approval.request`) and the Live Ops `approval.pending` read. It does not
+// open a connection of its own. History persistence (`InboxHistoryStoring`)
+// is implemented in FleetPersistence. The aggregating `InboxStore` lives in
+// FleetUI.
 
 // MARK: - Feed events
 
 /// One inbox-relevant event from one gateway, in arrival order. All sessions
-/// of that gateway are included; the feed never filters by the visible
+/// of that gateway are included; the source never filters by the visible
 /// conversation.
 public enum InboxFeedEvent: Equatable, Sendable {
     /// A server→client request (`approval`, `clarify`, `sudo`, `secret`),
@@ -101,34 +103,47 @@ extension InboxItem {
     }
 }
 
-// MARK: - Per-gateway feed
+// MARK: - Answer sources
 
-/// One connected gateway's inbox feed. Implemented in FleetNetworking over the
-/// gateway transport; FleetCore and FleetUI see only this seam.
-public protocol InboxGatewayFeed: Sendable {
+/// Something that can answer inbox items for one gateway over a transport that
+/// already exists in the app. Two kinds exist:
+/// - a conversation's seams (`ApprovalsCapable` / `ServerPromptCapable`):
+///   required for server requests, because a `srq-` id can only be answered on
+///   the transport that delivered it;
+/// - the Live Ops approvals seam: sufficient for legacy `approval.respond`
+///   approvals found by `approval.pending`, which the gateway resolves by
+///   durable request id from any client.
+public protocol InboxAnswerSource: Sendable {
     var gatewayID: GatewayID { get }
-
-    /// Open the feed's connection. Idempotent.
-    func start() async throws
-
-    /// Close the feed's connection. Called when the gateway disconnects or is
-    /// removed. Pending items are kept by the store; they cannot be answered
-    /// until the feed starts again.
-    func stop() async
-
-    /// A fresh stream of every inbox-relevant event for this gateway (all
-    /// sessions, live and replayed), in order. Each call returns a new stream.
-    func events() -> AsyncStream<InboxFeedEvent>
-
-    /// Answers approvals. The concrete client routes each answer over the
-    /// transport that delivered it.
     var approvals: any ApprovalsProviding { get }
-    /// Answers clarify / sudo / secret requests.
-    var prompts: any ServerPromptResponding { get }
+    /// Nil when the source cannot answer clarify / sudo / secret requests.
+    var prompts: (any ServerPromptResponding)? { get }
+}
 
-    /// `approval.pending` for one session: the replay-safe list of unresolved
-    /// approvals. Used to reconcile on connect, foreground, and relaunch.
-    func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest]
+/// Approvals-only source for the `approval.pending` poll path.
+public struct InboxApprovalPollSource: InboxAnswerSource {
+    public let gatewayID: GatewayID
+    public let approvals: any ApprovalsProviding
+    public var prompts: (any ServerPromptResponding)? { nil }
+
+    public init(gatewayID: GatewayID, approvals: any ApprovalsProviding) {
+        self.gatewayID = gatewayID
+        self.approvals = approvals
+    }
+}
+
+/// A conversation's answer seams, registered with the inbox while the
+/// conversation is open.
+public struct InboxConversationSource: InboxAnswerSource {
+    public let gatewayID: GatewayID
+    public let approvals: any ApprovalsProviding
+    public let prompts: (any ServerPromptResponding)?
+
+    public init(gatewayID: GatewayID, approvals: any ApprovalsProviding, prompts: (any ServerPromptResponding)?) {
+        self.gatewayID = gatewayID
+        self.approvals = approvals
+        self.prompts = prompts
+    }
 }
 
 // MARK: - Persistence seam
@@ -179,6 +194,6 @@ public protocol InboxProviding: AnyObject {
     /// The user reviewed a long command in full. Required before approve.
     func markReviewed(_ itemID: InboxItemID)
 
-    /// Reconcile every attached gateway against `approval.pending`.
+    /// Reconcile every poll-reachable connected gateway against `approval.pending`.
     func refresh() async
 }
