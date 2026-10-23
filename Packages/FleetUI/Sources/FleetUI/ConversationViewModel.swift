@@ -531,6 +531,10 @@ public final class ConversationViewModel {
         try? await Task.sleep(for: .seconds(seconds))
     }
     private var hasStarted = false
+    /// F0: `transcript.open` — route open to first rows rendered (or settled
+    /// empty). Ends exactly once; a VM released first closes it as cancelled.
+    @ObservationIgnored public var signposts: FleetSignposts = .shared
+    @ObservationIgnored private var transcriptOpenInterval: FleetSignpostToken?
     /// Generation of the newest conversation recovery operation
     /// (t_e77c614c). Bumped when `reconnect()` / `reauthenticate()` /
     /// `recoverGap()` starts; an in-flight operation whose captured token no
@@ -645,6 +649,7 @@ public final class ConversationViewModel {
     public func start() async {
         if !hasStarted {
             hasStarted = true
+            transcriptOpenInterval = signposts.begin(.transcriptOpen)
             // M10 cold-start: render persisted history immediately while the
             // socket opens, so an offline/relaunch shows the last transcript.
             if let sessionID, transcript.isEmpty {
@@ -667,7 +672,10 @@ public final class ConversationViewModel {
             startStatusWatcher()
             return
         }
-        guard await connectAndOpen() else { return }
+        guard await connectAndOpen() else {
+            transcriptOpenInterval?.end(.failed)
+            return
+        }
         // Adopt the gateway's replay epoch on first open so a LATER reconnect
         // actually replays (M6: the engine adopts on its first call and
         // replays on the next after a reconnect). Nothing is watermarked yet,
@@ -761,6 +769,7 @@ public final class ConversationViewModel {
         // against any banner that did arrive).
         Task { await approvalViewModel?.restorePendingApprovals() }
         phase = .ready
+        if sessionID == nil { transcriptOpenInterval?.end(variant: .empty) } // new chat: nothing to render
         return true
     }
 
@@ -2327,6 +2336,7 @@ public final class ConversationViewModel {
         allRows = cached.messages.map { Self.row(from: $0, id: nextRowID()) }
         adoptHistoryReactions(into: allRows, from: cached.messages)
         hydratedFromCache = true
+        transcriptOpenInterval?.end(variant: .cached)
         // H1: cached rows landed — the placeholder is no longer needed (rows
         // render immediately). The authoritative fetch still runs to settle
         // the transcript, but the screen already shows real content.
@@ -2359,6 +2369,7 @@ public final class ConversationViewModel {
             }
             snapshotGeneration &+= 1
             adoptHistoryReactions(into: allRows, from: opened.messages)
+            transcriptOpenInterval?.end(variant: .live)
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
             historyLoadError = nil
@@ -2839,6 +2850,7 @@ public final class ConversationViewModel {
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.
                 allRows = []
+                transcriptOpenInterval?.end(variant: .empty)
                 if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
                 hydratedFromCache = false
                 isHistoryHydrationInProgress = false
@@ -2883,6 +2895,7 @@ public final class ConversationViewModel {
                 allRows = messages.map { Self.row(from: $0, id: nextRowID()) }
                 adoptHistoryReactions(into: allRows, from: messages)
             }
+            transcriptOpenInterval?.end(variant: .live)
             if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
