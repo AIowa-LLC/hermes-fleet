@@ -454,8 +454,8 @@ public struct GatewayConversationClient: ConversationProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .requestTimedOut(method: method)
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

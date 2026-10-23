@@ -35,11 +35,14 @@ public enum SessionHistoryError: Error, Sendable, Equatable, LocalizedError {
     /// The session key is not a safe routing key (path traversal, separators)
     /// — fail closed before any RPC is sent (M9).
     case invalidSessionKey(String)
+    /// The gateway did not answer the read in time (`method` is the RPC name).
+    case requestTimedOut(method: String)
 
     public var errorDescription: String? {
         switch self {
         case .notConnected: return "gateway not connected"
         case .malformedPayload(let s): return "malformed session payload: \(s)"
+        case .requestTimedOut(let method): return GatewayRequestCatalog.timeoutMessage(forMethod: method)
         case .rpcFailed(let s): return "session read RPC failed: \(s)"
         case .sessionNotFound(let s): return "session not found: \(s)"
         case .invalidSessionKey(let s): return "invalid session key: \(s)"

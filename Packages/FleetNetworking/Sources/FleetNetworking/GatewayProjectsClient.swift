@@ -188,7 +188,7 @@ public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDis
             try await transport.connect()
         }
         do {
-            return try await transport.request(method: method, params: params)
+            return try await transport.readRequest(method: method, params: params)
         } catch let error as JSONRPCError {
             throw Self.mapError(error)
         } catch let error as TransportError {
@@ -214,8 +214,8 @@ public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDis
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .rpcFailed(GatewayRequestCatalog.timeoutMessage(forMethod: method))
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
