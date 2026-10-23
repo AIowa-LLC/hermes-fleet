@@ -374,14 +374,26 @@ enum AttachmentPreviewFileStore {
 
     /// Write the staged bytes under their sanitized display name (QuickLook
     /// infers the type from the extension). Nil when the write fails — the
-    /// sheet then shows its honest failure state.
+    /// sheet then shows its honest failure state. The copy is privacy-bearing,
+    /// so it gets the same local file protection as the artifact share files
+    /// (#196): if protection cannot be confirmed, the copy is removed and the
+    /// write fails closed.
     static func write(bytes: Data, displayName: String) -> URL? {
         let name = AttachmentPreviewRules.previewFileName(displayName: displayName)
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
+            if LocalFileProtection.applyBestEffortReportingFailure(
+                to: directory, role: "attachment-preview-directory") != nil {
+                return nil
+            }
             let url = directory.appendingPathComponent(name)
             try bytes.write(to: url, options: .atomic)
+            if LocalFileProtection.applyBestEffortReportingFailure(
+                to: url, role: "attachment-preview-file") != nil {
+                try? FileManager.default.removeItem(at: url)
+                return nil
+            }
             return url
         } catch {
             return nil
