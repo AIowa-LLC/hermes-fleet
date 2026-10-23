@@ -699,9 +699,14 @@ public final class ConversationViewModel {
     /// WORKING composer instead of an enabled-but-dead one.
     private func connectAndOpen() async -> Bool {
         phase = .connecting
+        let connectStartedAt = ContinuousClock.now
+        SessionLifecycleLog.openStarted()
         do {
             try await session.connect()
         } catch {
+            SessionLifecycleLog.openFailed(
+                SessionLifecycleLog.failureKind(for: error),
+                durationMs: SessionLifecycleLog.milliseconds(since: connectStartedAt))
             classifyConnectFailure(error)
             return false
         }
@@ -719,6 +724,7 @@ public final class ConversationViewModel {
     private func ensureOpenAndSubscribed(fencedBy token: Int? = nil) async -> Bool {
         if openedSessionID == nil {
             phase = .opening
+            let openStartedAt = ContinuousClock.now
             do {
                 if let sessionID {
                     // t_8401d3c3: declare the client's last applied event id on
@@ -757,9 +763,14 @@ public final class ConversationViewModel {
                 }
             } catch {
                 guard isCurrent(token) else { return false }
+                SessionLifecycleLog.openFailed(
+                    SessionLifecycleLog.failureKind(for: error),
+                    durationMs: SessionLifecycleLog.milliseconds(since: openStartedAt))
                 classifyOpenFailure(error)
                 return false
             }
+            SessionLifecycleLog.openSucceeded(
+                durationMs: SessionLifecycleLog.milliseconds(since: openStartedAt))
         }
         startEventSubscription()
         startStatusWatcher()
@@ -1004,9 +1015,11 @@ public final class ConversationViewModel {
     public func reconnect() async {
         let token = beginOperation()
         phase = .reconnecting
+        SessionLifecycleLog.reconnectStarted()
         do {
             try await session.connect()
         } catch {
+            SessionLifecycleLog.reconnectFailed(SessionLifecycleLog.failureKind(for: error))
             guard token == operationGeneration else { return }
             phase = .disconnected
             errorMessage = Self.nonSecret(error)
@@ -1358,8 +1371,9 @@ public final class ConversationViewModel {
                 sessionID: sid,
                 command: "/\(name) \(argument)".trimmingCharacters(in: .whitespaces))
         } catch SlashCommandError.unknownDispatchType(let type) {
-            commandSuggestionError = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
-            appendCommandRow(commandSuggestionError!)
+            let message = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
+            commandSuggestionError = message
+            appendCommandRow(message)
             return true
         } catch SlashCommandError.commandUnavailable {
             commandSuggestionError = "/\(name) is no longer available on this gateway. Refresh and try again."
@@ -1375,8 +1389,9 @@ public final class ConversationViewModel {
                     argument: argument)
                 return await interpret(dispatch: dispatch, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
             } catch SlashCommandError.unknownDispatchType(let type) {
-                commandSuggestionError = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
-                appendCommandRow(commandSuggestionError!)
+                let message = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
+                commandSuggestionError = message
+                appendCommandRow(message)
                 return true
             } catch let error as SlashCommandError {
                 commandSuggestionError = Self.nonSecret(error)
@@ -1401,19 +1416,14 @@ public final class ConversationViewModel {
         aliasDepth: Int = 0
     ) async -> Bool {
         // Normalize: slash.exec may embed a dispatch.
-        let directive: HermesCommandDispatch?
-        if let dispatch { directive = dispatch }
-        else if let exec = execution?.dispatch { directive = exec }
-        else { directive = nil }
-
-        // Plain worker output.
-        if directive == nil {
+        guard let directive = dispatch ?? execution?.dispatch else {
+            // Plain worker output.
             let out = execution?.output ?? "(no output)"
             let warning = execution?.warning
             appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
             return true
         }
-        return await interpretDirective(directive!, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+        return await interpretDirective(directive, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
     }
 
     private func interpretDirective(
@@ -1521,8 +1531,13 @@ public final class ConversationViewModel {
         // Turn clock: starts at submit — the user waits from HERE, through
         // tools/reasoning, until the turn completes.
         turnStartedAt = Date()
+        let sendStartedAt = ContinuousClock.now
+        SessionLifecycleLog.sendStarted()
         do {
             let submission = try await session.conversation.submitPrompt(sessionID: sid, text: modelPayload)
+            SessionLifecycleLog.sendAcknowledged(
+                streaming: submission.isStreaming,
+                durationMs: SessionLifecycleLog.milliseconds(since: sendStartedAt))
             // The refs were staged successfully at pick time. Keep them in
             // the tray until submit succeeds so a rejected prompt remains
             // retryable with the same attachment references. An upload staged
@@ -1544,6 +1559,9 @@ public final class ConversationViewModel {
             // stream carries no terminal frame for a prompt that never
             // started, so classifyTurnFailure alone would leave the turn
             // clock running.
+            SessionLifecycleLog.sendFailed(
+                SessionLifecycleLog.failureKind(for: error),
+                durationMs: SessionLifecycleLog.milliseconds(since: sendStartedAt))
             classifyTurnFailure(error)
             turnStartedAt = nil
             return false
@@ -3374,8 +3392,8 @@ public final class ConversationViewModel {
     /// into the new turn's bubble (and, across a resume, foreign session
     /// content into the transcript).
     private func appendThinking(_ text: String) {
-        if lastAssistantIndex != nil, isStreaming {
-            allRows[lastAssistantIndex!].detail = (allRows[lastAssistantIndex!].detail ?? "") + text
+        if let idx = lastAssistantIndex, isStreaming {
+            allRows[idx].detail = (allRows[idx].detail ?? "") + text
         } else {
             pendingReasoning = (pendingReasoning ?? "") + text
         }
