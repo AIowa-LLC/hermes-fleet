@@ -852,7 +852,10 @@ public final class ConversationViewModel {
         // pull `approval.pending` so a banner whose push event was missed
         // while detached is restored (fail-soft inside the VM; deduped
         // against any banner that did arrive).
-        Task { await approvalViewModel?.restorePendingApprovals() }
+        // Capture only the approval child: an unanswered `approval.pending`
+        // read must not keep a popped conversation alive.
+        let approvals = approvalViewModel
+        Task { await approvals?.restorePendingApprovals() }
         phase = .ready
         if sessionID == nil { transcriptOpenInterval?.end(variant: .empty) } // new chat: nothing to render
         return true

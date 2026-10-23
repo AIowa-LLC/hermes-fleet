@@ -317,6 +317,15 @@ final class ConversationFixtureLoopTests: XCTestCase {
                     ]
                 case "session.events.since":
                     return [Self.sinceResponse(id: id, events: [], latestSeq: 0)]
+                case "session.history":
+                    // The resume projection carries no messages, so the view
+                    // model fetches authoritative history. Answer it: an
+                    // unanswered read keeps the view model's in-flight history
+                    // refetch (which retains it) pending until the transport
+                    // times out, and the popped view model cannot deallocate.
+                    return [Self.responseFrame(id: id, result: [
+                        "session_id": sessionID, "count": 0, "messages": [],
+                    ])]
                 default:
                     return []
                 }
