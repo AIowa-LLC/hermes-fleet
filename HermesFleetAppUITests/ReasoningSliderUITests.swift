@@ -189,4 +189,31 @@ final class ReasoningSliderUITests: XCTestCase {
         XCTAssertTrue(chipWord(chipFinal).contains("Medium"),
                       "dismiss-without-drag must not change the level: \(chipWord(chipFinal))")
     }
+
+    /// Header reasoning label (beside the model chip): shows the session's
+    /// level, and picking a level from its menu applies it and updates the
+    /// label.
+    func testHeaderReasoningLabelPickUpdatesValue() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let header = firstMatch(in: app, identifier: "fleet.conversation.reasoning.header")
+        XCTAssertTrue(chipWord(header).contains("Medium"),
+                      "header reads the scripted default level: \(chipWord(header))")
+
+        header.tap()
+        let option = firstMatch(in: app, identifier: "fleet.conversation.reasoning.header.option.high")
+        tap(option)
+
+        let updated = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "High"),
+            object: app.descendants(matching: .any)
+                .matching(identifier: "fleet.conversation.reasoning.header").firstMatch)
+        XCTAssertEqual(XCTWaiter().wait(for: [updated], timeout: 10), .completed,
+                       "header label should update to High after the pick")
+        XCTAssertTrue(chipWord(firstMatch(in: app, identifier: "fleet.conversation.reasoning.header"))
+            .contains("High"))
+    }
 }
