@@ -633,6 +633,35 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         add(roomShot)
     }
 
+    func testGroupsHomeHeaderAtAccessibility5() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "groups"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+
+        let surface = app.descendants(matching: .any)["fleet.groups"]
+        let title = app.navigationBars["Groups"].firstMatch
+        let newGroup = app.buttons["fleet.groups.new"]
+        let search = app.searchFields["Search groups and members"].firstMatch
+        XCTAssertTrue(surface.waitForExistence(timeout: 15), "Groups home renders at AX5")
+        XCTAssertTrue(title.exists, "Groups title remains visible at AX5")
+        XCTAssertTrue(search.exists, "Groups search remains present at AX5")
+        XCTAssertTrue(title.frame.intersects(app.windows.firstMatch.frame))
+        XCTAssertTrue(newGroup.frame.intersects(app.windows.firstMatch.frame))
+        XCTAssertLessThanOrEqual(newGroup.frame.maxY, search.frame.minY,
+                                 "New Group action clears the searchable bottom bar at AX5")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "d1-groups-home-accessibility5"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        newGroup.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.textFields["fleet.room.create.name"].waitForExistence(timeout: 10),
+                      "New Group opens from the AX5 Groups home")
+    }
+
     // MARK: 5. Chats refresh-failure surface (dogfood corrective pass F2/F3)
 
     /// F2: a container `accessibilityIdentifier` on the failure surface

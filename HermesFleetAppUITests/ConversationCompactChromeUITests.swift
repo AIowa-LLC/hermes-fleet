@@ -314,6 +314,35 @@ final class ConversationCompactChromeUITests: XCTestCase {
                       "session actions must remain reachable at AX sizes")
     }
 
+    func testComposerRemainsVisibleAtAccessibility5() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "bot-detail"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+
+        let session = firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1")
+        XCTAssertTrue(session.waitForExistence(timeout: 15), "scripted conversation remains available at AX5")
+        if session.isHittable {
+            session.tap()
+        } else {
+            session.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation composer renders at AX5")
+        let send = firstMatch(in: app, identifier: "fleet.conversation.send")
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "send action remains present at AX5")
+        let window = app.windows.firstMatch.frame
+        XCTAssertTrue(composer.frame.intersects(window), "composer remains in the visible window at AX5")
+        XCTAssertTrue(send.frame.intersects(window), "send remains in the visible window at AX5")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "d1-composer-accessibility5"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     // MARK: - DEV14 toolbelt clipping (issue 6)
 
     /// Long model/folder/profile names must not clip the strip at either

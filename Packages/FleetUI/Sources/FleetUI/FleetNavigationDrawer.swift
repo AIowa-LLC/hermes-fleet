@@ -81,8 +81,9 @@ struct FleetNavigationDrawer: View {
                     .simultaneousGesture(dismissGesture)
                     .padding(.top, FleetTheme.spacingLg)
                     .padding(.bottom, FleetTheme.spacingMd)
+                // Let List own vertical drags here so large Dynamic Type
+                // destinations can scroll above the pinned footer.
                 primarySection
-                    .simultaneousGesture(dismissGesture)
                     .padding(.bottom, FleetTheme.spacingMd)
                 sectionHeading("Pinned")
                 ForEach(visiblePins) { pin in
