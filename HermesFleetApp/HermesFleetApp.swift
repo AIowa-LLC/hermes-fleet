@@ -73,6 +73,11 @@ struct HermesFleetApp: App {
                 // `<scheme>://pair#…` (and https `/pair#…`) starts the connect flow; other
                 // links on the same scheme (conversations) keep their own handling.
                 if environment.pairing.receive(url: url) { return }
+                // Phase B: `<scheme>://inbox[?item=<id>]` opens the approvals inbox.
+                if let inboxTarget = FleetInboxDeepLink.target(from: url) {
+                    environment.openInbox(focus: inboxTarget.itemID)
+                    return
+                }
                 guard let target = FleetConversationDeepLink.target(from: url) else { return }
                 environment.openConversationFromShortcut(
                     route: target.route,

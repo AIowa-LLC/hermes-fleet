@@ -279,6 +279,19 @@ public final class AppEnvironment {
     /// Live Ops approvals seam is its poll source (see `InboxStore`).
     public let inbox: InboxStore
 
+    /// Phase B deep link: the inbox item the Inbox screen should open on
+    /// arrival (or immediately, if it is already showing). One-shot: the
+    /// Inbox clears it once consumed. Use `openInbox(focus:)` to set it.
+    public var pendingInboxFocus: InboxItemID?
+
+    /// Open the Inbox destination (Fleet stack), optionally focused on one
+    /// item. Notifications, Live Activities, and `FleetInboxDeepLink` all enter
+    /// the inbox through here.
+    public func openInbox(focus itemID: InboxItemID? = nil) {
+        pendingInboxFocus = itemID
+        requestScreen(.inbox)
+    }
+
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
     /// 30-day retention, pruned when a gateway is removed. No secrets.

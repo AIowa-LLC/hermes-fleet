@@ -28,6 +28,12 @@ public enum FleetScreen: Hashable, Sendable, Codable {
     /// media with source conversation + gateway). Lives on the Fleet stack;
     /// reached from the navigation drawer.
     case artifacts
+    /// Phase B: the approvals Inbox (every pending agent decision across
+    /// gateways). Pushed on the Fleet stack from the drawer, or opened by
+    /// `AppEnvironment.openInbox(focus:)` / `FleetInboxDeepLink`. The focused
+    /// item is deliberately NOT part of this payload: it is one-shot
+    /// (`pendingInboxFocus`), so a restored navigation never re-opens a sheet.
+    case inbox
     /// ADR-0011 W3: Settings → Security sub-screen (App Lock).
     case settingsSecurity
     /// ADR-0011 W4: Settings → Data & Storage sub-screen (cache clear).
@@ -46,7 +52,7 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         // and gateway-resource surface is owned by Fleet and PUSHED on the
         // Fleet stack (the dashboard's Gateways section is the entry).
         case .gateways, .gatewayDetail, .gatewayConnection, .gatewayHealth,
-             .health, .cron, .skills, .memoryGraph, .projects, .artifacts:
+             .health, .cron, .skills, .memoryGraph, .projects, .artifacts, .inbox:
             .fleet
         // ADR-0011: the Settings sub-screens own to the Settings tab.
         case .settingsSecurity, .settingsData:

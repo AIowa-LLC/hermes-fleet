@@ -160,6 +160,8 @@ extension FleetServiceGraph {
                     approvals: ScriptedLiveOpsApprovals(gatewayID: gateway.id)
                 )
             },
+            // Phase B: `HERMES_FLEET_INBOX_FIXTURE=1` scripts one pending approval.
+            inboxFeedFactory: ScriptedInboxFixture.feedFactory,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
                 ? []
                 : (FleetServiceGraph.singleGatewayEnabled
