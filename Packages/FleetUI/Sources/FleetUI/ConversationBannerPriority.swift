@@ -49,6 +49,8 @@ enum ConversationBannerKind: Equatable, Sendable {
     case authRequired
     /// A classified failure or surfaced error.
     case failed
+    /// The session is open on another client; offers Wait and retry.
+    case sessionOwnedElsewhere
     /// Cold-start persisted history notice.
     case info
     /// The open did not complete within the open timeout. Offers Retry and
@@ -59,7 +61,7 @@ enum ConversationBannerKind: Equatable, Sendable {
         switch self {
         case .authRequired: return .authRequired
         case .disconnected: return .disconnected
-        case .failed, .timedOut: return .failed
+        case .failed, .timedOut, .sessionOwnedElsewhere: return .failed
         case .opening, .connecting, .reconnecting: return .progress
         case .integrity, .replay, .info: return .informational
         }
@@ -76,6 +78,7 @@ enum ConversationBannerKind: Equatable, Sendable {
         case .disconnected: return "wifi.slash"
         case .authRequired: return "exclamationmark.lock"
         case .failed: return "exclamationmark.triangle"
+        case .sessionOwnedElsewhere: return "desktopcomputer"
         case .info: return "internaldrive"
         case .timedOut: return "clock.badge.exclamationmark"
         }
@@ -113,6 +116,9 @@ enum ConversationBannerSelector {
     static let authRequiredDefaultText = "Authentication required."
     static let hydratedFromCacheText = "Showing saved history — connecting for live updates."
     static let timedOutText = "Taking too long to open this conversation."
+    /// Plain-language copy for an ownership refusal on open. Never echoes the
+    /// gateway's message or the RPC code.
+    static let sessionOwnedElsewhereText = "This session is open on your desktop. Close it there or wait for it to finish, then retry."
 
     static func select(
         phase: ConversationViewModel.Phase,
@@ -130,7 +136,7 @@ enum ConversationBannerSelector {
             switch phase {
             case .idle, .opening, .connecting, .reconnecting, .ready, .streaming:
                 return ConversationBanner(kind: .timedOut, text: timedOutText)
-            case .authRequired, .disconnected, .failed:
+            case .authRequired, .disconnected, .failed, .sessionOwnedElsewhere:
                 break
             }
         }
@@ -141,6 +147,8 @@ enum ConversationBannerSelector {
             return ConversationBanner(kind: .disconnected, text: disconnectedText)
         case .failed(let detail):
             return ConversationBanner(kind: .failed, text: detail)
+        case .sessionOwnedElsewhere:
+            return ConversationBanner(kind: .sessionOwnedElsewhere, text: sessionOwnedElsewhereText)
         case .idle, .opening:
             return ConversationBanner(kind: .opening, text: openingText)
         case .connecting:

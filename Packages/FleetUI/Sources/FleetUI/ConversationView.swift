@@ -1130,7 +1130,7 @@ enum ConversationHeaderChips {
             return .waiting
         case .authRequired:
             return .authRequired
-        case .failed:
+        case .failed, .sessionOwnedElsewhere:
             return .degraded
         case .disconnected:
             return .offline
@@ -1182,6 +1182,15 @@ enum ConversationHeaderChips {
                     // An open that failed before the session existed has no
                     // other way forward; offer the same retry as a timeout.
                     openRetryButton(model)
+                case .sessionOwnedElsewhere:
+                    // Re-runs the open (reconnect → open → subscribe). The only
+                    // action offered: Fleet never takes the session over.
+                    Button("Wait and retry") {
+                        Task { await model.reconnect() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("fleet.conversation.wait-and-retry")
                 default:
                     EmptyView()
                 }

@@ -441,6 +441,39 @@ final class ConversationClientTests: XCTestCase {
         XCTAssertFalse(message.contains("owner exists"))
     }
 
+    // MARK: session.resume ownership refusal (open path)
+
+    func testResumeOwnershipRefusalMapsToOwnershipCase() throws {
+        let bytes = Data(#"{"code":4090,"message":"owner exists","data":{"reason":"SESSION_NOT_OWNED"}}"#.utf8)
+        let error = try JSONDecoder().decode(JSONRPCError.self, from: bytes)
+        XCTAssertEqual(GatewayConversationClient.mapResumeRPCError(error), .sessionOwnedElsewhere)
+        XCTAssertTrue(GatewayConversationClient.isSessionOwnedElsewhere(error))
+    }
+
+    func testResumeOwnershipMatcherRequiresExactCodeAndReason() {
+        let owned = JSONValue.object(["reason": .string("SESSION_NOT_OWNED")])
+        XCTAssertFalse(GatewayConversationClient.isSessionOwnedElsewhere(
+            JSONRPCError(code: 4001, message: "gone", data: owned)))
+        XCTAssertFalse(GatewayConversationClient.isSessionOwnedElsewhere(
+            JSONRPCError(code: 4090, message: "other", data: .object(["reason": .string("SESSION_COORDINATION_UNAVAILABLE")]))))
+        XCTAssertFalse(GatewayConversationClient.isSessionOwnedElsewhere(
+            JSONRPCError(code: 4090, message: "no reason", data: nil)))
+    }
+
+    func testResumeKeepsOtherRefusalsOnSharedMapping() {
+        // Coordination unavailable is NOT an owner: it keeps the shared
+        // failure copy and never becomes the ownership case.
+        guard case .rpcFailed(let message) = GatewayConversationClient.mapResumeRPCError(
+            JSONRPCError(code: 4090, message: "registry unavailable",
+                         data: .object(["reason": .string("SESSION_COORDINATION_UNAVAILABLE")]))) else {
+            return XCTFail("unverified coordination must remain a failure, not an owner")
+        }
+        XCTAssertTrue(message.contains("could not verify conversation ownership"))
+        XCTAssertEqual(GatewayConversationClient.mapResumeRPCError(
+            JSONRPCError(code: 4001, message: "session gone", data: nil)),
+            .sessionNotFound("session gone"))
+    }
+
     // MARK: prompt.submit
 
     func testSubmitPromptSendsSessionAndTextAndDecodesStreaming() async throws {

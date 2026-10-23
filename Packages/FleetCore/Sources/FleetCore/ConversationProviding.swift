@@ -117,6 +117,12 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
     /// method that timed out; the user-facing sentence comes from
     /// `GatewayRequestCatalog`.
     case requestTimedOut(method: String)
+    /// The gateway refused to open the conversation because another client
+    /// holds it (typically the desktop app). Wire: JSON-RPC 4090 with
+    /// `data.reason == "SESSION_NOT_OWNED"`. Recoverable by waiting for that
+    /// client to release the session, then retrying the open. Fleet never
+    /// takes ownership automatically.
+    case sessionOwnedElsewhere
 
     public var errorDescription: String? {
         switch self {
@@ -132,6 +138,8 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
         case .sessionTooLongToReload(let count):
             if let count { return "session too long to reload (\(count) messages)" }
             return "session too long to reload"
+        case .sessionOwnedElsewhere:
+            return "session is open on another client"
         }
     }
 }
