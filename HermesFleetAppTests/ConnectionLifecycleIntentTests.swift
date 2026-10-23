@@ -426,6 +426,18 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.connectCount, 2)
     }
 
+    /// Cold launch and resume share one gate: the periodic inbox reconcile runs
+    /// exactly while protected content may be shown, not only after a resume.
+    func testInboxReconcileFollowsForegroundGateOnColdLaunch() async {
+        let (environment, _) = await makeEnvironment(ids: ["workstation"])
+        // makeEnvironment opens the gate the way a cold launch does (after App Lock).
+        XCTAssertTrue(environment.inbox.isReconcilingPeriodically)
+        environment.setForegroundRecoveryAllowed(false)
+        XCTAssertFalse(environment.inbox.isReconcilingPeriodically)
+        environment.setForegroundRecoveryAllowed(true)
+        XCTAssertTrue(environment.inbox.isReconcilingPeriodically)
+    }
+
     func testDisconnectAllStopsRecoveryWatchUntilForegroundRestore() async {
         let id = GatewayID(rawValue: "workstation")
         let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])

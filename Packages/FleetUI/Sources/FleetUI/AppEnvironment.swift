@@ -2520,8 +2520,6 @@ public final class AppEnvironment {
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration else { return }
         connectionsSuspended = false
-        // Phase B: reconcile pending approvals on foreground, then every minute.
-        inbox.setForeground(true)
         await restoreIntendedConnections()
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration, !connectionsSuspended else { return }
@@ -2577,6 +2575,10 @@ public final class AppEnvironment {
     /// transport before that root authenticates protected content.
     public func setForegroundRecoveryAllowed(_ allowed: Bool) {
         foregroundRecoveryAllowed = allowed
+        // Phase B: the periodic inbox reconcile runs exactly while protected
+        // content may be shown. Cold launch (after App Lock), resume, and
+        // unlock all pass through here, so the reconcile is not resume-only.
+        inbox.setForeground(allowed)
         guard !allowed else { return }
         // A lock transition invalidates pending foreground reconciliation
         // without canceling its connect task (which would clear user intent).
