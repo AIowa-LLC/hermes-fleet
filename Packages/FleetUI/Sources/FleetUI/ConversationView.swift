@@ -124,6 +124,9 @@ public struct ConversationView: View {
     /// P0.4a: true once the persisted draft for this conversation has been
     /// applied (or found absent), so it is restored at most once per mount.
     @State private var draftRestored = false
+    /// Bumped by "Reopen session" so `.task(id:)` builds and starts a fresh
+    /// view model even though the trigger inputs did not change.
+    @State private var reopenGeneration = 0
     /// V4 motion: bumped on every composer submit so `.sensoryFeedback`
     /// fires the send haptic (trigger-based; not on initial appearance).
     @State private var sendPulse = 0
@@ -201,13 +204,15 @@ public struct ConversationView: View {
     /// (nil = never). `openState` is `.unavailable` only once the CURRENT
     /// snapshot has been tried and produced no VM.
     @State private var attemptedOpenTrigger: OpenTrigger?
-    /// True while a `.task(id:)` run is inside `viewModel.start()` and its
-    /// post-open bookkeeping (see the guard there).
-    @State private var isStartInFlight = false
+    /// The view model whose `.task(id:)` run is inside `viewModel.start()` and
+    /// its post-open bookkeeping (see the guard there). Keyed per view model so
+    /// a "Reopen session" never waits behind a parked open of the old one.
+    @State private var startInFlightViewModel: ObjectIdentifier?
 
     private struct OpenTrigger: Equatable {
         let hydrationPhase: AppEnvironment.HydrationPhase
         let gatewayPresent: Bool
+        var reopenGeneration = 0
     }
 
     private enum PendingAddPresentation {
@@ -216,7 +221,10 @@ public struct ConversationView: View {
     }
 
     private var openTrigger: OpenTrigger {
-        OpenTrigger(hydrationPhase: environment.hydrationPhase, gatewayPresent: isGatewayPresent)
+        OpenTrigger(
+            hydrationPhase: environment.hydrationPhase,
+            gatewayPresent: isGatewayPresent,
+            reopenGeneration: reopenGeneration)
     }
 
     private var openState: ConversationOpenState {
@@ -266,14 +274,16 @@ public struct ConversationView: View {
             // calls). The in-flight run finishes the open and its
             // post-open bookkeeping; a later run (re-appear) still restarts
             // the status watcher as before.
-            guard !isStartInFlight else { return }
-            isStartInFlight = true
-            defer { isStartInFlight = false }
+            let startKey = ObjectIdentifier(viewModel)
+            guard startInFlightViewModel != startKey else { return }
+            startInFlightViewModel = startKey
+            defer { if startInFlightViewModel == startKey { startInFlightViewModel = nil } }
             // Foreground auto-heal: a mounted conversation reconnects itself
             // when the app returns (no manual banner tap).
             viewModel.startForegroundHealing()
             await viewModel.start()
-            // A brand-new chat only learns its durable session id here.
+            // A brand-new chat only learns its durable session id here (also
+            // restored on resolution below, so this is idempotent).
             restoreDraftIfNeeded()
             // FOS-4 (SPEC §7 Continue / §17): record the open ONLY after the
             // destination resolved — the view model's resolved id is the
@@ -310,6 +320,11 @@ public struct ConversationView: View {
                     loadBytes: { fixture })
             }
             #endif
+        }
+        // Draft restore is keyed on the durable session id and never waits on
+        // the open: it runs the moment the id resolves, not after start().
+        .onChange(of: viewModel?.resolvedSessionID) { _, _ in
+            restoreDraftIfNeeded()
         }
         .onDisappear {
             pendingAddPresentation = nil
@@ -1138,7 +1153,8 @@ enum ConversationHeaderChips {
             hydratedFromCache: model.hydratedFromCache,
             historyLoadError: model.historyLoadError,
             errorMessage: model.errorMessage,
-            historyMayBeIncomplete: model.historyMayBeIncomplete
+            historyMayBeIncomplete: model.historyMayBeIncomplete,
+            openTimedOut: model.isOpenTimedOut
         ) {
             HStack(spacing: 12) {
                 bannerBody(banner)
@@ -1159,6 +1175,13 @@ enum ConversationHeaderChips {
                     .foregroundStyle(theme.onHighlight)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
+                case .timedOut:
+                    openRetryButton(model)
+                    reopenSessionButton
+                case .failed where !model.hasOpenedSession:
+                    // An open that failed before the session existed has no
+                    // other way forward; offer the same retry as a timeout.
+                    openRetryButton(model)
                 default:
                     EmptyView()
                 }
@@ -1167,6 +1190,37 @@ enum ConversationHeaderChips {
             .padding(.vertical, 8)
             .background(theme.surface)
         }
+    }
+
+    private func openRetryButton(_ model: ConversationViewModel) -> some View {
+        Button("Retry") {
+            Task { await model.retryOpen() }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(theme.highlight)
+        .foregroundStyle(theme.onHighlight)
+        .controlSize(.small)
+        .accessibilityIdentifier("fleet.conversation.open.retry")
+    }
+
+    private var reopenSessionButton: some View {
+        Button("Reopen session") {
+            reopenSession()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .accessibilityIdentifier("fleet.conversation.open.reopen")
+    }
+
+    /// Detach the current view model (a parked open can only complete into
+    /// that now-unused instance) and build a fresh one for the same route and
+    /// session, which starts its own open.
+    private func reopenSession() {
+        viewModel?.teardown()
+        draftRestored = false
+        reopenGeneration += 1
+        viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
+        restoreDraftIfNeeded()
     }
 
     /// One banner row: spinner (progress states) or glyph + text.
@@ -1469,7 +1523,7 @@ enum ConversationHeaderChips {
                     // still in flight and no row has rendered yet, show a
                     // HIG-native loading placeholder — never a bare blank
                     // slate that reads as a brand-new chat.
-                    if model.showsHistoryLoadingPlaceholder {
+                    if model.showsHistoryLoadingPlaceholder && !model.isOpenTimedOut {
                         historyLoadingPlaceholder
                     }
                 }

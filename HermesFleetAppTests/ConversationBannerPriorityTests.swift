@@ -18,7 +18,8 @@ final class ConversationBannerPriorityTests: XCTestCase {
         hydratedFromCache: Bool = false,
         historyLoadError: String? = nil,
         errorMessage: String? = nil,
-        historyMayBeIncomplete: Bool = false
+        historyMayBeIncomplete: Bool = false,
+        openTimedOut: Bool = false
     ) -> ConversationBanner? {
         ConversationBannerSelector.select(
             phase: phase,
@@ -27,8 +28,22 @@ final class ConversationBannerPriorityTests: XCTestCase {
             hydratedFromCache: hydratedFromCache,
             historyLoadError: historyLoadError,
             errorMessage: errorMessage,
-            historyMayBeIncomplete: historyMayBeIncomplete
+            historyMayBeIncomplete: historyMayBeIncomplete,
+            openTimedOut: openTimedOut
         )
+    }
+
+    /// A timed-out open replaces the progress spinner in every state the open
+    /// can still be in, and never masks a terminal failure.
+    func testTimedOutOpenReplacesSpinnerAndKeepsTerminalStates() {
+        for phase: ConversationViewModel.Phase in [.idle, .opening, .connecting, .reconnecting, .ready] {
+            XCTAssertEqual(select(phase: phase, openTimedOut: true)?.kind, .timedOut, "\(phase)")
+        }
+        XCTAssertEqual(select(phase: .opening, openTimedOut: false)?.kind, .opening)
+        XCTAssertEqual(select(phase: .disconnected, openTimedOut: true)?.kind, .disconnected)
+        XCTAssertEqual(select(phase: .authRequired, openTimedOut: true)?.kind, .authRequired)
+        XCTAssertEqual(select(phase: .failed("boom"), openTimedOut: true)?.kind, .failed)
+        XCTAssertFalse(ConversationBannerKind.timedOut.showsSpinner)
     }
 
     func testIncompleteHistoryNoticeStaysVisibleWhileStreaming() {
