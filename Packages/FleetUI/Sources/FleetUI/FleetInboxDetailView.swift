@@ -85,11 +85,14 @@ struct FleetInboxDetailView: View {
                     offlineNote
                 }
                 contextBlock(item)
-                if availability.canApprove {
-                    approveBlock(item)
+                // Pending decisions stay on screen; when no gateway can receive
+                // them they are shown disabled, never hidden.
+                if item.status == .pending, item.kind == .approval {
+                    approveBlock(item, enabled: availability.canApprove)
                 }
-                if availability.canAnswer {
+                if item.status == .pending, item.kind != .approval, !availability.answersInSessionOnly {
                     answerBlock(item)
+                        .disabled(!availability.canAnswer)
                 }
                 if availability.answersInSessionOnly {
                     Text("Batch questions are answered one at a time in their conversation.")
@@ -222,9 +225,9 @@ struct FleetInboxDetailView: View {
 
     // MARK: Approve and deny
 
-    private func approveBlock(_ item: InboxItem) -> some View {
+    private func approveBlock(_ item: InboxItem, enabled: Bool) -> some View {
         let needsReview = FleetInboxPresentation.requiresReview(item)
-        let approveEnabled = !busy && (!needsReview || reviewedHere)
+        let approveEnabled = enabled && !busy && (!needsReview || reviewedHere)
         return VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             if needsReview && !reviewedHere {
                 Text("Approve stays off until you review the full command. Deny is always available.")
@@ -257,7 +260,7 @@ struct FleetInboxDetailView: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
-            .disabled(busy)
+            .disabled(!enabled || busy)
             .accessibilityIdentifier("fleet.inbox.detail.deny")
         }
     }

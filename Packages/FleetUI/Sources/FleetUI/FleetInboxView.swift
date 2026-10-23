@@ -57,6 +57,9 @@ struct FleetInboxView: View {
             }
         }
         .background(theme.background)
+        // AX rule (see FleetNavigationDrawer): a container identifier without
+        // `.contain` swallows every descendant identifier from the tree.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.inbox")
         .task {
             await inbox.awaitLoaded()
@@ -105,9 +108,12 @@ struct FleetInboxView: View {
         .accessibilityIdentifier("fleet.inbox.list")
     }
 
+    /// Section headings are ordinary identified rows: a List header does not
+    /// carry its identifier into the accessibility tree.
     @ViewBuilder
     private var pendingSection: some View {
         Section {
+            sectionHeading("Pending · \(sections.pending.count)", identifier: "fleet.inbox.section.pending")
             if sections.pending.isEmpty {
                 Label("Nothing is waiting on you.", systemImage: "checkmark.circle")
                     .font(.subheadline)
@@ -118,21 +124,25 @@ struct FleetInboxView: View {
                     row(item)
                 }
             }
-        } header: {
-            Text("Pending · \(sections.pending.count)")
-                .accessibilityIdentifier("fleet.inbox.section.pending")
         }
     }
 
     private var historySection: some View {
         Section {
+            sectionHeading("History", identifier: "fleet.inbox.section.history")
             ForEach(sections.history) { item in
                 row(item)
             }
-        } header: {
-            Text("History")
-                .accessibilityIdentifier("fleet.inbox.section.history")
         }
+    }
+
+    private func sectionHeading(_ title: String, identifier: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier(identifier)
     }
 
     private func row(_ item: InboxItem) -> some View {
@@ -149,11 +159,17 @@ struct FleetInboxView: View {
     // MARK: States
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No agent is waiting on you", systemImage: "tray")
-        } description: {
-            Text("When an agent needs a command approved, a question answered, or a secret, it appears here. Requests from every connected gateway and conversation land in this one place.")
+        // The identifier sits on a plain container: ContentUnavailableView
+        // does not carry an identifier of its own into the accessibility tree.
+        VStack(spacing: 0) {
+            ContentUnavailableView {
+                Label("No agent is waiting on you", systemImage: "tray")
+            } description: {
+                Text("When an agent needs a command approved, a question answered, or a secret, it appears here. Requests from every connected gateway and conversation land in this one place.")
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.inbox.empty")
     }
 
