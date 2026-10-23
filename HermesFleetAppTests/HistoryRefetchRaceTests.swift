@@ -16,8 +16,12 @@ final class HistoryRefetchRaceTests: XCTestCase {
         private var waiting: [Int: CheckedContinuation<[SessionMessage], Never>] = [:]
         private var ready: [Int: [SessionMessage]] = [:]
         private var calls = 0
+        private var scoped = 0
         var callCount: Int { lock.withLock { calls } }
+        /// Requests issued while a `RefetchScope` label was set on the calling task.
+        var scopedCallCount: Int { lock.withLock { scoped } }
         func nextIndex() -> Int { lock.withLock { defer { calls += 1 }; return calls } }
+        func recordScoped() { lock.withLock { scoped += 1 } }
         func wait(_ index: Int) async -> [SessionMessage] {
             await withCheckedContinuation { (c: CheckedContinuation<[SessionMessage], Never>) in
                 let result: [SessionMessage]? = lock.withLock {
@@ -50,6 +54,8 @@ final class HistoryRefetchRaceTests: XCTestCase {
         nonisolated(unsafe) var failIndices: Set<Int> = []
         /// Real suspension for `immediate` responses so live events can interleave.
         nonisolated(unsafe) var immediateDelayMs = 0
+        /// Runs before an `immediate` response, so a test can hold the response until live activity has been applied.
+        nonisolated(unsafe) var beforeImmediateResponse: (@MainActor () async -> Void)?
         /// When set, `resumeEvents` (targeted gap replay) suspends on this handler.
         nonisolated(unsafe) var resumeEventsHandler: (@Sendable () async -> [ConversationEvent])?
         nonisolated(unsafe) var resumeEventsCalls = 0
@@ -91,10 +97,12 @@ final class HistoryRefetchRaceTests: XCTestCase {
         func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
         func subscribeToGaps() -> AsyncStream<EventGap> { gapStream }
         func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
+            if RefetchScope.label != nil { gates.recordScoped() }
             let index = gates.nextIndex()
             if failIndices.contains(index) { throw ReplayError.rpcFailed("history unavailable") }
             let messages: [SessionMessage]
             if let immediate {
+                if let beforeImmediateResponse { await beforeImmediateResponse() }
                 if immediateDelayMs > 0 { try? await Task.sleep(for: .milliseconds(immediateDelayMs)) }
                 messages = immediate
             } else { messages = await gates.wait(index) }
@@ -103,6 +111,13 @@ final class HistoryRefetchRaceTests: XCTestCase {
         func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
             SessionStatus.parse(output: "Session ID: \(sessionID)\nModel: test-model (sim)")
         }
+    }
+
+    /// Task-local tag: set around the refetch call so only requests it issues
+    /// are counted. Unstructured tasks created later (e.g. the view model's armed
+    /// settle refresh) do not inherit it.
+    enum RefetchScope {
+        @TaskLocal static var label: String?
     }
 
     final class FakeClock: @unchecked Sendable {
@@ -288,8 +303,25 @@ final class HistoryRefetchRaceTests: XCTestCase {
         let (session, model) = try await makeFixture()
         session.immediate = [msg("SNAP")]
         session.immediateDelayMs = 40 // a real suspension: live events interleave with every request
+        // Each response is held until live activity has been APPLIED during its
+        // flight: the churn's rows land asynchronously, so a fixed delay alone can
+        // let a request finish before any event is applied. Captures only a weak
+        // model: the armed refresh can reach this hook after the test instance is
+        // gone, so it must not touch `self`.
+        session.beforeImmediateResponse = { [weak model] in
+            guard let model else { return }
+            let start = model.transcript.map(\.text)
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline, model.transcript.map(\.text) == start {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
         let base = session.gates.callCount
-        let refetch = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }
+        let refetch = Task {
+            await RefetchScope.$label.withValue("loop") {
+                await model.refetchAuthoritativeHistory(sessionID: "s1")
+            }
+        }
         let firstRequestStarted = await waitUntil { session.gates.callCount == base + 1 }
         XCTAssertTrue(firstRequestStarted, "the first request starts before the conversation becomes busy")
         let churn = Task { @MainActor in
@@ -302,11 +334,14 @@ final class HistoryRefetchRaceTests: XCTestCase {
             }
         }
         let outcome = await refetch.value
+        // Count only the requests this refetch issued. The view model's armed
+        // settle refresh is a separate task and is governed by its own rules.
+        let loopRequests = session.gates.scopedCallCount
         churn.cancel()
         XCTAssertEqual(outcome, .rejectedStale, "every response landed after fresh live activity")
-        XCTAssertGreaterThan(session.gates.callCount - base, 0, "at least the first history request ran")
+        XCTAssertGreaterThan(loopRequests, 0, "at least the first history request ran")
         XCTAssertLessThanOrEqual(
-            session.gates.callCount - base,
+            loopRequests,
             ConversationViewModel.maxRefetchAttempts,
             "a busy stream may stop retries early, but must never exceed the attempt limit")
         XCTAssertTrue(model.historyMayBeIncomplete, "no recovery is claimed")
