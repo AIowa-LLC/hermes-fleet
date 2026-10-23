@@ -285,6 +285,22 @@ final class ConversationViewModelTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(25))
     }
 
+    /// Wait for a specific state change when an AsyncStream consumer is still
+    /// draining scripted events. Keep the final state assertion separate so
+    /// a missing event still fails instead of being converted to a skip.
+    private func waitUntil(
+        timeout: Duration,
+        _ condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition()
+    }
+
     /// t_e77c614c — one-shot async gate for holding a scripted call in flight.
     final class OneShotGate: @unchecked Sendable {
         private let lock = NSLock()
@@ -1205,8 +1221,17 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
         await flush()
 
+        let streamedWhileHistoryHeld = await waitUntil(timeout: .seconds(4)) {
+            let toolNames = viewModel.transcript.filter { $0.kind == .tool }.map(\.text)
+            let finalAssistant = viewModel.transcript.last { $0.kind == .assistant }
+            return toolNames == names && finalAssistant?.text == "done" && finalAssistant?.isStreaming == false
+        }
+        XCTAssertTrue(streamedWhileHistoryHeld,
+                      "all scripted events should render while the empty history fetch is still held in flight")
+
         gate.open()
-        await flush()
+        let historySettled = await waitUntil(timeout: .seconds(4)) { !viewModel.isHistoryHydrationInProgress }
+        XCTAssertTrue(historySettled, "the held empty-history fetch should finish after its gate opens")
 
         XCTAssertEqual(
             viewModel.transcript.filter { $0.kind == .tool }.map(\.text), names,
@@ -1927,6 +1952,12 @@ final class ConversationViewModelTests: XCTestCase {
         scripted.push(.messageDelta(sessionID: "s-1", text: "turn", rendered: nil, seq: 3))
         await flush()
 
+        let replayedTailApplied = await waitUntil(timeout: .seconds(4)) {
+            viewModel.transcript.last { $0.kind == .assistant }?.text == "post-restart turn"
+        }
+        XCTAssertTrue(replayedTailApplied,
+                      "both low-sequence post-restart deltas should be consumed after the epoch refresh")
+
         let assistant = viewModel.transcript.last { $0.kind == .assistant }
         XCTAssertEqual(assistant?.text, "post-restart turn",
                        "post-restart low-seq events must APPLY (cursor dropped), not drop as duplicates")
@@ -1935,6 +1966,12 @@ final class ConversationViewModelTests: XCTestCase {
         // event (seq 4) renders without firing a spurious gap recovery.
         scripted.push(.messageComplete(sessionID: "s-1", text: "post-restart turn", status: nil, error: nil, seq: 4))
         await flush()
+        let turnSettled = await waitUntil(timeout: .seconds(4)) {
+            viewModel.phase == .ready
+                && viewModel.transcript.last { $0.kind == .assistant }?.text == "post-restart turn"
+                && viewModel.transcript.last { $0.kind == .assistant }?.isStreaming == false
+        }
+        XCTAssertTrue(turnSettled, "the contiguous terminal event should settle the post-restart turn")
         XCTAssertEqual(scripted.resumeEventsRequests.count, 0,
                        "fresh-epoch tail must be contiguous — no spurious gap recovery")
         let completed = viewModel.transcript.last { $0.kind == .assistant }
@@ -2189,23 +2226,29 @@ final class ConversationViewModelTests: XCTestCase {
     func testRepeatedForegroundCyclesKeepOneSessionAndNoDuplicateRows() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
         await viewModel.start()
-        await viewModel.send("hello")
+        let submitted = await viewModel.send("hello")
+        XCTAssertTrue(submitted, "the setup prompt must be accepted before streaming events are pushed")
         scripted.push(.messageStart(sessionID: "s-1"))
         scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
         scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
         await flush()
+        XCTAssertEqual(viewModel.transcript.count, 2,
+                       "the submitted prompt and streamed reply must render before recovery; history=\(scripted.historyCallCount), submitted=\(scripted.submittedTexts)")
         let creates = scripted.createCallCount
         let resumes = scripted.resumeCallCount
         let rowsBefore = viewModel.transcript.count
+        XCTAssertEqual(rowsBefore, 2, "the reconnect loop must start with the submitted and streamed rows")
 
         scripted.replayOutcomes = .success(Array(repeating: .nothingToReplay, count: 25))
-        for _ in 0..<4 {
+        for cycle in 0..<4 {
             scripted.statusValue = .offline
             viewModel.forceDisconnectedForTesting()
             scripted.statusValue = .online
             await viewModel.appBecameActive()
             XCTAssertEqual(viewModel.phase, .ready)
             XCTAssertNil(viewModel.replayNotice)
+            XCTAssertEqual(viewModel.transcript.count, rowsBefore,
+                           "foreground cycle \(cycle) must preserve the existing transcript; history=\(scripted.historyCallCount), resumes=\(scripted.resumedSessionIDs)")
         }
 
         XCTAssertEqual(scripted.createCallCount, creates,
@@ -2220,6 +2263,27 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.filter { $0.text == "again" }.count, 1,
                        "one live event must yield exactly one row (no duplicate subscriptions)")
         XCTAssertEqual(viewModel.transcript.count, rowsBefore + 1)
+    }
+
+    func testLateEmptyOpeningHistoryCannotEraseNewLiveRows() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        let sent = await viewModel.send("hello")
+        XCTAssertTrue(sent)
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "Hi", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "Hi", status: nil, error: nil))
+        await flush()
+        XCTAssertEqual(viewModel.transcript.count, 2)
+
+        // The empty projection's request began at revision zero. Model its
+        // task reaching the history seam only after both live rows were added.
+        let outcome = await viewModel.refetchAuthoritativeHistory(
+            sessionID: "s-1", originRevision: 0, originWasEmpty: true)
+
+        XCTAssertEqual(outcome, .rejectedStale)
+        XCTAssertEqual(viewModel.transcript.count, 2)
+        XCTAssertEqual(viewModel.transcript.last?.text, "Hi")
     }
 
     // MARK: - H1 history hydration UX (t_01c9d411)

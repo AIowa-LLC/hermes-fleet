@@ -136,6 +136,12 @@ else
   bad "public-safety denylist tests FAILED"; cat "$STATIC_RESULTS/c1_guard_denylist.log"
 fi
 
+if bash scripts/public_safety_guard_home_path_test.sh >"$STATIC_RESULTS/c1_guard_home_path.log" 2>&1; then
+  ok "public-safety guard: allowlisted placeholders cannot hide disallowed home paths"
+else
+  bad "public-safety home-path tests FAILED"; cat "$STATIC_RESULTS/c1_guard_home_path.log"
+fi
+
 # --- supported workflows reach no predictable shared temp path --------------------
 note "Temp-path surface guard"
 if python3 scripts/temp_path_surface_guard_test.py >"$STATIC_RESULTS/c1_temp_surface_test.log" 2>&1 \

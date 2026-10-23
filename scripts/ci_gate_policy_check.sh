@@ -48,10 +48,14 @@ if grep -Fq 'ui-shard' "$CI_WORKFLOW"; then
   exit 1
 fi
 
-# Focused UI runs on PR changes and exact merge candidates. Critical journeys
-# run only on the merge-group candidate, alongside changed-area selection.
+# Focused UI runs on exact merge candidates only; PRs run the fast lane
+# (static guards, packages, units). Critical journeys run only on the
+# merge-group candidate, alongside changed-area selection.
 require_in "$CI_WORKFLOW" "  ui-preflight:" "a changed-area UI preflight must remain present"
-require_in "$CI_WORKFLOW" "    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'" "preflight must run on PR and merge-group events"
+if grep -Fq "github.event_name == 'pull_request' || github.event_name == 'merge_group'" "$CI_WORKFLOW"; then
+  echo "FAIL: preflight must not run on pull requests; PRs use the fast lane and UI runs once on the merge candidate" >&2
+  exit 1
+fi
 require_in "$CI_WORKFLOW" 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 12' "preflight must diff against the event's base commit"
 require_in "$CI_WORKFLOW" "  critical-smoke:" "a critical UI smoke job must remain present"
 require_in "$CI_WORKFLOW" "    if: github.event_name == 'merge_group'" "critical smoke must run against merge-group candidates"

@@ -205,8 +205,9 @@ final class LastEventIDResumeTests: XCTestCase {
         // survives teardown (P4), so the same pipe carries conn1's live
         // events AND conn2's live tail.
         let collector = ConversationEventCollector()
+        let eventStream = client.events
         let subscription = Task {
-            for await event in client.events {
+            for await event in eventStream {
                 collector.append(event)
             }
         }

@@ -96,7 +96,9 @@ public enum LocalFileProtection {
     /// proof. iOS device tests can assert the exact class; macOS host tests
     /// still verify backup exclusion and persistence behavior.
     public static func read(from url: URL) -> Attributes {
-        var freshURL = url
+        // Rebuild from the filesystem path so the read cannot inherit resource
+        // values cached on the caller's URL instance.
+        var freshURL = URL(fileURLWithPath: url.path, isDirectory: url.hasDirectoryPath)
         freshURL.removeAllCachedResourceValues()
         let values = try? freshURL.resourceValues(forKeys: [.isExcludedFromBackupKey, .fileProtectionKey])
         var protectionClass = values?.fileProtection?.rawValue
