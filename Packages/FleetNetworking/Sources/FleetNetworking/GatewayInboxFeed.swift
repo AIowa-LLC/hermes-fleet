@@ -33,6 +33,10 @@ public struct GatewayInboxFeed: InboxGatewayFeed {
         try await transport.connect()
     }
 
+    public func stop() async {
+        await transport.disconnect()
+    }
+
     public func events() -> AsyncStream<InboxFeedEvent> {
         let source = transport.subscribeToConversationEvents()
         let (stream, continuation) = AsyncStream<InboxFeedEvent>.makeStream(bufferingPolicy: .unbounded)

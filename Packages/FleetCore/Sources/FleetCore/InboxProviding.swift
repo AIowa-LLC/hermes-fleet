@@ -111,6 +111,11 @@ public protocol InboxGatewayFeed: Sendable {
     /// Open the feed's connection. Idempotent.
     func start() async throws
 
+    /// Close the feed's connection. Called when the gateway disconnects or is
+    /// removed. Pending items are kept by the store; they cannot be answered
+    /// until the feed starts again.
+    func stop() async
+
     /// A fresh stream of every inbox-relevant event for this gateway (all
     /// sessions, live and replayed), in order. Each call returns a new stream.
     func events() -> AsyncStream<InboxFeedEvent>

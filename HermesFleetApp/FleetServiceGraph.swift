@@ -279,6 +279,8 @@ enum FleetServiceGraph {
             // only scripts the SIMULATOR).
             biometrics: makeApprovalBiometrics(),
             liveOpsFactory: makeLiveOpsFactory(credentialStore: credentialStore, pinStore: pinStore),
+            inboxFeedFactory: makeInboxFeedFactory(credentialStore: credentialStore, pinStore: pinStore),
+            inboxHistory: FileInboxHistoryStore(),
             seedRegistrations: [],
             // R10-T4: the REAL on-device voice engine (Speech framework STT +
             // AVSpeechSynthesizer TTS) — a documented client-side deviation:
@@ -612,6 +614,29 @@ enum FleetServiceGraph {
                     urlSession: httpSession),
                 approvals: GatewayApprovalClient(gatewayID: gateway.id, transport: transport)
             )
+        }
+    }
+
+    /// Phase B approvals inbox: one conversation-configured transport per
+    /// gateway. The conversation configuration advertises server→client
+    /// requests (`client.capabilities`); the Live Ops `.standard` transport does
+    /// not, and a gateway withdraws every approval from a client that does not
+    /// advertise. Answers go over this same transport, so an item is always
+    /// answered on the connection that delivered it. `nil` without an endpoint
+    /// (fail closed).
+    nonisolated private static func makeInboxFeedFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetInboxFeedFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .conversation
+            )
+            return GatewayInboxFeed(gatewayID: gateway.id, transport: transport)
         }
     }
 

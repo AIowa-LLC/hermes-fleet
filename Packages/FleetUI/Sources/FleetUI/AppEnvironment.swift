@@ -195,7 +195,9 @@ public final class AppEnvironment {
     /// non-secret — synthesis §12).
     public private(set) var cachedWatermarkCount = 0
     /// Per-gateway connection lifecycle, observable.
-    public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
+    public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:] {
+        didSet { inboxSync?() }
+    }
 
     /// H2: latest per-gateway connection-health snapshots (uptime %,
     /// reconnects, last-disconnect reason, ping RTT). Updated by
@@ -273,6 +275,13 @@ public final class AppEnvironment {
     /// factory wired it simply never has a seam to poll and reports nothing,
     /// so callers can read `environment.liveOps` unconditionally.
     public let liveOps: LiveOpsStore
+
+    /// Phase B: the app-level approvals inbox. Lives for the app's lifetime and
+    /// is fed by every connected gateway's feed (see `syncConnections`).
+    public let inbox: InboxStore
+    /// Synced from `connectionStates` changes; set at the end of init so the
+    /// observer cannot run before `inbox` exists.
+    @ObservationIgnored private var inboxSync: (@MainActor () -> Void)?
 
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
@@ -684,6 +693,8 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         liveOpsFactory: FleetLiveOpsFactory? = nil,
+        inboxFeedFactory: FleetInboxFeedFactory? = nil,
+        inboxHistory: (any InboxHistoryStoring)? = nil,
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
@@ -772,6 +783,10 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
+        self.inbox = InboxStore(
+            history: inboxHistory ?? InMemoryInboxHistoryStore(),
+            biometrics: biometrics,
+            feedFactory: inboxFeedFactory ?? { _ in nil })
         artifactImages.protectionReporter = { failure in
             diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
         }
@@ -780,6 +795,17 @@ public final class AppEnvironment {
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
             connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        // Phase B: the inbox reconciles the sessions Live Ops reports as
+        // waiting (never a roster-wide fan-out) and follows connection state.
+        inbox.setProviders(
+            gateways: { [weak self] in self?.gateways ?? [] },
+            connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        inbox.setSessionProvider { [weak self] id in
+            guard let snapshot = self?.liveOps.snapshot,
+                  let gateway = snapshot.gateways.first(where: { $0.gatewayID == id }) else { return [] }
+            return gateway.operations.filter { $0.status.isWaiting }.map { $0.id.runtimeSessionID }
+        }
+        inboxSync = { [weak self] in self?.inbox.syncConnections() }
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -3477,7 +3503,8 @@ public final class AppEnvironment {
                     && self.foregroundRecoveryAllowed
                     && self.connectionIntent.isIntended(route.gatewayID)
                     && self.gateways.contains(where: { $0.id == route.gatewayID })
-            }
+            },
+            inbox: inbox
         )
         model.prepareBotDraft = { [weak self] text, openedID in
             guard let self else { return BotConversationDraft(text: text) }
