@@ -19,7 +19,7 @@ fi
 
 package=${PWD##*/}
 case "$package" in
-  FleetCore) expected=793 ;;
+  FleetCore) expected=802 ;;
   FleetNetworking) expected=779 ;;
   FleetPersistence) expected=67 ;;
   FleetSecurity) expected=68 ;;
