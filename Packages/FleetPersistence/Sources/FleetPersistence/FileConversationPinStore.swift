@@ -80,7 +80,12 @@ public actor FileConversationPinStore: ConversationPinStoring {
             return
         }
         // Never overwrite pins already in the protected file with legacy ones.
-        if !FileManager.default.fileExists(atPath: url.path) {
+        // Keep the plaintext fallback until the protected copy is known to be
+        // readable: mere file existence is not proof that migration succeeded.
+        if FileManager.default.fileExists(atPath: url.path) {
+            let protected = try Data(contentsOf: url)
+            _ = try JSONDecoder().decode([FleetConversationPin].self, from: protected)
+        } else {
             // An undecodable legacy blob can never become a pin; keeping it
             // would break every load and save forever, and it is plaintext.
             // Drop it. Write failures still throw and keep the legacy copy.

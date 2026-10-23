@@ -712,12 +712,30 @@ enum RoomDraftStore {
                 "\(provenance.rawValue):\($0.rawValue):"
             }
         }
+        // A protected-file read failure deliberately keeps legacy defaults
+        // during ordinary migration. Gateway removal is different: matching
+        // plaintext drafts must be purged even when the file store is blocked.
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(legacyPrefix) {
+            let roomKey = String(key.dropFirst(legacyPrefix.count))
+            if belongsToGateway(roomKey, ownPrefixes: own, otherPrefixes: others) {
+                defaults.removeObject(forKey: key)
+            }
+        }
         let doomed = entries.keys.filter { key in
-            own.contains(where: key.hasPrefix) && !others.contains(where: key.hasPrefix)
+            belongsToGateway(key, ownPrefixes: own, otherPrefixes: others)
         }
         guard !doomed.isEmpty else { return }
         doomed.forEach { entries.removeValue(forKey: $0) }
         scheduleSave()
+    }
+
+    private static func belongsToGateway(
+        _ roomKey: String,
+        ownPrefixes: [String],
+        otherPrefixes: [String]
+    ) -> Bool {
+        ownPrefixes.contains(where: roomKey.hasPrefix)
+            && !otherPrefixes.contains(where: roomKey.hasPrefix)
     }
 
     static func allowWrites(forGateway id: GatewayID) {

@@ -16,8 +16,8 @@ import os
 /// | Replay batch (`session.events.since`) | one frame | `maxReplayBatchEvents` / `maxReplayBatchBytes` | same |
 /// | Event subscriber queues | estimated event bytes | `maxSubscriberBacklog` / `maxSubscriberBacklogBytes` | `maxAggregateBufferedBytes` over all subscribers |
 /// | Conversation subscriber queues | source event bytes | same as event subscribers | shared with the above |
-/// | Per-session watermarks | one Int | `maxTrackedSessions` (LRU; eviction marks incomplete) | same |
-/// | Incomplete-session set | one id | `maxTrackedSessions`, then a single "all sessions" flag | same |
+/// | Per-session watermarks | session id + one Int | `maxTrackedSessions` and `maxTrackedSessionIDBytes` (LRU; eviction marks incomplete) | same |
+/// | Incomplete-session set | session id | `maxTrackedSessions` and `maxTrackedSessionIDBytes`, then one "all sessions" flag | same |
 /// | Open server requests | one request | `ServerRequestBox.maxOpen` | same |
 /// | Pinned queue entries (approvals) | 16 KiB | 64 per queue, then evictable | 64 per queue |
 /// | Pending gaps (per gap subscriber) | one gap | 64, then one "unknown session" gap | same |
@@ -46,6 +46,8 @@ public enum GatewayEventBudget {
     public static let maxAggregateBufferedBytes = 48 << 20
     /// Distinct sessions with a watermark / marked incomplete.
     public static let maxTrackedSessions = 1_000
+    /// Maximum UTF-8 size of a session ID retained by replay bookkeeping.
+    public static let maxTrackedSessionIDBytes = 1_024
     /// Newest-wins health event backlog.
     public static let maxHealthBacklog = 1_024
     /// Pending gaps per gap subscriber before collapsing to one global gap.
@@ -55,6 +57,44 @@ public enum GatewayEventBudget {
     public static func estimatedBytes(of event: GatewayEvent) -> Int {
         64 + event.rawType.utf8.count + (event.sessionID?.utf8.count ?? 0)
             + (event.payload.map(estimatedBytes(of:)) ?? 0)
+    }
+
+    /// Estimated resident bytes of a queued server request, including every
+    /// peer-supplied string and per-item collection overhead. IDs and session
+    /// IDs inside request payloads are counted even when shared with the outer
+    /// request, keeping the estimate conservative.
+    public static func estimatedBytes(of request: ServerRequest) -> Int {
+        var bytes = 128 + estimatedStringBytes(request.id) + estimatedStringBytes(request.sessionID)
+
+        switch request.kind {
+        case .approval(let approval):
+            bytes += 96 + estimatedStringBytes(approval.requestID)
+                + estimatedStringBytes(approval.sessionID)
+                + estimatedStringBytes(approval.command)
+                + (approval.detail.map(estimatedStringBytes) ?? 0)
+                + (approval.serverRequestID.map(estimatedStringBytes) ?? 0)
+                + 32 + approval.choices.reduce(0) { $0 + estimatedStringBytes($1) }
+        case .clarify(let clarify):
+            bytes += 96 + estimatedStringBytes(clarify.sessionID) + 32
+            bytes += clarify.questions.reduce(0) { total, question in
+                total + 64 + estimatedStringBytes(question.qid)
+                    + estimatedStringBytes(question.question) + 32
+                    + question.choices.reduce(0) { $0 + estimatedStringBytes($1) }
+            }
+            bytes += clarify.lockedAnswers.reduce(0) { total, answer in
+                total + 64 + estimatedStringBytes(answer.key) + estimatedStringBytes(answer.value)
+            }
+        case .sudo(let sudo):
+            bytes += 96 + estimatedStringBytes(sudo.sessionID) + estimatedStringBytes(sudo.command)
+        case .secret(let secret):
+            bytes += 96 + estimatedStringBytes(secret.sessionID)
+                + estimatedStringBytes(secret.envVar) + estimatedStringBytes(secret.prompt)
+        }
+        return bytes
+    }
+
+    private static func estimatedStringBytes(_ string: String) -> Int {
+        32 + string.utf8.count
     }
 
     public static func estimatedBytes(of value: JSONValue) -> Int {
@@ -279,9 +319,16 @@ final class GapBroadcaster: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<[UUID: AsyncStream<EventGap>.Continuation]>(initialState: [:])
 
     func publish(_ gap: EventGap) {
+        let boundedGap: EventGap
+        if let sessionID = gap.sessionID,
+           sessionID.utf8.count > GatewayEventBudget.maxTrackedSessionIDBytes {
+            boundedGap = EventGap(sessionID: nil, reason: gap.reason)
+        } else {
+            boundedGap = gap
+        }
         let continuations = lock.withLock { Array($0.values) }
         for continuation in continuations {
-            if case .dropped = continuation.yield(gap) {
+            if case .dropped = continuation.yield(boundedGap) {
                 continuation.yield(EventGap(sessionID: nil, reason: .gapBacklogOverflow))
             }
         }

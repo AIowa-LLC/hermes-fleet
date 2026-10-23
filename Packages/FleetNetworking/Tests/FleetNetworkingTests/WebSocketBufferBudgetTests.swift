@@ -100,6 +100,47 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         XCTAssertEqual(remainingWatermarks, ["other-session": 4])
     }
 
+    func testOversizedSessionIDIsNotRetainedByPublicWatermarkPath() async {
+        let transport = makeTransport(ScriptedSession())
+        let gaps = collectGaps(transport)
+        let sessionID = String(repeating: "s", count: GatewayEventBudget.maxTrackedSessionIDBytes + 1)
+
+        await transport.advanceWatermark(to: 1, for: sessionID)
+
+        let watermarks = await transport.allWatermarks()
+        XCTAssertTrue(watermarks.isEmpty)
+        let incomplete = await transport.takeIncompleteSessions()
+        XCTAssertTrue(incomplete.sessions.isEmpty)
+        XCTAssertTrue(incomplete.all, "untrackable IDs require conservative recovery for all sessions")
+        let observedGap = await waitUntil {
+            gaps.all.contains { $0.sessionID == nil && $0.reason == .watermarkEvicted }
+        }
+        XCTAssertTrue(observedGap)
+        gaps.task?.cancel()
+    }
+
+    func testOversizedInboundSessionIDIsNotRetainedByReplayBookkeeping() async throws {
+        let socket = ScriptedSession()
+        let transport = makeTransport(socket)
+        let gaps = collectGaps(transport)
+        socket.push(Self.ready)
+        try await transport.connect()
+        let sessionID = String(repeating: "s", count: GatewayEventBudget.maxTrackedSessionIDBytes + 1)
+        socket.push(Self.event(session: sessionID, seq: 1))
+
+        let observedGap = await waitUntil {
+            gaps.all.contains { $0.sessionID == nil && $0.reason == .watermarkEvicted }
+        }
+        XCTAssertTrue(observedGap)
+        let watermarks = await transport.allWatermarks()
+        XCTAssertTrue(watermarks.isEmpty)
+        let incomplete = await transport.takeIncompleteSessions()
+        XCTAssertTrue(incomplete.sessions.isEmpty)
+        XCTAssertTrue(incomplete.all)
+        await transport.disconnect()
+        gaps.task?.cancel()
+    }
+
     // MARK: queue primitives
 
     func testCountBoundEvictsOldestAndReportsThem() {
@@ -119,6 +160,19 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         XCTAssertLessThanOrEqual(queue.byteCount, 100)
         XCTAssertEqual(queue.count, 3)
         XCTAssertEqual(evicted, 47)
+    }
+
+    func testGapBroadcasterDoesNotRetainOversizedSessionIDs() async {
+        let gaps = GapBroadcaster()
+        let stream = gaps.subscribe()
+        let oversizedID = String(repeating: "s", count: GatewayEventBudget.maxTrackedSessionIDBytes + 1)
+
+        gaps.publish(EventGap(sessionID: oversizedID, reason: .subscriberOverflow))
+
+        var iterator = stream.makeAsyncIterator()
+        let gap = await iterator.next()
+        XCTAssertEqual(gap?.sessionID, nil, "unknown IDs recover all sessions without retaining peer-sized keys")
+        XCTAssertEqual(gap?.reason, .subscriberOverflow)
     }
 
     func testPinnedEntriesAreNeverEvictedForOverflow() async {
@@ -302,6 +356,39 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         XCTAssertLessThanOrEqual(held, GatewayEventBudget.maxReplayHoldBytes)
         let overflow = await transport.takeReplayHoldOverflowSessions()
         XCTAssertEqual(overflow, ["s1"], "parked frames lost to the byte budget flag their session")
+        await transport.disconnect()
+    }
+
+    func testOversizedSessionIDOverflowDuringReplayDoesNotEnterRecoverySet() async throws {
+        let socket = ScriptedSession()
+        let transport = makeTransport(socket)
+        socket.push(Self.ready)
+        try await transport.connect()
+        await transport.beginReplayHold()
+        let big = String(repeating: "x", count: 920_000)
+        for i in 1...9 { socket.push(Self.event(session: "session-\(i)", seq: i, text: big)) }
+        let heldMostOfBudget = await waitUntil(10) {
+            await transport.replayHoldBufferedBytes >= 8_000_000
+        }
+        XCTAssertTrue(heldMostOfBudget)
+        socket.push(Self.event(session: "filler", seq: 1, text: String(repeating: "y", count: 105_500)))
+        let heldFiller = await waitUntil {
+            await transport.replayHoldBufferedBytes > 8_380_000
+        }
+        XCTAssertTrue(heldFiller)
+
+        let oversizedID = String(repeating: "s", count: GatewayEventBudget.maxTrackedSessionIDBytes + 1)
+        socket.push(Self.event(session: "short-overflow", seq: 1, text: big))
+        let shortIDOverflowed = await waitUntil(10) { await !transport.takeReplayHoldOverflowSessionsPeek() }
+        XCTAssertTrue(shortIDOverflowed)
+        socket.push(Self.event(session: oversizedID, seq: 1))
+        let incompleteAll = await waitUntil {
+            await transport.takeIncompleteSessions().all
+        }
+
+        XCTAssertTrue(incompleteAll, "untrackable replay overflow must force conservative recovery")
+        let overflowSessions = await transport.takeReplayHoldOverflowSessions()
+        XCTAssertFalse(overflowSessions.contains(oversizedID), "recovery bookkeeping must not retain oversized IDs")
         await transport.disconnect()
     }
 
@@ -505,6 +592,57 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         _ = box.admit(.init(wireID: .string("srq-1"), request: request))
         let reported = await waitUntil { collector.all.contains { $0.sessionID == "s1" && $0.reason == .subscriberOverflow } }
         XCTAssertTrue(reported, "evicting an ordinary event to admit a prompt must publish a gap")
+    }
+
+    func testLargeServerRequestFieldsAreChargedToConversationQueueByteBudget() async throws {
+        let box = ServerRequestBox()
+        let (_, queue) = box.subscribeConversation(maxCount: 100, maxBytes: 1 << 20)
+        let command = String(repeating: "x", count: 700_000)
+        let request = ServerRequest(
+            id: "srq-large-1", sessionID: "session-1",
+            kind: .sudo(SudoPrompt(sessionID: "session-1", command: command)))
+
+        _ = box.admit(.init(wireID: .string(request.id), request: request))
+
+        XCTAssertEqual(queue.byteCount, GatewayEventBudget.estimatedBytes(of: request))
+        XCTAssertGreaterThan(queue.byteCount, command.utf8.count,
+                             "retained command text and request structure count toward the queue budget")
+        XCTAssertLessThanOrEqual(queue.count, 1)
+    }
+
+    func testLargeOpenServerRequestSnapshotUsesMeasuredBytes() async {
+        let box = ServerRequestBox()
+        let request = ServerRequest(
+            id: "srq-snapshot-1", sessionID: "session-1",
+            kind: .sudo(SudoPrompt(sessionID: "session-1", command: String(repeating: "x", count: 700_000))))
+        _ = box.admit(.init(wireID: .string(request.id), request: request))
+
+        let (_, queue) = box.subscribeConversation(maxCount: 100, maxBytes: 1 << 20)
+
+        XCTAssertEqual(queue.byteCount, GatewayEventBudget.estimatedBytes(of: request))
+    }
+
+    func testLargeReplayedServerRequestRefreshEvictsStaleQueuedCopy() async throws {
+        let box = ServerRequestBox()
+        let (_, queue) = box.subscribeConversation(maxCount: 100, maxBytes: 100 << 10)
+        let first = ServerRequest(
+            id: "srq-refresh-1", sessionID: "session-1",
+            kind: .sudo(SudoPrompt(sessionID: "session-1", command: String(repeating: "a", count: 700_000))))
+        let refreshed = ServerRequest(
+            id: first.id, sessionID: first.sessionID,
+            kind: .sudo(SudoPrompt(sessionID: first.sessionID, command: "latest replay copy")), replayed: true)
+        _ = box.admit(.init(wireID: .string(first.id), request: first))
+
+        box.refreshDuplicate(.init(wireID: .string(refreshed.id), request: refreshed))
+
+        XCTAssertEqual(queue.byteCount, GatewayEventBudget.estimatedBytes(of: refreshed))
+        guard case .serverRequest(let delivered)? = await queue.next() else {
+            return XCTFail("refreshed prompt should remain available to the conversation")
+        }
+        guard case .sudo(let prompt) = delivered.kind else {
+            return XCTFail("refreshed request should preserve its method")
+        }
+        XCTAssertEqual(prompt.command, "latest replay copy")
     }
 
     func testDroppingAStreamWithoutIteratingItDeregistersTheSubscriber() async {

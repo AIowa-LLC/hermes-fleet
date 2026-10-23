@@ -449,16 +449,19 @@ public actor GatewayWebSocketTransport: HermesTransport {
     }
 
     private func markIncomplete(_ sessionID: String?, reason: EventGap.Reason) {
-        if let sessionID {
+        let reportedSessionID: String?
+        if let sessionID, sessionID.utf8.count <= GatewayEventBudget.maxTrackedSessionIDBytes {
             if incompleteSessions.count < Self.maxTrackedSessions || incompleteSessions.contains(sessionID) {
                 incompleteSessions.insert(sessionID)
             } else {
                 incompleteAll = true
             }
+            reportedSessionID = sessionID
         } else {
             incompleteAll = true
+            reportedSessionID = nil
         }
-        gapBroadcaster.publish(EventGap(sessionID: sessionID, reason: reason))
+        gapBroadcaster.publish(EventGap(sessionID: reportedSessionID, reason: reason))
     }
 
     /// Introspection for budget tests: bytes/subscribers currently buffered.
@@ -525,9 +528,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
         recordWatermark(seq, for: sessionID)
     }
 
-    /// Monotonic watermark update. A session beyond `maxTrackedSessions` is not
-    /// tracked (its events still flow live); the table cannot grow without bound.
+    /// Monotonic watermark update. A session beyond the count or byte limit is
+    /// not tracked (its events still flow live); the table cannot grow without bound.
     private func recordWatermark(_ seq: Int, for sessionID: String) {
+        guard sessionID.utf8.count <= GatewayEventBudget.maxTrackedSessionIDBytes else {
+            // Keep continuity conservative without retaining a peer-sized key
+            // in the watermark, LRU, incomplete, or gap tables.
+            markIncomplete(nil, reason: .watermarkEvicted)
+            return
+        }
         touchClock &+= 1
         if let current = sessionWatermarks[sessionID] {
             sessionWatermarks[sessionID] = max(current, seq)
@@ -797,13 +806,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
                replayHoldBytes + bytes <= Self.maxReplayHoldBytes {
                 replayHoldBuffer.append(event)
                 replayHoldBytes += bytes
-            } else if replayHoldOverflowSessions.count < Self.maxTrackedSessions
+            } else if sessionID.utf8.count <= GatewayEventBudget.maxTrackedSessionIDBytes,
+                      replayHoldOverflowSessions.count < Self.maxTrackedSessions
                         || replayHoldOverflowSessions.contains(sessionID) {
                 // Over the count or byte budget: drop the frame but remember
                 // the session so the caller rehydrates it instead of trusting
                 // a silent gap.
                 replayHoldOverflowSessions.insert(sessionID)
             } else {
+                // Oversized session IDs cannot be stored in the recovery set.
                 incompleteAll = true
             }
             return
