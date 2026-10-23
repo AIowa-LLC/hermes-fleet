@@ -86,9 +86,10 @@ public enum FleetInboxPresentation {
         return "\(who) · \(item.agent.gatewayLabel)"
     }
 
-    /// The session title, or a short id when the title is unknown.
-    public static func sessionLine(_ item: InboxItem) -> String {
-        ApprovalOrigin.sessionLabel(title: item.agent.sessionTitle, id: item.agent.sessionID) ?? "Session"
+    /// The session title when the gateway reported one, else nil. A raw or
+    /// truncated session id is never shown; callers omit the line instead.
+    public static func sessionLine(_ item: InboxItem) -> String? {
+        item.agent.sessionTitle.flatMap(nonBlank)
     }
 
     public enum ChipTone: Equatable, Sendable {

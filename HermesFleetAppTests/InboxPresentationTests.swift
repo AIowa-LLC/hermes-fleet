@@ -96,11 +96,10 @@ final class InboxPresentationTests: XCTestCase {
         XCTAssertEqual(FleetInboxPresentation.agentLine(makeItem(profile: nil)), "Bot · Workstation")
     }
 
-    func testSessionLineUsesTheTitleOrAShortId() {
+    func testSessionLineIsTheTitleOrNilNeverARawId() {
         XCTAssertEqual(FleetInboxPresentation.sessionLine(makeItem(sessionTitle: "Nightly sync")), "Nightly sync")
-        XCTAssertEqual(
-            FleetInboxPresentation.sessionLine(makeItem(session: "abcdef123456", sessionTitle: nil)),
-            "abcdef12")
+        XCTAssertNil(FleetInboxPresentation.sessionLine(makeItem(session: "abcdef123456", sessionTitle: nil)))
+        XCTAssertNil(FleetInboxPresentation.sessionLine(makeItem(session: "workstat", sessionTitle: "  ")))
     }
 
     // MARK: Status and dimming

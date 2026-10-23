@@ -127,20 +127,19 @@ struct FleetInboxDetailView: View {
 
     private func header(_ item: InboxItem) -> some View {
         let chip = FleetInboxPresentation.chip(for: item)
+        // The kind is the nav title (one heading only); the body carries the
+        // agent identity, the session title when known, and the status.
         return VStack(alignment: .leading, spacing: 6) {
-            Label(FleetInboxPresentation.kindTitle(item.kind),
-                  systemImage: FleetInboxPresentation.symbol(for: item.kind))
-                .font(.headline)
-                .foregroundStyle(theme.textPrimary)
-                .accessibilityIdentifier("fleet.inbox.detail.kind")
             Text(FleetInboxPresentation.agentLine(item))
                 .font(.subheadline)
                 .foregroundStyle(theme.textSecondary)
                 .accessibilityIdentifier("fleet.inbox.detail.agent")
-            Text(FleetInboxPresentation.sessionLine(item))
-                .font(.caption)
-                .foregroundStyle(theme.textSecondary)
-                .accessibilityIdentifier("fleet.inbox.detail.session")
+            if let session = FleetInboxPresentation.sessionLine(item) {
+                Text(session)
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.inbox.detail.session")
+            }
             Text(chip.text)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(theme.textSecondary)

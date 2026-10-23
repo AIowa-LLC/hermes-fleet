@@ -245,10 +245,12 @@ private struct FleetInboxRow: View {
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
-                Text(FleetInboxPresentation.sessionLine(item))
-                    .font(.caption)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
+                if let session = FleetInboxPresentation.sessionLine(item) {
+                    Text(session)
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: FleetTheme.spacingSm) {
                     statusChip
                     if let reason = FleetInboxPresentation.dimmedReason(item), reason != chip.text {
@@ -316,9 +318,9 @@ private struct FleetInboxRow: View {
             FleetInboxPresentation.kindTitle(item.kind),
             FleetInboxPresentation.actionSummary(item),
             FleetInboxPresentation.agentLine(item),
-            FleetInboxPresentation.sessionLine(item),
-            chip.text,
         ]
+        if let session = FleetInboxPresentation.sessionLine(item) { parts.append(session) }
+        parts.append(chip.text)
         if let reason = FleetInboxPresentation.dimmedReason(item) { parts.append(reason) }
         return parts.joined(separator: ", ")
     }
