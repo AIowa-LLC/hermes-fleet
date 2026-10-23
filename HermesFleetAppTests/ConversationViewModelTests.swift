@@ -479,7 +479,8 @@ final class ConversationViewModelTests: XCTestCase {
     private func makeFixture(
         sessionID: String? = nil,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
-        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
+        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil,
+        openTimeout: Duration = ConversationViewModel.defaultOpenTimeout
     ) async throws -> (ScriptedSession, ConversationViewModel) {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
@@ -494,6 +495,7 @@ final class ConversationViewModelTests: XCTestCase {
             sessionID: sessionID,
             biometrics: biometrics,
             statusInterval: .milliseconds(10),
+            openTimeout: openTimeout,
             prepareForegroundRecovery: prepareForegroundRecovery
         )
         return (scripted, viewModel)
@@ -787,6 +789,108 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.start()
 
         XCTAssertEqual(viewModel.phase, .failed("gateway unreachable"))
+    }
+
+    // MARK: - Open timeout (TestFlight: infinite spinner on resume)
+
+    /// A gateway that accepts the socket but never answers `session.resume`
+    /// must not leave the conversation spinning forever: once the open timeout
+    /// elapses the screen reports "taking too long" with a recovery path.
+    func testOpenThatNeverRespondsTimesOutWithRecoveryState() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1", openTimeout: .milliseconds(40))
+        let parked = OneShotGate()
+        scripted.resumeGate = parked
+
+        let open = Task { await viewModel.start() }
+        let timedOut = await waitUntil(timeout: .seconds(5)) { viewModel.isOpenTimedOut }
+
+        XCTAssertTrue(timedOut, "an unanswered open must trip the timeout state")
+        XCTAssertEqual(scripted.resumeParkedCount, 1, "the resume RPC must really be parked")
+        XCTAssertFalse(viewModel.hasOpenedSession)
+        XCTAssertEqual(viewModel.phase, .opening, "still in flight; the timeout is the only terminal-ish signal")
+
+        // Release the parked RPC so the test task finishes; the stale open is
+        // fenced by the timeout's retry in the next test, here it simply lands.
+        parked.open()
+        await open.value
+    }
+
+    /// After a timeout, Retry starts a fresh attempt that reaches `.ready`.
+    /// The superseded attempt, when it finally returns, must not overwrite it.
+    func testRetryAfterTimeoutReachesLoadedAndFencesStaleOpen() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1", openTimeout: .milliseconds(40))
+        let parked = OneShotGate()
+        scripted.resumeGate = parked
+
+        let staleOpen = Task { await viewModel.start() }
+        let timedOut = await waitUntil(timeout: .seconds(5)) { viewModel.isOpenTimedOut }
+        XCTAssertTrue(timedOut)
+
+        // The gate was one-shot: the retry's resume answers immediately.
+        await viewModel.retryOpen()
+
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertTrue(viewModel.hasOpenedSession)
+        XCTAssertFalse(viewModel.isOpenTimedOut, "a loaded session is never reported as timed out")
+        XCTAssertEqual(scripted.resumeCallCount, 2)
+
+        // Now the superseded open completes. It must be dropped by the fence.
+        parked.open()
+        await staleOpen.value
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertTrue(viewModel.hasOpenedSession)
+        XCTAssertFalse(viewModel.isOpenTimedOut)
+    }
+
+    /// A late success after the timeout tripped clears the timeout state on its
+    /// own; nothing stays stuck in the "taking too long" surface.
+    func testLateSuccessAfterTimeoutClearsTimedOutState() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1", openTimeout: .milliseconds(40))
+        let parked = OneShotGate()
+        scripted.resumeGate = parked
+
+        let open = Task { await viewModel.start() }
+        let timedOut = await waitUntil(timeout: .seconds(5)) { viewModel.isOpenTimedOut }
+        XCTAssertTrue(timedOut)
+
+        parked.open()
+        await open.value
+
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertFalse(viewModel.isOpenTimedOut)
+    }
+
+    /// Restoring the composer draft is a synchronous, per-session lookup that
+    /// is never awaited by the open: while the open is parked the saved draft
+    /// is already readable, and the open still runs to `.ready` on its own.
+    func testDraftLookupIsIndependentOfOpenState() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let draftURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("open-timeout-drafts-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: draftURL) }
+        let drafts = ConversationDraftStore(url: draftURL, debounce: 60)
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        drafts.scheduleSave("yesterday's draft", route: route, sessionID: "s-1")
+        drafts.flush()
+
+        let parked = OneShotGate()
+        scripted.resumeGate = parked
+        let open = Task { await viewModel.start() }
+        let parkedNow = await waitUntil(timeout: .seconds(5)) { scripted.resumeParkedCount == 1 }
+        XCTAssertTrue(parkedNow)
+
+        XCTAssertEqual(drafts.draft(route: route, sessionID: "s-1"), "yesterday's draft",
+                       "the draft is readable while the open is still pending")
+        XCTAssertEqual(viewModel.phase, .opening, "the draft does not change or gate the open")
+
+        parked.open()
+        await open.value
+        XCTAssertEqual(viewModel.phase, .ready)
     }
 
     // MARK: - P0.1 server→client requests

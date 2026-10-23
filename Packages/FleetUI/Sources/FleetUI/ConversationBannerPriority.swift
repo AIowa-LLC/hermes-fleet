@@ -51,12 +51,15 @@ enum ConversationBannerKind: Equatable, Sendable {
     case failed
     /// Cold-start persisted history notice.
     case info
+    /// The open did not complete within the open timeout. Offers Retry and
+    /// Reopen session; replaces the progress spinner.
+    case timedOut
 
     var priority: ConversationBannerPriority {
         switch self {
         case .authRequired: return .authRequired
         case .disconnected: return .disconnected
-        case .failed: return .failed
+        case .failed, .timedOut: return .failed
         case .opening, .connecting, .reconnecting: return .progress
         case .integrity, .replay, .info: return .informational
         }
@@ -74,6 +77,7 @@ enum ConversationBannerKind: Equatable, Sendable {
         case .authRequired: return "exclamationmark.lock"
         case .failed: return "exclamationmark.triangle"
         case .info: return "internaldrive"
+        case .timedOut: return "clock.badge.exclamationmark"
         }
     }
 
@@ -108,6 +112,7 @@ enum ConversationBannerSelector {
     static let reconnectingText = "Reconnecting…"
     static let authRequiredDefaultText = "Authentication required."
     static let hydratedFromCacheText = "Showing saved history — connecting for live updates."
+    static let timedOutText = "Taking too long to open this conversation."
 
     static func select(
         phase: ConversationViewModel.Phase,
@@ -116,8 +121,19 @@ enum ConversationBannerSelector {
         hydratedFromCache: Bool,
         historyLoadError: String?,
         errorMessage: String?,
-        historyMayBeIncomplete: Bool = false
+        historyMayBeIncomplete: Bool = false,
+        openTimedOut: Bool = false
     ) -> ConversationBanner? {
+        // A timed-out open replaces the progress spinner for every state the
+        // open can still be in. Terminal states keep their own banner.
+        if openTimedOut {
+            switch phase {
+            case .idle, .opening, .connecting, .reconnecting, .ready, .streaming:
+                return ConversationBanner(kind: .timedOut, text: timedOutText)
+            case .authRequired, .disconnected, .failed:
+                break
+            }
+        }
         switch phase {
         case .authRequired:
             return ConversationBanner(kind: .authRequired, text: errorMessage ?? authRequiredDefaultText)
