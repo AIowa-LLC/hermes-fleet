@@ -5,7 +5,7 @@ ADRs document durable architectural choices and important constraints. They are 
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](0001-per-gateway-session-ownership.md) | One runtime session/transport owner per gateway | Accepted, implementation pending |
-| [0002](0002-replay-validation-idempotence.md) | Fail-closed replay validation and atomic replay hold/snapshot | Accepted, implementation pending |
+| [0002](0002-replay-validation-idempotence.md) | Fail-closed replay validation and atomic replay hold/snapshot | Accepted, landed |
 | [0003](0003-endpoint-trust-redaction.md) | Treat gateway endpoints as origins and redact sensitive URL material | Accepted |
 | [0004](0004-transcript-retention.md) | Separate authoritative transcript history from the bounded display window | Accepted |
 | [0005](0005-credential-failure-semantics.md) | Make Keychain writes failure-safe and deletion failures visible | Accepted |
@@ -52,6 +52,7 @@ table entry above when the ADR lands.
 
 - **Accepted** means the decision is part of the intended architecture.
 - **Accepted, implementation pending** means the decision is approved but current source does not fully implement it yet.
+- **Accepted, landed** means the implementation and its regression coverage are included in the change that lands the decision on the integration line. It does not imply a distributed build.
 - **Superseded** means the historical decision was replaced by a newer policy and should not guide new work.
 
 Accepted decisions describe architecture, not distribution or device evidence.

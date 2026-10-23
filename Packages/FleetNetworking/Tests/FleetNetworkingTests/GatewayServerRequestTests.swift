@@ -758,7 +758,7 @@ final class GatewayServerRequestTests: XCTestCase {
         ])
         let server = try await startServer(recorder: recorder) { frame in
             guard let (id, method, _) = Self.idAndMethod(frame), method == "session.events.since" else { return [] }
-            return [#"{"jsonrpc":"2.0","id":"\#(id)","result":{"events":[],"latest_seq":5,"truncated":false,"count":0,"epoch":"epoch-1","open_requests":[\#(entry)]}}"#]
+            return [#"{"jsonrpc":"2.0","id":"\#(id)","result":{"events":[],"latest_seq":3,"truncated":false,"count":0,"epoch":"epoch-1","open_requests":[\#(entry)]}}"#]
         }
         defer { server.stop() }
         let transport = makeTransport(serverPort: server.listeningPort)

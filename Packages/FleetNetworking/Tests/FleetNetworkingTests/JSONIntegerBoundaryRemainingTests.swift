@@ -92,16 +92,15 @@ final class JSONIntegerBoundaryRemainingTests: XCTestCase {
 
     // MARK: - GatewayReplayClient.swift (`latest_seq`, `count`)
 
-    func testGatewayReplayClientLatestSeqAndCountAtTheBoundaryDegrade() throws {
+    func testGatewayReplayClientRejectsUnrepresentableLatestSeqAndCount() throws {
         let hostile = try Self.json(
-            #"{"events":[{"type":"session.info","session_id":"s-1","seq":1}],"latest_seq":9223372036854775808,"count":9223372036854775808}"#)
+            #"{"events":[{"type":"session.info","session_id":"s-1","seq":1}],"latest_seq":9223372036854775808,"truncated":true,"count":9223372036854775808}"#)
         XCTAssertEqual(hostile["latest_seq"]?.numberValue, Self.twoPow63)
-        let batch = try GatewayReplayClient.decode(sessionID: "s-1", hostile)
-        XCTAssertEqual(batch.latestSeq, 0, "an unrepresentable watermark degrades to this site's default")
-        XCTAssertEqual(batch.count, batch.events.count, "an unrepresentable count degrades to the decoded event count")
-        XCTAssertEqual(batch.events.count, 1)
+        XCTAssertThrowsError(try GatewayReplayClient.decode(sessionID: "s-1", hostile),
+                             "an unrepresentable watermark must fail closed")
 
-        let safe = try Self.json(#"{"latest_seq":9223372036854774784,"count":9223372036854774784}"#)
+        let safe = try Self.json(
+            #"{"events":[],"latest_seq":9223372036854774784,"truncated":true,"count":9223372036854774784}"#)
         let safeBatch = try GatewayReplayClient.decode(sessionID: "s-1", safe)
         XCTAssertEqual(safeBatch.latestSeq, Int(Self.largestSafe))
         XCTAssertEqual(safeBatch.count, Int(Self.largestSafe))
