@@ -48,6 +48,7 @@ let package = Package(
             // mark) + FleetEmptyState artwork, package-local so FleetUI
             // resolves it via Bundle.module.
             .process("Resources")
-        ])
+        ]),
+        .testTarget(name: "FleetUITests", dependencies: ["FleetUI", "FleetCore"])
     ]
 )
