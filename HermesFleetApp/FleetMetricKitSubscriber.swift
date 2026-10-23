@@ -95,12 +95,22 @@ final class FleetMetricKitSubscriber: NSObject, MXMetricManagerSubscriber, @unch
         from payloads: [MXDiagnosticPayload], receivedAt: Date
     ) -> MetricKitDiagnosticsSummary? {
         guard !payloads.isEmpty else { return nil }
-        return MetricKitDiagnosticsSummary(
-            receivedAt: receivedAt,
+        // Numbers only: crash signal numbers go through the shared digest so
+        // the bounding/redaction rules live in one tested place.
+        let digest = MetricKitDiagnosticDigest(
             crashCount: payloads.reduce(0) { $0 + ($1.crashDiagnostics?.count ?? 0) },
+            crashSignals: payloads.flatMap { $0.crashDiagnostics ?? [] }
+                .compactMap { $0.signal?.intValue },
             hangCount: payloads.reduce(0) { $0 + ($1.hangDiagnostics?.count ?? 0) },
             diskWriteExceptionCount: payloads.reduce(0) { $0 + ($1.diskWriteExceptionDiagnostics?.count ?? 0) },
             cpuExceptionCount: payloads.reduce(0) { $0 + ($1.cpuExceptionDiagnostics?.count ?? 0) })
+        return MetricKitDiagnosticsSummary(
+            receivedAt: receivedAt,
+            crashCount: digest.crashCount,
+            hangCount: digest.hangCount,
+            diskWriteExceptionCount: digest.diskWriteExceptionCount,
+            cpuExceptionCount: digest.cpuExceptionCount,
+            crashSignals: digest.crashSignals.isEmpty ? nil : digest.crashSignals)
     }
 
     private static func medianMilliseconds(_ histogram: MXHistogram<UnitDuration>) -> Double? {

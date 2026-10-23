@@ -257,6 +257,9 @@ public enum DiagnosticsReport {
             lines.append("    Hangs: \(max(0, diagnostics.hangCount))")
             lines.append("    Disk-write exceptions: \(max(0, diagnostics.diskWriteExceptionCount))")
             lines.append("    CPU exceptions: \(max(0, diagnostics.cpuExceptionCount))")
+            if let signals = diagnostics.crashSignals, !signals.isEmpty {
+                lines.append("    Crash signals: \(signals.map(String.init).joined(separator: ", "))")
+            }
         }
         return lines
     }

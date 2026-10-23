@@ -150,4 +150,27 @@ final class FleetPerformanceStatsTests: XCTestCase {
         XCTAssertFalse(text.contains("Hang time"), "non-finite metrics must be omitted: \(text)")
         XCTAssertFalse(text.contains("Peak memory"), "negative metrics must be omitted: \(text)")
     }
+
+    func testReportRendersCrashSignalsOnlyWhenPresent() {
+        let withSignals = DiagnosticsReport.render(input(performance: FleetPerformanceReport(
+            intervals: [],
+            metricKit: MetricKitSummary(diagnostics: MetricKitDiagnosticsSummary(
+                receivedAt: fixedNow, crashCount: 2, crashSignals: [6, 11])))))
+        XCTAssertTrue(withSignals.contains("    Crash signals: 6, 11\n"))
+
+        let without = DiagnosticsReport.render(input(performance: FleetPerformanceReport(
+            intervals: [],
+            metricKit: MetricKitSummary(diagnostics: MetricKitDiagnosticsSummary(
+                receivedAt: fixedNow, crashCount: 0)))))
+        XCTAssertFalse(without.contains("Crash signals"))
+    }
+
+    func testDiagnosticsSummaryDecodesWithoutCrashSignalsKey() throws {
+        let legacy = Data("""
+        {"receivedAt":1700000000,"crashCount":1,"hangCount":0,"diskWriteExceptionCount":0,"cpuExceptionCount":0}
+        """.utf8)
+        let decoded = try JSONDecoder().decode(MetricKitDiagnosticsSummary.self, from: legacy)
+        XCTAssertEqual(decoded.crashCount, 1)
+        XCTAssertNil(decoded.crashSignals)
+    }
 }
