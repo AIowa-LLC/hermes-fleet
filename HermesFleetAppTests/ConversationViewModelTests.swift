@@ -1776,6 +1776,29 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.first?.text, "retry")
     }
 
+    /// Another client (the desktop app) holds the session: the open classifies
+    /// as the ownership phase with plain-language copy, and "Wait and retry"
+    /// (reconnect) re-runs the resume once the other client releases it.
+    func testSessionOwnedElsewhereOnOpenOffersWaitAndRetry() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-9")
+        scripted.resumeResult = .failure(.sessionOwnedElsewhere)
+
+        await viewModel.start()
+
+        XCTAssertEqual(viewModel.phase, .sessionOwnedElsewhere)
+        let banner = ConversationBannerSelector.select(
+            phase: viewModel.phase, integrityNotice: nil, replayNotice: nil,
+            hydratedFromCache: false, historyLoadError: nil, errorMessage: nil)
+        XCTAssertEqual(banner?.kind, .sessionOwnedElsewhere)
+        XCTAssertEqual(banner?.text, ConversationBannerSelector.sessionOwnedElsewhereText)
+
+        scripted.resumeResult = .success(ConversationSession(sessionID: "s-9", profileName: "default"))
+        await viewModel.reconnect()
+
+        XCTAssertEqual(viewModel.phase, .ready, "Wait and retry must re-run the open to ready")
+        XCTAssertEqual(scripted.resumeCallCount, 2, "retry must re-issue session.resume")
+    }
+
     // MARK: - 4401 re-auth UX (M11 — no silent retry)
 
     func test4401SurfacesAuthRequiredNoSilentRetry() async throws {

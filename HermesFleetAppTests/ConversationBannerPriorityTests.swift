@@ -78,6 +78,22 @@ final class ConversationBannerPriorityTests: XCTestCase {
         XCTAssertEqual(banner?.text, ConversationBannerSelector.disconnectedText)
     }
 
+    /// Session held by another client: plain-language copy, failed-tier
+    /// priority (outranks cache/notice context), and no raw RPC wording.
+    func testSessionOwnedElsewhereUsesPlainCopyAtFailedPriority() {
+        let banner = select(
+            phase: .sessionOwnedElsewhere,
+            hydratedFromCache: true,
+            historyLoadError: nil
+        )
+        XCTAssertEqual(banner?.kind, .sessionOwnedElsewhere)
+        XCTAssertEqual(banner?.kind.priority, .failed)
+        XCTAssertEqual(banner?.text, "This session is open on your desktop. Close it there or wait for it to finish, then retry.")
+        XCTAssertFalse(banner?.text.contains("4090") ?? true)
+        XCTAssertFalse(banner?.text.contains("SESSION_NOT_OWNED") ?? true)
+        XCTAssertTrue(ConversationBannerKind.sessionOwnedElsewhere.symbolName == "desktopcomputer")
+    }
+
     func testFailedPhaseShowsDetail() {
         let banner = select(phase: .failed("gateway exploded"))
         XCTAssertEqual(banner?.kind, .failed)

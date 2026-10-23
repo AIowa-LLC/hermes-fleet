@@ -160,6 +160,9 @@ public final class ConversationViewModel {
         case authRequired
         /// A classified failure (non-secret description).
         case failed(String)
+        /// The gateway reports another client (typically the desktop app)
+        /// holds this session. Recoverable: "Wait and retry" re-runs the open.
+        case sessionOwnedElsewhere
     }
 
     // MARK: Injected seams (composition root)
@@ -3856,6 +3859,8 @@ public final class ConversationViewModel {
                 // #188: the chat cannot be reloaded in one piece and this
                 // gateway could not page it either.
                 phase = .failed(Self.longChatOpenCopy(messageCount: count))
+            case .sessionOwnedElsewhere:
+                phase = .sessionOwnedElsewhere
             default:
                 phase = .failed(Self.nonSecret(error))
             }
