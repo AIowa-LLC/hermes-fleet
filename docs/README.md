@@ -42,6 +42,7 @@ the v0.1 document deferred or excluded.
 - [`push-relay-self-host.md`](push-relay-self-host.md) - self-hosting the content-blind push relay (relay service: [`integrations/hermes-push-relay`](../integrations/hermes-push-relay/README.md))
 - [`extension-kit.md`](extension-kit.md) - extension-safe kit, App Group and shared keychain capability switch, and maintainer enablement steps
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
+- [`next-build-readiness.md`](next-build-readiness.md) - current development-build handoff, open issue dispositions, and separate physical/release acceptance gates
 - [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
 - [`upstream-proposals/`](upstream-proposals/README.md) - draft upstream Hermes proposals (app-scheme OAuth redirect, signed approvals, pairing tokens, push observer hooks); drafts only, nothing is filed upstream
