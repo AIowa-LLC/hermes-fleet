@@ -7,6 +7,39 @@ import FleetUI
 /// R9-T2/T3/T4 — conversation tooling: sticky per-device model pick (rides
 /// session.create ONLY — never config.set), context meter thresholds +
 /// streamed usage ticks, steer/rename/fork over the scripted seam.
+/// Synthetic `ReasoningProviding` for the header-chip pick tests: records
+/// `setReasoning` calls and can be told to fail. No I/O.
+private final class HeaderPickReasoning: ReasoningProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _sets: [FleetReasoningLevel] = []
+    private var _failSets = false
+
+    var sets: [FleetReasoningLevel] {
+        lock.lock(); defer { lock.unlock() }
+        return _sets
+    }
+
+    var failSets: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _failSets }
+        set { lock.lock(); _failSets = newValue; lock.unlock() }
+    }
+
+    func reasoning(sessionID: String) async throws -> ReasoningState {
+        ReasoningState(level: .medium, rawValue: "medium", display: nil)
+    }
+
+    func setReasoning(_ level: FleetReasoningLevel, sessionID: String) async throws -> FleetReasoningLevel {
+        if record(level) { throw ConversationError.rpcFailed("scripted failure") }
+        return level
+    }
+
+    private func record(_ level: FleetReasoningLevel) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        _sets.append(level)
+        return _failSets
+    }
+}
+
 @MainActor
 final class ConversationToolingTests: XCTestCase {
 
@@ -532,6 +565,53 @@ final class ConversationToolingTests: XCTestCase {
         XCTAssertEqual(model.level, .high, "the session ends at the level the user chose last")
         XCTAssertTrue(model.userAdjusted)
         XCTAssertNil(model.errorMessage)
+    }
+
+    // MARK: - Reasoning header chip (label formatting + pick path)
+
+    func testReasoningHeaderLabelFormatting() {
+        XCTAssertEqual(ReasoningHeaderFormat.text(level: .medium, displayWord: "Medium"), "Reasoning: Medium")
+        XCTAssertEqual(ReasoningHeaderFormat.text(level: .xhigh, displayWord: "xhigh"), "Reasoning: Extra High")
+        XCTAssertEqual(ReasoningHeaderFormat.text(level: nil, displayWord: "—"), "Reasoning: —")
+        XCTAssertEqual(ReasoningHeaderFormat.text(level: nil, displayWord: "   "), "Reasoning: —",
+                       "a blank readback is unknown, never an empty word")
+        XCTAssertEqual(ReasoningHeaderFormat.text(level: nil, displayWord: "turbo"), "Reasoning: turbo",
+                       "an unmapped wire word is shown honestly, not guessed")
+    }
+
+    func testReasoningHeaderHiddenWithoutSeam() {
+        XCTAssertNil(ReasoningHeaderFormat.label(for: nil))
+        let model = ReasoningViewModel(reasoning: HeaderPickReasoning(), initial: .low)
+        XCTAssertEqual(ReasoningHeaderFormat.label(for: model), "Reasoning: Low")
+    }
+
+    func testReasoningHeaderPickCallsSliderApply() async {
+        let fake = HeaderPickReasoning()
+        let model = ReasoningViewModel(reasoning: fake)
+        model.bind(sessionID: "s-1")
+        await model.load(sessionID: "s-1")
+
+        var opened = false
+        await ReasoningHeaderChip.select(.high, on: model) { opened = true }
+
+        XCTAssertEqual(fake.sets, [.high], "the header pick goes through the slider's apply path")
+        XCTAssertEqual(ReasoningHeaderFormat.label(for: model), "Reasoning: High")
+        XCTAssertFalse(opened, "a successful pick does not open the overlay")
+    }
+
+    func testReasoningHeaderFailedPickOpensOverlayAndReverts() async {
+        let fake = HeaderPickReasoning()
+        fake.failSets = true
+        let model = ReasoningViewModel(reasoning: fake)
+        model.bind(sessionID: "s-1")
+        await model.load(sessionID: "s-1")
+
+        var opened = false
+        await ReasoningHeaderChip.select(.low, on: model) { opened = true }
+
+        XCTAssertTrue(opened, "a failed pick opens the slider overlay where the error shows")
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(ReasoningHeaderFormat.label(for: model), "Reasoning: Medium")
     }
 
     /// Poll a main-actor condition with a bounded budget (the VMs settle on

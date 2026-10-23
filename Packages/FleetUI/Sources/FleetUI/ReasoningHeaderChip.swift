@@ -69,11 +69,14 @@ public struct ReasoningHeaderChip: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(theme.background, in: Capsule())
+            // Identifier and AX payload live on the label content (a SwiftUI
+            // Menu does not reliably expose its own identifier).
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Reasoning level")
+            .accessibilityValue(model.displayWord)
+            .accessibilityHint("Choose how much this session reasons")
+            .accessibilityIdentifier("fleet.conversation.reasoning.header")
         }
-        .accessibilityLabel("Reasoning level")
-        .accessibilityValue(model.displayWord)
-        .accessibilityHint("Choose how much this session reasons")
-        .accessibilityIdentifier("fleet.conversation.reasoning.header")
     }
 
     /// The single pick path: the same `apply(_:)` the slider drives. Opens
