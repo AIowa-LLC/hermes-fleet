@@ -36,26 +36,32 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         func answerValue(requestID: String, value: String) async throws {}
     }
 
-    private final class FakeFeed: InboxGatewayFeed, @unchecked Sendable {
+    /// A registered answer source (an open conversation's seams). `emit`
+    /// records an inbox-relevant event on it, as a conversation transport would.
+    private final class FakeFeed: InboxAnswerSource, @unchecked Sendable {
         let gatewayID: GatewayID
         let approvalsFake = FakeApprovals()
         let promptsFake = FakePrompts()
         var approvals: any ApprovalsProviding { approvalsFake }
-        var prompts: any ServerPromptResponding { promptsFake }
-        let continuation: AsyncStream<InboxFeedEvent>.Continuation
-        private let stream: AsyncStream<InboxFeedEvent>
+        var prompts: (any ServerPromptResponding)? { promptsFake }
+        private(set) var sourceID: UUID?
+        private weak var inbox: InboxStore?
 
         init(gatewayID: GatewayID) {
             self.gatewayID = gatewayID
-            let (stream, continuation) = AsyncStream<InboxFeedEvent>.makeStream()
-            self.stream = stream
-            self.continuation = continuation
         }
 
-        func start() async throws {}
-        func stop() async {}
-        func events() -> AsyncStream<InboxFeedEvent> { stream }
-        func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] { [] }
+        @MainActor
+        func attach(to store: InboxStore, label: String) {
+            inbox = store
+            sourceID = store.registerSource(self, label: label)
+        }
+
+        @MainActor
+        func emit(_ event: InboxFeedEvent) {
+            guard let inbox, let sourceID else { return }
+            inbox.record(event, sourceID: sourceID)
+        }
     }
 
     private struct NoBiometrics: AppLockBiometricAuth {
@@ -121,8 +127,7 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
     ) -> Harness {
         let store = InboxStore(
             history: InMemoryInboxHistoryStore(state: history),
-            biometrics: NoBiometrics(),
-            feedFactory: { _ in nil })
+            biometrics: NoBiometrics())
         let feed = FakeFeed(gatewayID: gatewayID)
         let notifier = RecordingNotifier(status: notifierStatus)
         let suite = UserDefaults(suiteName: "fleet.test.inbox-notifications.\(UUID().uuidString)")!
@@ -173,9 +178,9 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
 
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         let post = try XCTUnwrap(h.notifier.postedNotifications.first)
@@ -190,12 +195,12 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
 
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
-        h.feed.continuation.yield(.legacyApproval(approval("req-1", command: "changed")))
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1", command: "changed")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await settle()
 
         XCTAssertEqual(h.notifier.postedNotifications.count, 1)
@@ -206,7 +211,7 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness(history: restored)
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
         try await settle()
 
         XCTAssertTrue(h.notifier.postedNotifications.isEmpty)
@@ -215,9 +220,9 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
     func testNothingPostsWhenNotificationsAreOff() async throws {
         let h = makeHarness()
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
 
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await settle()
 
         XCTAssertTrue(h.notifier.postedNotifications.isEmpty)
@@ -236,8 +241,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let accepted = await h.coordinator.setEnabled(true)
         XCTAssertFalse(accepted)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await settle()
         XCTAssertTrue(h.notifier.postedNotifications.isEmpty)
     }
@@ -246,11 +251,11 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
         h.coordinator.setAppActive(true)
         await h.coordinator.setInboxVisible(true)
 
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await settle()
         XCTAssertTrue(h.notifier.postedNotifications.isEmpty)
     }
@@ -259,11 +264,11 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
+        h.feed.attach(to: h.store, label: "Workstation")
         h.coordinator.setAppActive(true)
         h.coordinator.setViewedSession("sess-1")
 
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await settle()
         XCTAssertTrue(h.notifier.postedNotifications.isEmpty)
     }
@@ -272,8 +277,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         await h.coordinator.setInboxVisible(true)
@@ -288,8 +293,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         let itemID = InboxItemID(gatewayID: gatewayID, sessionID: "sess-1", requestID: "req-1")
@@ -303,11 +308,11 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
-        h.feed.continuation.yield(.withdrawn(wireRequestID: "req-1"))
+        h.feed.emit(.withdrawn(wireRequestID: "req-1"))
         let expected = InboxNotificationCatalog.notificationID(
             for: InboxItemID(gatewayID: gatewayID, sessionID: "sess-1", requestID: "req-1"))
         try await waitUntil { h.notifier.withdrawnIDs.contains(expected) }
@@ -317,8 +322,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         _ = await h.coordinator.setEnabled(false)
@@ -332,8 +337,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         let itemIDRaw = InboxItemID(gatewayID: gatewayID, sessionID: "sess-1", requestID: "req-1").rawValue
@@ -395,8 +400,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         let itemIDRaw = InboxItemID(gatewayID: gatewayID, sessionID: "sess-1", requestID: "req-1").rawValue
@@ -409,8 +414,8 @@ final class InboxNotificationCoordinatorTests: XCTestCase {
         let h = makeHarness()
         _ = await h.coordinator.setEnabled(true)
         await h.coordinator.start()
-        h.store.attach(h.feed, label: "Workstation")
-        h.feed.continuation.yield(.legacyApproval(approval("req-1")))
+        h.feed.attach(to: h.store, label: "Workstation")
+        h.feed.emit(.legacyApproval(approval("req-1")))
         try await waitUntil { h.notifier.postedNotifications.count == 1 }
 
         let raw = InboxItemID(gatewayID: gatewayID, sessionID: "sess-1", requestID: "req-1").rawValue

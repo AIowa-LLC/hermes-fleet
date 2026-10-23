@@ -1,7 +1,7 @@
 import Foundation
-import UIKit
 import UserNotifications
 import FleetCore
+import FleetSecurity
 import FleetUI
 
 /// Routes notification taps and actions to `InboxNotificationCoordinator`, and
@@ -20,11 +20,17 @@ final class FleetNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         UNUserNotificationCenter.current().delegate = self
     }
 
-    /// Attach the app's coordinator: it opens deep links through UIKit and
-    /// receives every buffered response.
-    func attach(_ coordinator: InboxNotificationCoordinator) {
+    /// Attach the app's coordinator and receives every buffered response. The
+    /// Review URL is parsed by the same `FleetInboxDeepLink` parser that
+    /// `onOpenURL` uses, then focused through `openInbox` (no UIKit round trip).
+    func attach(
+        _ coordinator: InboxNotificationCoordinator,
+        openInbox: @escaping @MainActor (InboxItemID?) -> Void
+    ) {
         coordinator.openURL = { url in
-            Task { @MainActor in _ = await UIApplication.shared.open(url) }
+            guard let target = FleetInboxDeepLink.target(
+                from: url, scheme: FleetAppIdentity.current.conversationURLScheme) else { return }
+            openInbox(target.itemID)
         }
         self.coordinator = coordinator
         let pending = buffered

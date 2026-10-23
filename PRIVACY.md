@@ -90,8 +90,8 @@ sent to a relay, to Apple's push service, or to any other server for them.
 - **Deny from the notification, best effort.** Deny is sent in the background
   only when the gateway connection for that conversation is still open. If it
   cannot be sent, the notification says so and opens the request in the app.
-  Approvals always need you to open the app and confirm with Face ID or your
-  passcode.
+  Deny does not unlock App Lock. Approvals always need you to open the app,
+  unlock it, and confirm with Face ID or your passcode.
 - **Your control.** Turning the setting off removes the delivered notifications.
   Notification history stays on this device and is removed with the app.
 

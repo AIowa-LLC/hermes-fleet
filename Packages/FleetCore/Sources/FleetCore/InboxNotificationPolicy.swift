@@ -116,20 +116,47 @@ public enum InboxNotificationCatalog {
 
 // MARK: - Deep link
 
-/// The `<scheme>://inbox?item=<id>` URL that opens one inbox item. The UI
-/// worker's Inbox navigation consumes it; the notification Review action and a
-/// tap both build it here. The scheme is the app's conversation URL scheme
-/// (`hermes-fleet`, or `hermes-fleet-dev` in Fleet Dev).
+/// The single parser for `<scheme>://inbox[?item=<id>]`. Every entry point
+/// (the app's `onOpenURL`, the notification Review action, and a notification
+/// tap) goes through this type, so there is exactly one grammar.
+///
+/// - `<scheme>://inbox` opens the Inbox.
+/// - `<scheme>://inbox?item=<gateway#session#request>` opens it focused on one
+///   item. Exactly one `item` value; the composite is three non-empty parts
+///   with no whitespace, at most 512 characters.
+///
+/// The scheme is the app's conversation URL scheme (`hermes-fleet`, or
+/// `hermes-fleet-dev` in Fleet Dev). Documented in docs/navigation.md.
 public enum FleetInboxDeepLink {
     public static let host = "inbox"
     public static let itemQueryName = "item"
 
-    public static func url(scheme: String, itemID: InboxItemID) -> URL? {
+    /// A parsed inbox link. `itemID` is nil for a plain Inbox link and for a
+    /// malformed item (the Inbox opens unfocused rather than failing).
+    public struct Target: Equatable, Sendable {
+        public let itemID: InboxItemID?
+
+        public init(itemID: InboxItemID?) {
+            self.itemID = itemID
+        }
+    }
+
+    /// The URL for the Inbox, focused on `itemID` when given.
+    public static func url(scheme: String, itemID: InboxItemID? = nil) -> URL? {
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
-        components.queryItems = [URLQueryItem(name: itemQueryName, value: itemID.rawValue)]
+        if let itemID {
+            components.queryItems = [URLQueryItem(name: itemQueryName, value: itemID.rawValue)]
+        }
         return components.url
+    }
+
+    /// Nil when the URL is not an inbox link for `scheme`. Otherwise the
+    /// target, whose item is nil when the item query is absent or malformed.
+    public static func target(from url: URL, scheme: String) -> Target? {
+        guard url.scheme == scheme, url.host == host else { return nil }
+        return Target(itemID: itemID(from: url, scheme: scheme))
     }
 
     /// The item id a URL names, or nil for any other URL, scheme, host, or

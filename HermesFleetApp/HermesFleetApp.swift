@@ -2,6 +2,7 @@ import SwiftUI
 import AppIntents
 import FleetUI
 import FleetCore
+import FleetSecurity
 
 /// Composition root for Hermes Fleet.
 ///
@@ -73,7 +74,11 @@ struct HermesFleetApp: App {
                 FleetMetricKitSubscriber.shared.register() // F0: on-device only
                 // B3: local approval notifications observe the inbox from here on.
                 await environment.inboxNotifications.start()
-                FleetNotificationRouter.shared.attach(environment.inboxNotifications)
+                // Notification Review/tap and onOpenURL share one parser
+                // (FleetInboxDeepLink) and one focus path (openInbox).
+                FleetNotificationRouter.shared.attach(environment.inboxNotifications) { itemID in
+                    environment.openInbox(focus: itemID)
+                }
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
@@ -83,7 +88,8 @@ struct HermesFleetApp: App {
                 // links on the same scheme (conversations) keep their own handling.
                 if environment.pairing.receive(url: url) { return }
                 // Phase B: `<scheme>://inbox[?item=<id>]` opens the approvals inbox.
-                if let inboxTarget = FleetInboxDeepLink.target(from: url) {
+                if let inboxTarget = FleetInboxDeepLink.target(
+                    from: url, scheme: FleetAppIdentity.current.conversationURLScheme) {
                     environment.openInbox(focus: inboxTarget.itemID)
                     return
                 }

@@ -66,6 +66,13 @@ struct FleetInboxView: View {
             loaded = true
             consumeFocus()
         }
+        // Presence: while the Inbox is on screen, its requests do not notify.
+        .onAppear {
+            Task { await environment.inboxNotifications.setInboxVisible(true) }
+        }
+        .onDisappear {
+            Task { await environment.inboxNotifications.setInboxVisible(false) }
+        }
         .onChange(of: environment.pendingInboxFocus) { _, _ in
             consumeFocus()
         }

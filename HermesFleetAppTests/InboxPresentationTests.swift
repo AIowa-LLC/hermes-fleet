@@ -274,28 +274,35 @@ final class InboxPresentationTests: XCTestCase {
 
     // MARK: Deep link
 
+    // One parser (FleetCore `FleetInboxDeepLink`) serves onOpenURL and the
+    // notification Review/tap path; these pin its behavior at the app level.
+    private let linkScheme = "hermes-fleet"
+
     func testInboxLinkRoundTripsAnItemFocus() throws {
         let itemID = InboxItemID(gatewayID: workstation, sessionID: "s1", requestID: "r1")
-        let url = try XCTUnwrap(FleetInboxDeepLink.url(focus: itemID))
-        XCTAssertEqual(FleetInboxDeepLink.target(from: url), FleetInboxDeepLink.Target(itemID: itemID))
+        let url = try XCTUnwrap(FleetInboxDeepLink.url(scheme: linkScheme, itemID: itemID))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: url, scheme: linkScheme), FleetInboxDeepLink.Target(itemID: itemID))
     }
 
     func testBareInboxLinkOpensWithoutFocus() throws {
-        let url = try XCTUnwrap(FleetInboxDeepLink.url())
-        XCTAssertEqual(FleetInboxDeepLink.target(from: url), FleetInboxDeepLink.Target(itemID: nil))
+        let url = try XCTUnwrap(FleetInboxDeepLink.url(scheme: linkScheme))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: url, scheme: linkScheme), FleetInboxDeepLink.Target(itemID: nil))
     }
 
     func testMalformedItemIdOpensInboxWithoutFocus() throws {
-        let scheme = try XCTUnwrap(FleetInboxDeepLink.url()?.scheme)
-        let malformed = try XCTUnwrap(URL(string: "\(scheme)://inbox?item=not-a-composite-id"))
-        XCTAssertEqual(FleetInboxDeepLink.target(from: malformed), FleetInboxDeepLink.Target(itemID: nil))
-        let spaced = try XCTUnwrap(URL(string: "\(scheme)://inbox?item=a%20b%23c%23d"))
-        XCTAssertEqual(FleetInboxDeepLink.target(from: spaced), FleetInboxDeepLink.Target(itemID: nil))
+        let malformed = try XCTUnwrap(URL(string: "\(linkScheme)://inbox?item=not-a-composite-id"))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: malformed, scheme: linkScheme), FleetInboxDeepLink.Target(itemID: nil))
+        let spaced = try XCTUnwrap(URL(string: "\(linkScheme)://inbox?item=a%20b%23c%23d"))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: spaced, scheme: linkScheme), FleetInboxDeepLink.Target(itemID: nil))
     }
 
     func testOtherLinksAreNotInboxLinks() throws {
-        let scheme = try XCTUnwrap(FleetInboxDeepLink.url()?.scheme)
-        XCTAssertNil(FleetInboxDeepLink.target(from: try XCTUnwrap(URL(string: "\(scheme)://conversation?gateway=x"))))
-        XCTAssertNil(FleetInboxDeepLink.target(from: try XCTUnwrap(URL(string: "https://example.invalid/inbox"))))
+        XCTAssertNil(FleetInboxDeepLink.target(
+            from: try XCTUnwrap(URL(string: "\(linkScheme)://conversation?gateway=x")), scheme: linkScheme))
+        XCTAssertNil(FleetInboxDeepLink.target(
+            from: try XCTUnwrap(URL(string: "https://example.invalid/inbox")), scheme: linkScheme))
+        // A link for another build's scheme is not this app's inbox.
+        XCTAssertNil(FleetInboxDeepLink.target(
+            from: try XCTUnwrap(URL(string: "hermes-fleet-dev://inbox")), scheme: linkScheme))
     }
 }

@@ -189,6 +189,15 @@ Settings > Notifications turns on on-device notifications for new inbox items
   and needs the gateway connection to be open; if it cannot be sent, the
   notification says so and a tap opens the item. **Review** opens the item in
   the app at `hermes-fleet://inbox?item=<id>` (`hermes-fleet-dev` in Fleet Dev).
+  A tap on the notification body is the same Review action.
+- **App Lock and Deny.** Deny from a notification does not unlock App Lock and
+  does not require Face ID or a passcode, because it only rejects a request.
+  It is sent only if the gateway is still connected. **Approve always requires**
+  the app to be unlocked, the full review of a long command, and a verified
+  presence check before anything is sent. Approve is never a notification action.
+- **Presence.** A notification is not shown for an item while the Inbox is on
+  screen (opening the Inbox acknowledges and clears the delivered ones), or while
+  the conversation that delivered it is on screen.
 - **Approve is not a notification action.** Approving needs the full review of a
   long command and a Face ID or passcode check, and both happen in the app.
 - Questions, sudo, and secret prompts open the item when tapped. They have no

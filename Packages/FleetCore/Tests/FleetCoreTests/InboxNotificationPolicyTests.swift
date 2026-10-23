@@ -299,6 +299,23 @@ final class InboxNotificationPolicyTests: XCTestCase {
         XCTAssertNil(FleetInboxDeepLink.itemID(from: URL(string: "hermes-fleet://inbox?item=a%23b%20x%23c")!, scheme: "hermes-fleet"))
     }
 
+    func testTargetIsTheSingleParserForOnOpenURLAndNotificationReview() throws {
+        let scheme = "hermes-fleet"
+        let itemID = InboxItemID(gatewayID: gateway, sessionID: "s", requestID: "r")
+        // The notification Review URL and onOpenURL resolve to the same focus.
+        let review = try XCTUnwrap(FleetInboxDeepLink.url(scheme: scheme, itemID: itemID))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: review, scheme: scheme),
+                       FleetInboxDeepLink.Target(itemID: itemID))
+        // A bare inbox link opens unfocused; a malformed item opens unfocused.
+        let bare = try XCTUnwrap(FleetInboxDeepLink.url(scheme: scheme))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: bare, scheme: scheme), FleetInboxDeepLink.Target(itemID: nil))
+        let malformed = try XCTUnwrap(URL(string: "\(scheme)://inbox?item=not-composite"))
+        XCTAssertEqual(FleetInboxDeepLink.target(from: malformed, scheme: scheme), FleetInboxDeepLink.Target(itemID: nil))
+        // Not an inbox link for this scheme: nil, so the caller falls through.
+        XCTAssertNil(FleetInboxDeepLink.target(from: review, scheme: "hermes-fleet-dev"))
+        XCTAssertNil(FleetInboxDeepLink.target(from: URL(string: "hermes-fleet://pair#x")!, scheme: scheme))
+    }
+
     func testDenyFailedReplacementReusesIDAndOpensItemWithoutActions() {
         let pending = item()
         let replacement = InboxNotificationCatalog.denyFailedNotification(for: pending)

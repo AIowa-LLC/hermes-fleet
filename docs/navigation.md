@@ -125,8 +125,19 @@ build), handled in `onOpenURL` before conversation links:
 
 An `item` value that is not three non-empty `#`-separated parts (or contains
 spaces or control characters) opens the Inbox unfocused. A focus that is no
-longer in the inbox shows a notice rather than failing. The parser is
-`FleetInboxDeepLink` in `InboxPresentation.swift`.
+longer in the inbox shows a notice rather than failing.
+
+There is one parser: `FleetInboxDeepLink` in FleetCore
+(`InboxNotificationPolicy.swift`). `onOpenURL` and the notification Review
+action (and a tap on a notification body) both go through it and then
+`openInbox(focus:)`, so tapping a notification opens the Inbox on that item.
+
+### Periodic reconcile
+
+The inbox reconciles against `approval.pending` every 60 seconds while protected
+content may be shown. That gate is `setForegroundRecoveryAllowed(true)`, so it
+starts on cold launch after App Lock, on resume, and on unlock, and stops when
+the app locks or backgrounds.
 
 ## Artifacts destination
 
