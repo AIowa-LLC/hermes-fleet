@@ -256,6 +256,10 @@ struct FleetNavigationDrawer: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, FleetTheme.spacingMd)
                 .padding(.vertical, 12)
+                // The whole row is the target. Without this, the spacer between
+                // the title and the pending badge is not hit-testable, so a tap
+                // in the middle of the row (once the badge is shown) did nothing.
+                .contentShape(Rectangle())
                 .background(
                     inboxActive ? FleetTheme.neutralFill : .clear,
                     in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
