@@ -26,6 +26,53 @@ final class R9ConversationToolingUITests: XCTestCase {
         )
     }
 
+    /// Scroll the horizontal toolbelt until a chip's full frame is inside
+    /// its visible viewport. XCTest can throw while computing
+    /// `isHittable` for an off-screen chip, so use geometry to choose the
+    /// scroll direction and query hittability only after it is visible.
+    private func revealChip(_ chip: XCUIElement, using rowAnchor: XCUIElement,
+                            in zone: XCUIElement, window: XCUIElement) {
+        let windowBounds = window.frame
+        let bounds = zone.frame.intersection(windowBounds)
+        guard !bounds.isNull, !bounds.isEmpty else {
+            XCTFail("toolbelt must have a visible scroll viewport")
+            return
+        }
+        // The scroll view's AX frame can extend behind the keyboard. Use a
+        // chip's row for the gesture height rather than that frame's center.
+        let rowY = (rowAnchor.frame.midY - windowBounds.minY) / windowBounds.height
+
+        for _ in 0..<4 {
+            let frame = chip.frame
+            let clippedAtLeading = frame.minX < bounds.minX
+            let clippedAtTrailing = frame.maxX > bounds.maxX + 1
+            guard clippedAtLeading || clippedAtTrailing else { break }
+
+            // A fixed-distance flick can coast past a middle chip, then
+            // reverse past it again forever. Move only the clipped distance
+            // plus a small inset, and hold before release to stop momentum.
+            let overflow = clippedAtTrailing
+                ? frame.maxX - bounds.maxX : bounds.minX - frame.minX
+            let distance = min(max(overflow + 8, 24), bounds.width * 0.25)
+            let startPoint = bounds.minX + bounds.width * (clippedAtTrailing ? 0.75 : 0.25)
+            let endPoint = startPoint + (clippedAtTrailing ? -distance : distance)
+            let startX = (startPoint - windowBounds.minX) / windowBounds.width
+            let endX = (endPoint - windowBounds.minX) / windowBounds.width
+            print("Toolbelt reveal \(chip.identifier): frame=\(frame), viewport=\(bounds), distance=\(distance)")
+            let start = window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: rowY))
+            let end = window.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: rowY))
+            start.press(forDuration: 0.08, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+
+        let revealedFrame = chip.frame
+        print("Toolbelt revealed \(chip.identifier): frame=\(revealedFrame), viewport=\(bounds)")
+        XCTAssertGreaterThanOrEqual(revealedFrame.minX, bounds.minX,
+                                    "\(chip.identifier) must be fully inside the leading edge")
+        XCTAssertLessThanOrEqual(revealedFrame.maxX, bounds.maxX + 1,
+                                 "\(chip.identifier) must be fully inside the trailing edge")
+    }
+
     func testModelPickerShowsFixtureModelsWithCurrentCheckmark() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
@@ -213,15 +260,12 @@ final class R9ConversationToolingUITests: XCTestCase {
 
         let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
         XCTAssertTrue(zone.waitForExistence(timeout: 10))
-        func reveal(_ id: String) -> XCUIElement {
-            let e = firstMatch(in: app, identifier: id)
-            for _ in 0..<4 where !(e.exists && e.isHittable) {
-                zone.swipeLeft(velocity: .slow)
-            }
-            return e
-        }
-        let folder = reveal("fleet.conversation.header.folder")
+        let folder = firstMatch(in: app, identifier: "fleet.conversation.header.folder")
         XCTAssertTrue(folder.waitForExistence(timeout: 10), "folder chip must render")
+        let rowAnchor = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(rowAnchor.waitForExistence(timeout: 10))
+        revealChip(folder, using: rowAnchor, in: zone, window: app.windows.firstMatch)
+        XCTAssertTrue(folder.isHittable, "fully revealed folder chip must be tappable")
         let before = folder.value as? String ?? ""
         XCTAssertTrue(before.contains("hermes-fleet"),
                       "folder chip starts at the fixture cwd (got \(before))")
@@ -268,15 +312,12 @@ final class R9ConversationToolingUITests: XCTestCase {
 
         let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
         XCTAssertTrue(zone.waitForExistence(timeout: 10))
-        func reveal(_ id: String) -> XCUIElement {
-            let e = firstMatch(in: app, identifier: id)
-            for _ in 0..<4 where !(e.exists && e.isHittable) {
-                zone.swipeLeft(velocity: .slow)
-            }
-            return e
-        }
-        let profile = reveal("fleet.conversation.header.profile")
+        let profile = firstMatch(in: app, identifier: "fleet.conversation.header.profile")
         XCTAssertTrue(profile.waitForExistence(timeout: 10), "profile chip must render")
+        let rowAnchor = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(rowAnchor.waitForExistence(timeout: 10))
+        revealChip(profile, using: rowAnchor, in: zone, window: app.windows.firstMatch)
+        XCTAssertTrue(profile.isHittable, "fully revealed profile chip must be tappable")
         profile.tap()
 
         let renameField = firstMatch(in: app, identifier: "fleet.conversation.dossier.rename.field")
