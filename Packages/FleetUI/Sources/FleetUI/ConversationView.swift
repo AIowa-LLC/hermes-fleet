@@ -150,6 +150,8 @@ public struct ConversationView: View {
     @State private var showingAddActions = false
     @State private var pendingAddPresentation: PendingAddPresentation?
     @State private var isResolvingPickedAttachment = false
+    /// R10-T5: the pending attachment whose preview sheet is presented.
+    @State private var previewingAttachment: ConversationViewModel.PendingAttachment?
     @FocusState private var composerFocused: Bool
     /// Dogfood r6 (G1): the focus signal driving the pill→card morph. (The
     /// composer's adaptive glass + shadow no longer read the color scheme
@@ -455,6 +457,10 @@ public struct ConversationView: View {
                         loadBytes: { throw error })
                 }
             }
+        }
+        // R10-T5: picture/document preview for a staged composer attachment.
+        .sheet(item: $previewingAttachment) { attachment in
+            AttachmentPreviewSheet(attachment: attachment)
         }
         // R9-T4: navigate to a successfully forked session.
         .onChange(of: model.forkedSession?.storedSessionID ?? model.forkedSession?.sessionID) { _, newID in
@@ -2058,33 +2064,13 @@ enum ConversationHeaderChips {
                     .accessibilityIdentifier("fleet.conversation.attachment.uploading")
                 }
                 ForEach(model.pendingAttachments) { chip in
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperclip")
-                            .font(.caption2)
-                            .foregroundStyle(theme.highlight)
-                        Text(chip.caption)
-                            .font(.caption)
-                            .foregroundStyle(theme.textPrimary)
-                            .lineLimit(1)
-                        Button {
-                            model.removePendingAttachment(chip.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                        .accessibilityLabel("Remove attachment \(chip.displayName)")
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(theme.surfaceElevated))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .strokeBorder(theme.border, lineWidth: 1))
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("fleet.conversation.attachment.chip.\(chip.displayName)")
+                    // R10-T5: the chip now carries the picture/document
+                    // preview affordance (thumbnail + tap-to-open) while
+                    // keeping the R10-T1 identifier the UI tests address.
+                    AttachmentChip(
+                        attachment: chip,
+                        onOpen: { previewingAttachment = chip },
+                        onRemove: { model.removePendingAttachment(chip.id) })
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)

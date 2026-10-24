@@ -1729,22 +1729,59 @@ public final class ConversationViewModel {
     /// next send. `refText` is the cite-form appended to the prompt
     /// (an `@file:` ref for generic files, the gateway's attachment marker
     /// for vision-tile images, a pages summary for PDFs).
+    ///
+    /// `previewBytes` / `mimeType` exist ONLY so the composer can preview what
+    /// was staged (`AttachmentPreviewSheet`): the bytes are already in hand at
+    /// stage time and stay bounded by
+    /// `AttachmentStagingRules.clientCapBytes`, and they are released with the
+    /// chip on send or remove. Nothing here is re-uploaded or persisted.
     public struct PendingAttachment: Identifiable, Equatable, Sendable {
         public let id: String
         public let displayName: String
         public let byteCount: Int
         public let refText: String
+        /// The MIME the picker reported, when it reported one. Only a
+        /// classification fallback for names that carry no extension.
+        public let mimeType: String?
+        /// The exact bytes staged on the gateway, retained for the preview
+        /// sheet (nil when the caller staged no bytes).
+        public let previewBytes: Data?
 
-        public init(id: String, displayName: String, byteCount: Int, refText: String) {
+        public init(
+            id: String,
+            displayName: String,
+            byteCount: Int,
+            refText: String,
+            mimeType: String? = nil,
+            previewBytes: Data? = nil
+        ) {
             self.id = id
             self.displayName = displayName
             self.byteCount = byteCount
             self.refText = refText
+            self.mimeType = mimeType
+            self.previewBytes = previewBytes
         }
 
         /// Chip caption: name + human-readable size.
         public var caption: String {
             "\(displayName) · \(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))"
+        }
+
+        /// What kind of preview the app can honestly offer for this file.
+        public var previewKind: AttachmentPreviewKind {
+            AttachmentPreviewRules.kind(displayName: displayName, mimeType: mimeType)
+        }
+
+        /// Identity + wire fields. The retained preview payload is content,
+        /// not identity: comparing it would walk up to 10 MB per diff on every
+        /// SwiftUI update for no behavioural gain.
+        public static func == (lhs: PendingAttachment, rhs: PendingAttachment) -> Bool {
+            lhs.id == rhs.id
+                && lhs.displayName == rhs.displayName
+                && lhs.byteCount == rhs.byteCount
+                && lhs.refText == rhs.refText
+                && lhs.mimeType == rhs.mimeType
         }
     }
 
@@ -1779,6 +1816,10 @@ public final class ConversationViewModel {
             let safeName = AttachmentStagingRules.sanitizedFilename(name)
             let lower = (safeName as NSString).pathExtension.lowercased()
             let refText: String
+            // The MIME that travels with the staged chip: a classification
+            // fallback only (the extension decides whenever there is one), so
+            // an extension-less pick still classifies honestly.
+            let stagedMIMEType: String?
             if AttachmentStagingRules.imageExtensions.contains(lower) {
                 // Vision-tile path: bytes queue as an attached image the NEXT
                 // prompt.submit consumes (server.py `_queue_attached_image`).
@@ -1792,6 +1833,7 @@ public final class ConversationViewModel {
                 let image = try await attachments.attachImageBytes(
                     sessionID: sid, filename: safeName, dataURL: dataURL)
                 refText = "[User attached image: \(image.name ?? safeName)]"
+                stagedMIMEType = AttachmentStagingRules.imageMIME(forExtension: lower)
             } else if lower == "pdf" {
                 guard case .success(let dataURL) = AttachmentStagingRules.pdfDataURL(filename: safeName, bytes: bytes) else {
                     if case .failure(let error) = AttachmentStagingRules.pdfDataURL(filename: safeName, bytes: bytes) {
@@ -1801,6 +1843,7 @@ public final class ConversationViewModel {
                 }
                 let pdf = try await attachments.attachPDF(sessionID: sid, filename: safeName, dataURL: dataURL)
                 refText = "[User attached PDF: \(pdf.filename) (\(pdf.pagesAttached) page(s))]"
+                stagedMIMEType = "application/pdf"
             } else {
                 // Generic artifact: the `@file:` ref the agent's file tools
                 // read (file.attach methods_prompt.py:1350).
@@ -1813,12 +1856,15 @@ public final class ConversationViewModel {
                 }
                 let file = try await attachments.attachFile(sessionID: sid, name: safeName, dataURL: dataURL)
                 refText = file.refText
+                stagedMIMEType = resolvedMime
             }
             pendingAttachments.append(PendingAttachment(
                 id: UUID().uuidString,
                 displayName: safeName,
                 byteCount: bytes.count,
-                refText: refText))
+                refText: refText,
+                mimeType: stagedMIMEType,
+                previewBytes: bytes))
             attachmentError = nil
         } catch let error as AttachmentStagingError {
             setAttachmentError(error)
