@@ -90,7 +90,17 @@ final class FOS8AccessibilityUITests: XCTestCase {
 
     func testBotRowVoiceOverLabelReadsMandatedOrder() throws {
         let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "roster"])
-        let row = scrollToFind(app, identifier: "fleet.roster.row.workstation#researcher")
+        let row = firstMatch(in: app, identifier: "fleet.roster.row.workstation#researcher")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Researcher row appears")
+
+        // The seeded row initially sits against the bottom safe-area overlay.
+        // Move it fully into the roster viewport before asking XCTest for its
+        // activation point; `isHittable` can report an automation error when
+        // a visible element is partly covered instead of returning false.
+        let roster = app.scrollViews["fleet.roster"].firstMatch
+        XCTAssertTrue(roster.exists, "roster scroll container appears")
+        roster.swipeUp()
+        XCTAssertTrue(row.isHittable, "Researcher row is hittable after scrolling into view")
 
         // The composite read: name first, then route provenance, then the
         // status word. Preview/time may trail. Required fragments present.
