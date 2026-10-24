@@ -43,13 +43,21 @@ final class ConversationCompactChromeUITests: XCTestCase {
         )
     }
 
-    /// Scroll the horizontal toolbelt in short steps until a chip's full
-    /// frame is inside the window. XCTest can throw while computing
+    /// Scroll the horizontal toolbelt until a chip's full frame is inside
+    /// its visible viewport. XCTest can throw while computing
     /// `isHittable` for an off-screen chip, so use geometry to choose the
     /// scroll direction and query hittability only after it is visible.
-    private func revealChip(_ chip: XCUIElement, using rowAnchor: XCUIElement, in window: XCUIElement) {
-        let bounds = window.frame
-        let rowY = (rowAnchor.frame.midY - bounds.minY) / bounds.height
+    private func revealChip(_ chip: XCUIElement, using rowAnchor: XCUIElement,
+                            in zone: XCUIElement, window: XCUIElement) {
+        let windowBounds = window.frame
+        let bounds = zone.frame.intersection(windowBounds)
+        guard !bounds.isNull, !bounds.isEmpty else {
+            XCTFail("toolbelt must have a visible scroll viewport")
+            return
+        }
+        // The scroll view's AX frame can extend behind the keyboard. Use a
+        // chip's row for the gesture height rather than that frame's center.
+        let rowY = (rowAnchor.frame.midY - windowBounds.minY) / windowBounds.height
 
         for _ in 0..<8 {
             let frame = chip.frame
@@ -57,18 +65,28 @@ final class ConversationCompactChromeUITests: XCTestCase {
             let clippedAtTrailing = frame.maxX > bounds.maxX + 1
             guard clippedAtLeading || clippedAtTrailing else { break }
 
-            // Move about 100 points per gesture. A full-window drag can skip
-            // a middle chip and leave its leading edge clipped at the end.
-            let startX: CGFloat = clippedAtTrailing ? 0.78 : 0.22
-            let endX: CGFloat = clippedAtTrailing ? 0.53 : 0.47
+            // A fixed-distance flick can coast past a middle chip, then
+            // reverse past it again forever. Move only the clipped distance
+            // plus a small inset, and hold before release to stop momentum.
+            let overflow = clippedAtTrailing
+                ? frame.maxX - bounds.maxX : bounds.minX - frame.minX
+            let distance = min(max(overflow + 8, 24), bounds.width * 0.25)
+            let startPoint = bounds.minX + bounds.width * (clippedAtTrailing ? 0.75 : 0.25)
+            let endPoint = startPoint + (clippedAtTrailing ? -distance : distance)
+            let startX = (startPoint - windowBounds.minX) / windowBounds.width
+            let endX = (endPoint - windowBounds.minX) / windowBounds.width
+            print("Toolbelt reveal \(chip.identifier): frame=\(frame), viewport=\(bounds), distance=\(distance)")
             let start = window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: rowY))
             let end = window.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: rowY))
-            start.press(forDuration: 0.08, thenDragTo: end)
+            start.press(forDuration: 0.08, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 0.2)
         }
 
-        XCTAssertGreaterThanOrEqual(chip.frame.minX, bounds.minX,
+        let revealedFrame = chip.frame
+        print("Toolbelt revealed \(chip.identifier): frame=\(revealedFrame), viewport=\(bounds)")
+        XCTAssertGreaterThanOrEqual(revealedFrame.minX, bounds.minX,
                                     "\(chip.identifier) must be fully inside the leading edge")
-        XCTAssertLessThanOrEqual(chip.frame.maxX, bounds.maxX + 1,
+        XCTAssertLessThanOrEqual(revealedFrame.maxX, bounds.maxX + 1,
                                  "\(chip.identifier) must be fully inside the trailing edge")
     }
 
@@ -134,7 +152,7 @@ final class ConversationCompactChromeUITests: XCTestCase {
         func reveal(_ id: String) -> XCUIElement {
             let e = app.descendants(matching: .any)[id]
             XCTAssertTrue(e.waitForExistence(timeout: 10), "\(id) must render")
-            revealChip(e, using: chip, in: window)
+            revealChip(e, using: chip, in: zone, window: window)
             XCTAssertTrue(e.isHittable, "\(id) must be hittable once revealed")
             return e
         }
@@ -411,7 +429,7 @@ final class ConversationCompactChromeUITests: XCTestCase {
         for id in ["fleet.conversation.header.folder", "fleet.conversation.header.profile"] {
             let chip = firstMatch(in: app, identifier: id)
             XCTAssertTrue(chip.waitForExistence(timeout: 10), "\(id) must render")
-            revealChip(chip, using: model, in: window)
+            revealChip(chip, using: model, in: zone, window: window)
             XCTAssertTrue(chip.isHittable, "\(id) must be reachable by scrolling")
             XCTAssertLessThanOrEqual(chip.frame.width, 190, "\(id) must be width-capped (\(chip.frame.width))")
         }
