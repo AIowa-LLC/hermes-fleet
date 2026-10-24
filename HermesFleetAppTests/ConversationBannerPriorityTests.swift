@@ -18,7 +18,8 @@ final class ConversationBannerPriorityTests: XCTestCase {
         hydratedFromCache: Bool = false,
         historyLoadError: String? = nil,
         errorMessage: String? = nil,
-        historyMayBeIncomplete: Bool = false
+        historyMayBeIncomplete: Bool = false,
+        openTimedOut: Bool = false
     ) -> ConversationBanner? {
         ConversationBannerSelector.select(
             phase: phase,
@@ -27,8 +28,22 @@ final class ConversationBannerPriorityTests: XCTestCase {
             hydratedFromCache: hydratedFromCache,
             historyLoadError: historyLoadError,
             errorMessage: errorMessage,
-            historyMayBeIncomplete: historyMayBeIncomplete
+            historyMayBeIncomplete: historyMayBeIncomplete,
+            openTimedOut: openTimedOut
         )
+    }
+
+    /// A timed-out open replaces the progress spinner in every state the open
+    /// can still be in, and never masks a terminal failure.
+    func testTimedOutOpenReplacesSpinnerAndKeepsTerminalStates() {
+        for phase: ConversationViewModel.Phase in [.idle, .opening, .connecting, .reconnecting, .ready] {
+            XCTAssertEqual(select(phase: phase, openTimedOut: true)?.kind, .timedOut, "\(phase)")
+        }
+        XCTAssertEqual(select(phase: .opening, openTimedOut: false)?.kind, .opening)
+        XCTAssertEqual(select(phase: .disconnected, openTimedOut: true)?.kind, .disconnected)
+        XCTAssertEqual(select(phase: .authRequired, openTimedOut: true)?.kind, .authRequired)
+        XCTAssertEqual(select(phase: .failed("boom"), openTimedOut: true)?.kind, .failed)
+        XCTAssertFalse(ConversationBannerKind.timedOut.showsSpinner)
     }
 
     func testIncompleteHistoryNoticeStaysVisibleWhileStreaming() {
@@ -61,6 +76,22 @@ final class ConversationBannerPriorityTests: XCTestCase {
         )
         XCTAssertEqual(banner?.kind, .disconnected)
         XCTAssertEqual(banner?.text, ConversationBannerSelector.disconnectedText)
+    }
+
+    /// Session held by another client: plain-language copy, failed-tier
+    /// priority (outranks cache/notice context), and no raw RPC wording.
+    func testSessionOwnedElsewhereUsesPlainCopyAtFailedPriority() {
+        let banner = select(
+            phase: .sessionOwnedElsewhere,
+            hydratedFromCache: true,
+            historyLoadError: nil
+        )
+        XCTAssertEqual(banner?.kind, .sessionOwnedElsewhere)
+        XCTAssertEqual(banner?.kind.priority, .failed)
+        XCTAssertEqual(banner?.text, "This session is open on your desktop. Close it there or wait for it to finish, then retry.")
+        XCTAssertFalse(banner?.text.contains("4090") ?? true)
+        XCTAssertFalse(banner?.text.contains("SESSION_NOT_OWNED") ?? true)
+        XCTAssertTrue(ConversationBannerKind.sessionOwnedElsewhere.symbolName == "desktopcomputer")
     }
 
     func testFailedPhaseShowsDetail() {

@@ -158,14 +158,20 @@ public struct MetricKitDiagnosticsSummary: Sendable, Equatable, Codable {
     public var hangCount: Int
     public var diskWriteExceptionCount: Int
     public var cpuExceptionCount: Int
+    /// Distinct crash signal numbers (POSIX, bounded by `MetricKitDiagnosticDigest`).
+    /// Nil when the batch carried no crash signal. Optional so summaries
+    /// written before this field existed still decode.
+    public var crashSignals: [Int]?
 
     public init(receivedAt: Date, crashCount: Int = 0, hangCount: Int = 0,
-                diskWriteExceptionCount: Int = 0, cpuExceptionCount: Int = 0) {
+                diskWriteExceptionCount: Int = 0, cpuExceptionCount: Int = 0,
+                crashSignals: [Int]? = nil) {
         self.receivedAt = receivedAt
         self.crashCount = crashCount
         self.hangCount = hangCount
         self.diskWriteExceptionCount = diskWriteExceptionCount
         self.cpuExceptionCount = cpuExceptionCount
+        self.crashSignals = crashSignals
     }
 }
 

@@ -27,9 +27,16 @@ class WatchdogTests(unittest.TestCase):
         self.assertLess(report["elapsed_seconds"], 3)
 
     def test_repeated_app_logs_do_not_count_as_test_progress(self):
-        code, log, report = self.execute("import time\nwhile True:\n print('app startup log', flush=True)\n time.sleep(.05)")
+        # Emit the required repeated noise together: interpreter startup shares
+        # the .4s deadline and must not leave us waiting for three spaced writes.
+        # Bound the producer so treating noise as progress fails with exit 0
+        # instead of hanging the test indefinitely.
+        code, log, report = self.execute(
+            "import time\nprint('app startup log\\n' * 3, end='', flush=True)\n"
+            "for _ in range(20):\n time.sleep(.05)\n print('app startup log', flush=True)")
         self.assertEqual(code, 124)
         self.assertGreater(log.count("app startup log"), 2)
+        self.assertTrue(report["timed_out"])
 
     def test_slow_but_progressing_test_keeps_its_full_budget(self):
         code, log, report = self.execute("import time\nfor i in range(10):\n print(f'    t = {i}.00s Find element', flush=True)\n time.sleep(.1)\nprint(\"Test Case '-[Fixture testSlow]' passed\")")

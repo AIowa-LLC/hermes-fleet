@@ -23,7 +23,7 @@ public struct GatewayRosterClient: RosterProviding {
 
     public func fetchProfiles() async throws -> [ProfileDescriptor] {
         guard case .connected = transport.state else { throw RosterError.notConnected }
-        let result = try await transport.request(method: "profiles.list", params: .object([:]))
+        let result = try await transport.readRequest(method: "profiles.list", params: .object([:]))
         return try Self.decodeProfiles(result)
     }
 
@@ -38,7 +38,7 @@ public struct GatewayRosterClient: RosterProviding {
             "profile": .string(route.profileSlug.rawValue),
             "limit": .number(Double(limit)),
         ])
-        let result = try await transport.request(method: "session.list", params: params)
+        let result = try await transport.readRequest(method: "session.list", params: params)
         return try Self.decodeSessions(result)
     }
 

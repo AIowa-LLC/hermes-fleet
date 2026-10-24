@@ -74,6 +74,21 @@ final class ConversationDraftStoreTests: XCTestCase {
         XCTAssertEqual(s.draft(route: route(ws, "default"), sessionID: "other"), "")
     }
 
+    /// Each session on the SAME gateway/profile keeps its own draft: opening
+    /// one chat never restores another chat's text.
+    func testDraftIsKeyedPerSessionOnTheSameRoute() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let s = store(url)
+        let route = route(ws, "default")
+        s.scheduleSave("yesterday in chat one", route: route, sessionID: "chat-1")
+        s.scheduleSave("chat two draft", route: route, sessionID: "chat-2")
+        s.flush()
+        XCTAssertEqual(s.draft(route: route, sessionID: "chat-1"), "yesterday in chat one")
+        XCTAssertEqual(s.draft(route: route, sessionID: "chat-2"), "chat two draft")
+        XCTAssertEqual(s.draft(route: route, sessionID: "chat-3"), "")
+    }
+
     // MARK: clear
 
     func testClearRemovesDraftAndPersists() {

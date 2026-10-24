@@ -1009,7 +1009,7 @@ final class GatewayServerRequestTests: XCTestCase {
         }
         func receive() async throws -> WebSocketMessage {
             var iterator = inbound.makeAsyncIterator()
-            guard let message = await iterator.next() else { throw TransportError.requestTimeout }
+            guard let message = await iterator.next() else { throw TransportError.requestTimeout(method: "sudo") }
             return message
         }
         func send(_ message: WebSocketMessage) async throws {
@@ -1051,7 +1051,7 @@ final class GatewayServerRequestTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         let sends = await socket.sendCount
         XCTAssertEqual(sends, 1, "a send suspended at await must not admit another answer")
-        await socket.finish(error: .requestTimeout)
+        await socket.finish(error: .requestTimeout(method: "sudo"))
         for task in [first, second] {
             do { try await task.value; XCTFail("both callers must see the failed send") } catch {}
         }

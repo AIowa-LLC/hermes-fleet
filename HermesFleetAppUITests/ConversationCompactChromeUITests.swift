@@ -43,6 +43,53 @@ final class ConversationCompactChromeUITests: XCTestCase {
         )
     }
 
+    /// Scroll the horizontal toolbelt until a chip's full frame is inside
+    /// its visible viewport. XCTest can throw while computing
+    /// `isHittable` for an off-screen chip, so use geometry to choose the
+    /// scroll direction and query hittability only after it is visible.
+    private func revealChip(_ chip: XCUIElement, using rowAnchor: XCUIElement,
+                            in zone: XCUIElement, window: XCUIElement) {
+        let windowBounds = window.frame
+        let bounds = zone.frame.intersection(windowBounds)
+        guard !bounds.isNull, !bounds.isEmpty else {
+            XCTFail("toolbelt must have a visible scroll viewport")
+            return
+        }
+        // The scroll view's AX frame can extend behind the keyboard. Use a
+        // chip's row for the gesture height rather than that frame's center.
+        let rowY = (rowAnchor.frame.midY - windowBounds.minY) / windowBounds.height
+
+        for _ in 0..<8 {
+            let frame = chip.frame
+            let clippedAtLeading = frame.minX < bounds.minX
+            let clippedAtTrailing = frame.maxX > bounds.maxX + 1
+            guard clippedAtLeading || clippedAtTrailing else { break }
+
+            // A fixed-distance flick can coast past a middle chip, then
+            // reverse past it again forever. Move only the clipped distance
+            // plus a small inset, and hold before release to stop momentum.
+            let overflow = clippedAtTrailing
+                ? frame.maxX - bounds.maxX : bounds.minX - frame.minX
+            let distance = min(max(overflow + 8, 24), bounds.width * 0.25)
+            let startPoint = bounds.minX + bounds.width * (clippedAtTrailing ? 0.75 : 0.25)
+            let endPoint = startPoint + (clippedAtTrailing ? -distance : distance)
+            let startX = (startPoint - windowBounds.minX) / windowBounds.width
+            let endX = (endPoint - windowBounds.minX) / windowBounds.width
+            print("Toolbelt reveal \(chip.identifier): frame=\(frame), viewport=\(bounds), distance=\(distance)")
+            let start = window.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: rowY))
+            let end = window.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: rowY))
+            start.press(forDuration: 0.08, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+
+        let revealedFrame = chip.frame
+        print("Toolbelt revealed \(chip.identifier): frame=\(revealedFrame), viewport=\(bounds)")
+        XCTAssertGreaterThanOrEqual(revealedFrame.minX, bounds.minX,
+                                    "\(chip.identifier) must be fully inside the leading edge")
+        XCTAssertLessThanOrEqual(revealedFrame.maxX, bounds.maxX + 1,
+                                 "\(chip.identifier) must be fully inside the trailing edge")
+    }
+
     /// The nav bar must be INLINE (compact) — a large-title bar measures
     /// taller than this bound on iPhone. The bound is generous vs the ~96pt
     /// large-title bar but tight vs the old stacked chrome.
@@ -78,7 +125,7 @@ final class ConversationCompactChromeUITests: XCTestCase {
 
     /// Top chip bar (Hermex-inspired, docked at the top): after a turn the
     /// scroll zone carries model · folder · profile · context. Off-screen
-    /// chips are reachable by swiping the zone (overflow scrolls, never
+    /// chips are reachable by swiping the chip row (overflow scrolls, never
     /// truncates).
     func testHeaderChipBarScrollsAndCarriesSessionFacts() throws {
         let app = XCUIApplication()
@@ -101,11 +148,12 @@ final class ConversationCompactChromeUITests: XCTestCase {
         // off-screen, swipe the zone left to reveal them (bounded).
         let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
         XCTAssertTrue(zone.waitForExistence(timeout: 5), "chip scroll zone must render")
+        let window = app.windows.firstMatch
         func reveal(_ id: String) -> XCUIElement {
             let e = app.descendants(matching: .any)[id]
-            for _ in 0..<4 where !(e.exists && e.isHittable) {
-                zone.swipeLeft(velocity: .slow)
-            }
+            XCTAssertTrue(e.waitForExistence(timeout: 10), "\(id) must render")
+            revealChip(e, using: chip, in: zone, window: window)
+            XCTAssertTrue(e.isHittable, "\(id) must be hittable once revealed")
             return e
         }
         let folder = reveal("fleet.conversation.header.folder")
@@ -381,19 +429,8 @@ final class ConversationCompactChromeUITests: XCTestCase {
         for id in ["fleet.conversation.header.folder", "fleet.conversation.header.profile"] {
             let chip = firstMatch(in: app, identifier: id)
             XCTAssertTrue(chip.waitForExistence(timeout: 10), "\(id) must render")
-            for _ in 0..<4 where !chip.isHittable || chip.frame.maxX > window.frame.maxX + 1 {
-                // The scroll view's frame can extend below the chip row, so
-                // drag along the chip row itself (the model chip's midY).
-                let rowY = model.frame.midY / window.frame.height
-                let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: rowY))
-                let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: rowY))
-                start.press(forDuration: 0.1, thenDragTo: end)
-            }
+            revealChip(chip, using: model, in: zone, window: window)
             XCTAssertTrue(chip.isHittable, "\(id) must be reachable by scrolling")
-            XCTAssertGreaterThanOrEqual(chip.frame.minX, window.frame.minX,
-                                        "\(id) clipped at leading edge once revealed")
-            XCTAssertLessThanOrEqual(chip.frame.maxX, window.frame.maxX + 1,
-                                     "\(id) clipped at trailing edge once revealed (chip \(chip.frame), zone \(zone.frame), window \(window.frame), hittable \(chip.isHittable))")
             XCTAssertLessThanOrEqual(chip.frame.width, 190, "\(id) must be width-capped (\(chip.frame.width))")
         }
         // The full value stays available to assistive tech.

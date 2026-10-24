@@ -170,16 +170,19 @@ implementation, or claim of upstream parity is implied by this CI policy.
 
 The historical main package runner discarded assertion details and ignored the
 actual `swift test` exit code. The safer runner from the preserved newer source
-is now included in this CI-only migration, with exact expected counts for this
-main baseline: FleetCore 415, FleetNetworking 418, FleetPersistence 31, and
-FleetSecurity 37. Those counts are source-specific, not permanent limits.
+is now included in this CI-only migration. Its exact expected counts were
+recorded for that historical baseline (FleetCore 415, FleetNetworking 418,
+FleetPersistence 31, FleetSecurity 37) and are superseded: the current gate
+lives in `scripts/c1_packages.sh`. Those counts are source-specific, not
+permanent limits.
 
 When reconciling the newer product source, preserve its corresponding counts
 and update them deliberately with test additions. Do not transplant historical
 counts onto a newer test inventory. A command failure, missing summary, partial
 count, or failed assertion cannot become green. Full package logs are retained
 and uploaded for successful and failed jobs, and assertion lines are printed
-before the summary. Five mocked Swift contract cases verify these rules.
+before the summary. Eight mocked Swift contract cases verify these rules
+(`scripts/c1_packages_contract_test.sh`).
 
 ## Build 90 reconciliation
 
@@ -188,8 +191,9 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 810 core, 784 networking, 64 persistence, and 49
-security tests. These include the Live Ops runtime, cold-transport,
+Package baselines are 837 core, 797 networking, 67 persistence, and 68
+security tests (XCTest, measured with `swift test`; core also carries 21
+Swift Testing cases). These include the Live Ops runtime, cold-transport,
 cross-process reporting, structured ownership-refusal, and frozen-clock
 launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
 clock so their seven-day expiry is deterministic rather than dependent on the
