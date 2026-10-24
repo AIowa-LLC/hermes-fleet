@@ -102,7 +102,7 @@ public struct GatewayConversationClient: ConversationProviding {
             let result = try await transport.request(method: "session.resume", params: paramsValue)
             return try Self.decodeSession(result)
         } catch let error as JSONRPCError {
-            throw Self.mapRPCError(error)
+            throw Self.mapResumeRPCError(error)
         } catch let error as TransportError {
             throw Self.mapTransportError(error)
         } catch {
@@ -406,6 +406,28 @@ public struct GatewayConversationClient: ConversationProviding {
 
     // MARK: error mapping
 
+    /// The single matcher for the session-ownership refusal. Wire evidence:
+    /// upstream `methods_prompt.py` admission refusals are JSON-RPC 4090 with
+    /// `data.reason == "SESSION_NOT_OWNED"` (snapshot 9bb2ea1b5c31; see
+    /// `mapRPCError` below). Matching is exact on code AND reason; message
+    /// prose is never inspected.
+    ///
+    /// Caveat: the ownership refusal is documented on the PROMPT path only.
+    /// That `session.resume` emits the same refusal is an inference from the
+    /// shared ownership model, not verified on the wire. Confirm with a live
+    /// gateway before relying on the open-path copy.
+    static func isSessionOwnedElsewhere(_ error: JSONRPCError) -> Bool {
+        error.code == 4090 && error.data?["reason"]?.stringValue == "SESSION_NOT_OWNED"
+    }
+
+    /// `session.resume` error mapping. An ownership refusal becomes its own
+    /// case so the UI can offer "Wait and retry" instead of a raw RPC message;
+    /// every other code falls through to the shared mapping unchanged.
+    static func mapResumeRPCError(_ error: JSONRPCError) -> ConversationError {
+        if isSessionOwnedElsewhere(error) { return .sessionOwnedElsewhere }
+        return mapRPCError(error)
+    }
+
     /// Map JSON-RPC error codes onto the conversation vocabulary.
     static func mapRPCError(_ error: JSONRPCError) -> ConversationError {
         // Upstream methods_prompt.py rejects admission before queuing a turn
@@ -454,8 +476,8 @@ public struct GatewayConversationClient: ConversationProviding {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .requestTimedOut(method: method)
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

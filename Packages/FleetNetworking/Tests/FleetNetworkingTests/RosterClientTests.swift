@@ -132,7 +132,7 @@ final class RosterClientTests: XCTestCase {
             _ = try await transport.request(method: "profiles.list", params: .object([:]))
             XCTFail("expected requestTimeout")
         } catch let error as TransportError {
-            XCTAssertEqual(error, .requestTimeout)
+            XCTAssertEqual(error, .requestTimeout(method: "profiles.list"))
         } catch {
             XCTFail("unexpected error \(error)")
         }

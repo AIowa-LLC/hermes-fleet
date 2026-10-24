@@ -148,8 +148,8 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
             return .invalidState(detail)
         case .unableToBuildURL:
             return .connectionFailed("unable to build WebSocket URL")
-        case .requestTimeout:
-            return .connectionFailed("request timed out")
+        case .requestTimeout(let method):
+            return .connectionFailed("request timed out: \(method)")
         case .transportFailure(let detail):
             return .connectionFailed(detail)
         }

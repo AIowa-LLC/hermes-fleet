@@ -123,7 +123,8 @@ public struct GatewayReplayClient: Sendable {
             "last_seen": .number(Double(lastSeen)),
         ])
         do {
-            let result = try await transport.request(method: "session.events.since", params: params)
+            // Idempotent read: retried under the bounded read policy.
+            let result = try await transport.readRequest(method: "session.events.since", params: params)
             return try Self.decode(sessionID: sessionID, result, lastSeen: lastSeen)
         } catch let error as ReplayError {
             // Decode-level failures pass through unchanged.
@@ -217,8 +218,8 @@ public struct GatewayReplayClient: Sendable {
         switch error {
         case .connectionClosed(let reason):
             return .rpcFailed("connection closed: \(reason.debugDescription)")
-        case .requestTimeout:
-            return .rpcFailed("request timed out")
+        case .requestTimeout(let method):
+            return .rpcFailed(GatewayRequestCatalog.timeoutMessage(forMethod: method))
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:

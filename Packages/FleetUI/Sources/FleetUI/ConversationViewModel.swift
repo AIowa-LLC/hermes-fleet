@@ -160,6 +160,9 @@ public final class ConversationViewModel {
         case authRequired
         /// A classified failure (non-secret description).
         case failed(String)
+        /// The gateway reports another client (typically the desktop app)
+        /// holds this session. Recoverable: "Wait and retry" re-runs the open.
+        case sessionOwnedElsewhere
     }
 
     // MARK: Injected seams (composition root)
@@ -549,6 +552,18 @@ public final class ConversationViewModel {
     nonisolated(unsafe) private var slashSuggestionTask: Task<Void, Never>?
     /// Status poll cadence (short in tests; production uses the default).
     private let statusInterval: Duration
+    /// Bound on how long an open (connect → resume → history) may stay
+    /// unanswered before the screen offers Retry / Reopen instead of spinning.
+    /// Injectable so tests shorten it.
+    public static let defaultOpenTimeout: Duration = .seconds(15)
+    private let openTimeout: Duration
+    /// Set by `openWatchdog` when `openTimeout` elapses. Only meaningful while
+    /// the session is still unopened or its history is still loading; see
+    /// `isOpenTimedOut`.
+    private(set) var openTimeoutFired = false
+    /// Timer for `openTimeout`. Re-armed on every open attempt; cancelled in
+    /// `deinit` and `teardown()`.
+    nonisolated(unsafe) private var openWatchdog: Task<Void, Never>?
     /// Authoritative transcript history — unbounded, persisted to the cache
     /// (P2-8). The public `transcript` is a capped display window over this.
     private var allRows: [ConversationRow] = []
@@ -567,6 +582,7 @@ public final class ConversationViewModel {
         sessionID: String?,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
+        openTimeout: Duration = ConversationViewModel.defaultOpenTimeout,
         maxDisplayRows: Int = 200,
         voice: (any VoiceTranscribing)? = nil,
         prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
@@ -577,6 +593,7 @@ public final class ConversationViewModel {
         self.sessionID = sessionID
         self.biometrics = biometrics
         self.statusInterval = statusInterval
+        self.openTimeout = openTimeout
         self.maxDisplayRows = maxDisplayRows
         self.prepareForegroundRecovery = prepareForegroundRecovery
         // R10-T4: fail-closed voice default when no engine is injected.
@@ -622,6 +639,7 @@ public final class ConversationViewModel {
         micTask?.cancel()
         readAloudCompletionTask?.cancel()
         slashSuggestionTask?.cancel()
+        openWatchdog?.cancel()
         // Parity with `teardown()`: a VM released without ever disappearing
         // (a parent path that skips `onDisappear`, a programmatic owner) must
         // not leave the notification-listening loop or the delayed retry
@@ -647,6 +665,9 @@ public final class ConversationViewModel {
     /// live event subscription is untouched, so the screen is never left
     /// without monitoring.
     public func start() async {
+        // Arm before ANY await in the open path (the cache read included), so
+        // a hang anywhere before the session is open surfaces as a timeout.
+        if openedSessionID == nil { armOpenWatchdog() }
         if !hasStarted {
             hasStarted = true
             transcriptOpenInterval = signposts.begin(.transcriptOpen)
@@ -672,8 +693,13 @@ public final class ConversationViewModel {
             startStatusWatcher()
             return
         }
-        guard await connectAndOpen() else {
-            transcriptOpenInterval?.end(.failed)
+        // Operation fence: a Retry (or any later recovery) supersedes this open,
+        // so a late completion of THIS attempt can never overwrite its state.
+        // A failed open that is still the current attempt ends the transcript
+        // signpost as failed (a superseded attempt leaves it to the newer one).
+        let token = beginOperation()
+        guard await connectAndOpen(fencedBy: token) else {
+            if isCurrent(token) { transcriptOpenInterval?.end(.failed) }
             return
         }
         // Adopt the gateway's replay epoch on first open so a LATER reconnect
@@ -682,6 +708,7 @@ public final class ConversationViewModel {
         // so this surfaces no notice on a normal open.
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
+            guard isCurrent(token) else { return }
             if let notice = Self.replayNotice(outcomes, openSessionID: openedSessionID) {
                 replayNotice = notice
             }
@@ -697,15 +724,67 @@ public final class ConversationViewModel {
     /// Shared by `start()` (initial open) and `reconnect()`/`reauthenticate()`
     /// (recovery), so an initially-failed-open conversation recovers to a
     /// WORKING composer instead of an enabled-but-dead one.
-    private func connectAndOpen() async -> Bool {
+    private func connectAndOpen(fencedBy token: Int) async -> Bool {
         phase = .connecting
+        let connectStartedAt = ContinuousClock.now
+        SessionLifecycleLog.openStarted()
         do {
             try await session.connect()
         } catch {
+            guard isCurrent(token) else { return false }
+            SessionLifecycleLog.openFailed(
+                SessionLifecycleLog.failureKind(for: error),
+                durationMs: SessionLifecycleLog.milliseconds(since: connectStartedAt))
             classifyConnectFailure(error)
             return false
         }
-        return await ensureOpenAndSubscribed()
+        guard isCurrent(token) else { return false }
+        return await ensureOpenAndSubscribed(fencedBy: token)
+    }
+
+    // MARK: Open timeout (TestFlight: infinite spinner on resume)
+
+    /// True when the open has been pending past `openTimeout`: the session is
+    /// still not open, or its history is still loading with nothing rendered.
+    /// Derived, so a late success clears it without any extra bookkeeping.
+    /// Terminal failures win in the banner selector.
+    public var isOpenTimedOut: Bool {
+        openTimeoutFired && (openedSessionID == nil || showsHistoryLoadingPlaceholder)
+    }
+
+    /// True once the durable session is open on the gateway.
+    public var hasOpenedSession: Bool { openedSessionID != nil }
+
+    /// (Re)start the open-timeout timer. Clears any previous fired state.
+    private func armOpenWatchdog() {
+        openWatchdog?.cancel()
+        openTimeoutFired = false
+        let timeout = openTimeout
+        let armedAt = ContinuousClock.now
+        openWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, let self else { return }
+            self.openTimeoutFired = true
+            // Still pending past the bound: this open is a timeout failure.
+            // The transcript-open signpost ends as failed (first end wins, so
+            // a later success does not re-record it) and the lifecycle log
+            // gets the closed `timeout` kind.
+            guard self.isOpenTimedOut else { return }
+            self.transcriptOpenInterval?.end(.failed)
+            SessionLifecycleLog.openFailed(
+                .timeout, durationMs: SessionLifecycleLog.milliseconds(since: armedAt))
+        }
+    }
+
+    /// Retry after a timed-out or failed open. Starts a NEW operation (which
+    /// fences any still-parked earlier attempt) and re-runs the open against
+    /// the current state: connect + resume when the session was never opened,
+    /// or the authoritative history refetch when the open landed but history
+    /// is still loading. Ends in `.ready` or an actionable phase, never a
+    /// silent loading state.
+    public func retryOpen() async {
+        armOpenWatchdog()
+        await reconnect()
     }
 
     /// Idempotent open + subscribe: open (create/resume) the session if none
@@ -719,6 +798,7 @@ public final class ConversationViewModel {
     private func ensureOpenAndSubscribed(fencedBy token: Int? = nil) async -> Bool {
         if openedSessionID == nil {
             phase = .opening
+            let openStartedAt = ContinuousClock.now
             do {
                 if let sessionID {
                     // t_8401d3c3: declare the client's last applied event id on
@@ -757,9 +837,14 @@ public final class ConversationViewModel {
                 }
             } catch {
                 guard isCurrent(token) else { return false }
+                SessionLifecycleLog.openFailed(
+                    SessionLifecycleLog.failureKind(for: error),
+                    durationMs: SessionLifecycleLog.milliseconds(since: openStartedAt))
                 classifyOpenFailure(error)
                 return false
             }
+            SessionLifecycleLog.openSucceeded(
+                durationMs: SessionLifecycleLog.milliseconds(since: openStartedAt))
         }
         startEventSubscription()
         startStatusWatcher()
@@ -767,7 +852,10 @@ public final class ConversationViewModel {
         // pull `approval.pending` so a banner whose push event was missed
         // while detached is restored (fail-soft inside the VM; deduped
         // against any banner that did arrive).
-        Task { await approvalViewModel?.restorePendingApprovals() }
+        // Capture only the approval child: an unanswered `approval.pending`
+        // read must not keep a popped conversation alive.
+        let approvals = approvalViewModel
+        Task { await approvals?.restorePendingApprovals() }
         phase = .ready
         if sessionID == nil { transcriptOpenInterval?.end(variant: .empty) } // new chat: nothing to render
         return true
@@ -1004,9 +1092,11 @@ public final class ConversationViewModel {
     public func reconnect() async {
         let token = beginOperation()
         phase = .reconnecting
+        SessionLifecycleLog.reconnectStarted()
         do {
             try await session.connect()
         } catch {
+            SessionLifecycleLog.reconnectFailed(SessionLifecycleLog.failureKind(for: error))
             guard token == operationGeneration else { return }
             phase = .disconnected
             errorMessage = Self.nonSecret(error)
@@ -1358,8 +1448,9 @@ public final class ConversationViewModel {
                 sessionID: sid,
                 command: "/\(name) \(argument)".trimmingCharacters(in: .whitespaces))
         } catch SlashCommandError.unknownDispatchType(let type) {
-            commandSuggestionError = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
-            appendCommandRow(commandSuggestionError!)
+            let message = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
+            commandSuggestionError = message
+            appendCommandRow(message)
             return true
         } catch SlashCommandError.commandUnavailable {
             commandSuggestionError = "/\(name) is no longer available on this gateway. Refresh and try again."
@@ -1375,8 +1466,9 @@ public final class ConversationViewModel {
                     argument: argument)
                 return await interpret(dispatch: dispatch, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
             } catch SlashCommandError.unknownDispatchType(let type) {
-                commandSuggestionError = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
-                appendCommandRow(commandSuggestionError!)
+                let message = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
+                commandSuggestionError = message
+                appendCommandRow(message)
                 return true
             } catch let error as SlashCommandError {
                 commandSuggestionError = Self.nonSecret(error)
@@ -1401,19 +1493,14 @@ public final class ConversationViewModel {
         aliasDepth: Int = 0
     ) async -> Bool {
         // Normalize: slash.exec may embed a dispatch.
-        let directive: HermesCommandDispatch?
-        if let dispatch { directive = dispatch }
-        else if let exec = execution?.dispatch { directive = exec }
-        else { directive = nil }
-
-        // Plain worker output.
-        if directive == nil {
+        guard let directive = dispatch ?? execution?.dispatch else {
+            // Plain worker output.
             let out = execution?.output ?? "(no output)"
             let warning = execution?.warning
             appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
             return true
         }
-        return await interpretDirective(directive!, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+        return await interpretDirective(directive, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
     }
 
     private func interpretDirective(
@@ -1521,8 +1608,13 @@ public final class ConversationViewModel {
         // Turn clock: starts at submit — the user waits from HERE, through
         // tools/reasoning, until the turn completes.
         turnStartedAt = Date()
+        let sendStartedAt = ContinuousClock.now
+        SessionLifecycleLog.sendStarted()
         do {
             let submission = try await session.conversation.submitPrompt(sessionID: sid, text: modelPayload)
+            SessionLifecycleLog.sendAcknowledged(
+                streaming: submission.isStreaming,
+                durationMs: SessionLifecycleLog.milliseconds(since: sendStartedAt))
             // The refs were staged successfully at pick time. Keep them in
             // the tray until submit succeeds so a rejected prompt remains
             // retryable with the same attachment references. An upload staged
@@ -1544,6 +1636,9 @@ public final class ConversationViewModel {
             // stream carries no terminal frame for a prompt that never
             // started, so classifyTurnFailure alone would leave the turn
             // clock running.
+            SessionLifecycleLog.sendFailed(
+                SessionLifecycleLog.failureKind(for: error),
+                durationMs: SessionLifecycleLog.milliseconds(since: sendStartedAt))
             classifyTurnFailure(error)
             turnStartedAt = nil
             return false
@@ -2292,6 +2387,8 @@ public final class ConversationViewModel {
     /// re-created after cancellation), so it is left running and dies with the
     /// VM; a re-appear restarts the status watcher via `start()`.
     public func teardown() {
+        openWatchdog?.cancel()
+        openWatchdog = nil
         readAloudCompletionTask?.cancel()
         readAloudCompletionTask = nil
         statusWatcher?.cancel()
@@ -2435,6 +2532,9 @@ public final class ConversationViewModel {
             // must not treat those newer rows as part of its initial snapshot.
             let openingRevision = transcriptMutationRevision
             let openingTranscriptWasEmpty = allRows.isEmpty
+            // The history fetch is another unbounded wait that shows a spinner:
+            // re-arm the timeout so a hung fetch surfaces Retry as well.
+            armOpenWatchdog()
             Task {
                 await refetchAuthoritativeHistory(
                     sessionID: opened.sessionID,
@@ -3374,8 +3474,8 @@ public final class ConversationViewModel {
     /// into the new turn's bubble (and, across a resume, foreign session
     /// content into the transcript).
     private func appendThinking(_ text: String) {
-        if lastAssistantIndex != nil, isStreaming {
-            allRows[lastAssistantIndex!].detail = (allRows[lastAssistantIndex!].detail ?? "") + text
+        if let idx = lastAssistantIndex, isStreaming {
+            allRows[idx].detail = (allRows[idx].detail ?? "") + text
         } else {
             pendingReasoning = (pendingReasoning ?? "") + text
         }
@@ -3762,6 +3862,8 @@ public final class ConversationViewModel {
                 // #188: the chat cannot be reloaded in one piece and this
                 // gateway could not page it either.
                 phase = .failed(Self.longChatOpenCopy(messageCount: count))
+            case .sessionOwnedElsewhere:
+                phase = .sessionOwnedElsewhere
             default:
                 phase = .failed(Self.nonSecret(error))
             }
