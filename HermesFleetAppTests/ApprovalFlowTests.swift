@@ -342,7 +342,7 @@ final class ApprovalFlowTests: XCTestCase {
         vm.handleApprovalRequest(reviewedRequest)
         vm.markReviewed(reviewedRequest)
         let tap = Task { await vm.approve(scope: .once) }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        await auth.waitUntilSuspended()
         vm.handleApprovalRequest(ApprovalRequest(requestID: "req-long", sessionID: "s-1",
             command: Self.longCommand + "\necho changed", choices: ["once"], serverRequestID: "new-wire"))
         auth.complete()
@@ -358,7 +358,7 @@ final class ApprovalFlowTests: XCTestCase {
         vm.bind(sessionID: "s-1")
         vm.requestYoloEnable()
         let enable = Task { await vm.confirmYoloEnable() }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        await auth.waitUntilSuspended()
         XCTAssertEqual(auth.checks, 1)
         await vm.disableYolo()
         auth.complete()

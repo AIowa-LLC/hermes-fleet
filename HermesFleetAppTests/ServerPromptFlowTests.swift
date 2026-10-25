@@ -102,13 +102,11 @@ final class ServerPromptFlowTests: XCTestCase {
         model.bind(sessionID: "s-1")
         model.handle(sudo())
         let first = Task { await model.unlockInput() }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
-        let second = Task { await model.unlockInput() }
-        for _ in 0..<100 { await Task.yield() }
+        await auth.waitUntilSuspended()
+        await model.unlockInput()
         XCTAssertEqual(auth.checks, 1)
         auth.complete()
         await first.value
-        await second.value
         XCTAssertTrue(model.isInputUnlocked)
         XCTAssertTrue(prompts.calls.isEmpty)
     }
