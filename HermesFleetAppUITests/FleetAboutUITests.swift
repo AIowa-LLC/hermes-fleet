@@ -39,11 +39,11 @@ final class FleetAboutUITests: XCTestCase {
         // Dogfood round 2: About's entry point is the Settings root's About
         // row (the drawer circle is retired).
         let aboutRow = app.buttons["fleet.settings.about"].firstMatch
-        XCTAssertTrue(aboutRow.waitForExistence(timeout: 10),
-                      "the Settings root must carry the About row")
         for _ in 0..<4 where !(aboutRow.exists && aboutRow.isHittable) {
             app.swipeUp(velocity: .fast)
         }
+        XCTAssertTrue(aboutRow.waitForExistence(timeout: 10),
+                      "the Settings root must carry the About row")
         aboutRow.tap()
         XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10),
                       "the Settings About row must select the About tab")
