@@ -480,7 +480,8 @@ final class ConversationViewModelTests: XCTestCase {
         sessionID: String? = nil,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil,
-        openTimeout: Duration = ConversationViewModel.defaultOpenTimeout
+        openTimeout: Duration = ConversationViewModel.defaultOpenTimeout,
+        inbox: InboxStore? = nil
     ) async throws -> (ScriptedSession, ConversationViewModel) {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
@@ -496,7 +497,8 @@ final class ConversationViewModelTests: XCTestCase {
             biometrics: biometrics,
             statusInterval: .milliseconds(10),
             openTimeout: openTimeout,
-            prepareForegroundRecovery: prepareForegroundRecovery
+            prepareForegroundRecovery: prepareForegroundRecovery,
+            inbox: inbox
         )
         return (scripted, viewModel)
     }
@@ -935,6 +937,44 @@ final class ConversationViewModelTests: XCTestCase {
         await flush()
 
         XCTAssertNil(viewModel.serverPromptViewModel?.pending)
+    }
+
+    func testInboxResolutionWithReusedIDDoesNotDismissAnotherSessionsPrompts() async throws {
+        let inbox = InboxStore(history: InMemoryInboxHistoryStore(), biometrics: NeverLockBiometricAuth())
+        await inbox.awaitLoaded()
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1", inbox: inbox)
+        defer { viewModel.teardown() }
+        scripted.approvalsBox.returnsRestoredApproval = false
+        await viewModel.start()
+        scripted.push(.serverRequest(approvalServerRequest()))
+        scripted.push(.serverRequest(clarifyRequest()))
+        scripted.push(.serverRequest(approvalServerRequest(sessionID: "s-other")))
+        scripted.push(.serverRequest(clarifyRequest(sessionID: "s-other")))
+        // A queued request in the active session provides an observable fence
+        // after the other session's two resolutions in the same stream.
+        scripted.push(.serverRequest(approvalServerRequest(id: "srq-fence", requestID: "req-fence")))
+        let ready = await waitUntil(timeout: .seconds(5)) {
+            inbox.items.count == 5 && viewModel.approvalViewModel?.queued.contains { $0.requestID == "req-fence" } == true
+        }
+        XCTAssertTrue(ready)
+        let gateway = GatewayID(rawValue: "workstation")
+        inbox.noteConversationDecision(gatewayID: gateway, sessionID: "s-other", requestID: "req-a1", decision: .deny)
+        inbox.noteConversationDecision(gatewayID: gateway, sessionID: "s-other", requestID: "srq-clarify1", decision: .skip)
+        inbox.noteConversationDecision(gatewayID: gateway, sessionID: "s-1", requestID: "req-fence", decision: .deny)
+        let fenced = await waitUntil(timeout: .seconds(5)) {
+            viewModel.approvalViewModel?.queued.isEmpty == true && viewModel.approvalViewModel?.pending?.requestID != "req-fence"
+        }
+        XCTAssertTrue(fenced)
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.requestID, "req-a1")
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify1")
+
+        inbox.noteConversationDecision(gatewayID: gateway, sessionID: "s-1", requestID: "req-a1", decision: .deny)
+        inbox.noteConversationDecision(gatewayID: gateway, sessionID: "s-1", requestID: "srq-clarify1", decision: .skip)
+        let resolved = await waitUntil(timeout: .seconds(5)) {
+            viewModel.approvalViewModel?.pending == nil && viewModel.serverPromptViewModel?.pending == nil
+        }
+        XCTAssertTrue(resolved, "The active session's own resolutions still dismiss its prompts")
+        XCTAssertTrue(scripted.serverPromptsBox.calls.isEmpty)
     }
 
     /// A withdrawal dismisses the prompt and NEVER answers: no deny, no

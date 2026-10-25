@@ -174,6 +174,11 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
 
+            // B3: approval notifications (opt-in). Only with a runtime.
+            if let environment {
+                InboxNotificationsSettingsSection(coordinator: environment.inboxNotifications)
+            }
+
             if let environment {
                 Section {
                     Button {

@@ -126,8 +126,10 @@ public final class ServerPromptViewModel {
     public func answerClarify(_ answer: String) async {
         guard let request = pending, case .clarify(let prompt) = request.kind, !prompt.isBatch,
               state != .sending else { return }
-        await send(for: request) {
+        if await send(for: request, {
             try await self.prompts.answerClarify(requestID: request.id, answer: answer)
+        }) {
+            onAnswered?(request, answer.isEmpty ? .skip : .answer(answer))
         }
     }
 
@@ -147,6 +149,7 @@ public final class ServerPromptViewModel {
                 lockedAnswers[questionID] = answer
                 if remaining.isEmpty {
                     promoteNext()
+                    onAnswered?(request, .answer(answer))
                 } else {
                     state = .pending
                 }
@@ -164,12 +167,14 @@ public final class ServerPromptViewModel {
     public func skipClarify() async {
         guard let request = pending, case .clarify(let prompt) = request.kind,
               state != .sending else { return }
-        await send(for: request) {
+        if await send(for: request, {
             if prompt.isBatch {
                 try await self.prompts.cancelClarify(requestID: request.id)
             } else {
                 try await self.prompts.answerClarify(requestID: request.id, answer: "")
             }
+        }) {
+            onAnswered?(request, .skip)
         }
     }
 
@@ -216,8 +221,10 @@ public final class ServerPromptViewModel {
     public func submitValue(_ value: String) async {
         guard let request = pending, Self.isValuePrompt(request), isInputUnlocked,
               !value.isEmpty, state != .sending else { return }
-        await send(for: request, failureMessage: "The value could not be sent. Reconnect and try again.") {
+        if await send(for: request, failureMessage: "The value could not be sent. Reconnect and try again.", {
             try await self.prompts.answerValue(requestID: request.id, value: value)
+        }) {
+            onAnswered?(request, .answer(value))
         }
     }
 
@@ -225,8 +232,10 @@ public final class ServerPromptViewModel {
     /// biometrics, no confirmation.
     public func skipValue() async {
         guard let request = pending, Self.isValuePrompt(request), state != .sending else { return }
-        await send(for: request) {
+        if await send(for: request, {
             try await self.prompts.answerValue(requestID: request.id, value: "")
+        }) {
+            onAnswered?(request, .skip)
         }
     }
 
@@ -263,21 +272,30 @@ public final class ServerPromptViewModel {
 
     /// Run one wire answer for `request`; dismiss on success, surface a
     /// non-secret failure otherwise (the prompt stays so the user can retry).
+    /// Returns true when the gateway accepted the answer.
+    @discardableResult
     private func send(
         for request: ServerRequest, failureMessage: String? = nil,
         _ action: () async throws -> Void
-    ) async {
+    ) async -> Bool {
         state = .sending
         do {
             try await action()
             if pending?.id == request.id { promoteNext() }
+            return true
         } catch {
-            guard pending?.id == request.id else { return }
+            guard pending?.id == request.id else { return false }
             // A value-path error is untrusted and may echo the submitted
             // secret. Keep only fixed copy, never arbitrary error details.
             state = .failed(failureMessage ?? Self.nonSecret(error))
+            return false
         }
     }
+
+    /// Phase B: report an answer the gateway accepted, so the app-level inbox
+    /// settles the same request. Nil in tests. Values are passed only so the
+    /// caller can classify the decision; the inbox never stores them.
+    @ObservationIgnored public var onAnswered: (@MainActor (ServerRequest, InboxDecision) -> Void)?
 
     nonisolated private static func nonSecret(_ error: Error) -> String {
         Redaction.userFacingErrorDescription(error)

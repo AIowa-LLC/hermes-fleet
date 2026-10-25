@@ -2,6 +2,7 @@ import SwiftUI
 import AppIntents
 import FleetUI
 import FleetCore
+import FleetSecurity
 
 /// Composition root for Hermes Fleet.
 ///
@@ -29,6 +30,12 @@ struct HermesFleetApp: App {
     // Fleet Dev only: phone side of the Apple Watch companion link.
     @State private var watchLink = FleetWatchLink()
     #endif
+
+    init() {
+        // B3: installed before the first scene so a cold-launch notification
+        // tap is delivered. Requests no permission.
+        FleetNotificationRouter.shared.install()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -65,6 +72,13 @@ struct HermesFleetApp: App {
             .task {
                 HermesFleetShortcuts.updateAppShortcutParameters()
                 FleetMetricKitSubscriber.shared.register() // F0: on-device only
+                // B3: local approval notifications observe the inbox from here on.
+                await environment.inboxNotifications.start()
+                // Notification Review/tap and onOpenURL share one parser
+                // (FleetInboxDeepLink) and one focus path (openInbox).
+                FleetNotificationRouter.shared.attach(environment.inboxNotifications) { itemID in
+                    environment.openInbox(focus: itemID)
+                }
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
@@ -73,6 +87,12 @@ struct HermesFleetApp: App {
                 // `<scheme>://pair#…` (and https `/pair#…`) starts the connect flow; other
                 // links on the same scheme (conversations) keep their own handling.
                 if environment.pairing.receive(url: url) { return }
+                // Phase B: `<scheme>://inbox[?item=<id>]` opens the approvals inbox.
+                if let inboxTarget = FleetInboxDeepLink.target(
+                    from: url, scheme: FleetAppIdentity.current.conversationURLScheme) {
+                    environment.openInbox(focus: inboxTarget.itemID)
+                    return
+                }
                 guard let target = FleetConversationDeepLink.target(from: url) else { return }
                 environment.openConversationFromShortcut(
                     route: target.route,
@@ -82,6 +102,7 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            environment.inboxNotifications.setAppActive(phase == .active)
             #if FLEET_DEV
             watchLink.scenePhaseChanged(phase, environment: environment, lock: lockController)
             #endif
@@ -125,12 +146,19 @@ struct HermesFleetApp: App {
 
     private func connectScriptedLiveOpsIfNeeded() async {
         #if DEBUG && targetEnvironment(simulator)
-        guard scenePhase == .active, !lockController.isLocked,
-              ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" else { return }
+        guard scenePhase == .active, !lockController.isLocked else { return }
         // Preserve the connected-only synthetic fixture whether authentication
         // settles in the initial task or in a later active/unlock transition.
-        for id in ["workstation", "render-box", "arch"] {
-            await environment.connect(to: GatewayID(rawValue: id))
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" {
+            for id in ["workstation", "render-box", "arch"] {
+                await environment.connect(to: GatewayID(rawValue: id))
+            }
+        }
+        // The inbox fixture's approval is answerable only while its gateway is
+        // connected (Approve is disabled offline). Connect the scripted
+        // workstation for the connected fixture; the offline knob skips this.
+        if ScriptedInboxFixture.seeded, !ScriptedInboxFixture.offline {
+            await environment.connect(to: ScriptedInboxFixture.gatewayID)
         }
         #endif
     }

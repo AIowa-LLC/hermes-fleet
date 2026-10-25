@@ -71,6 +71,30 @@ releases do not register with a relay.
   convenience only: the app always confirms state with the gateway when it is
   opened.
 
+## Local approval notifications
+
+Hermes Fleet can notify you on this device when an agent needs an approval or
+an answer. These notifications are created entirely on your device. Nothing is
+sent to a relay, to Apple's push service, or to any other server for them.
+
+- **Off until you turn them on.** The setting is in Settings. Turning it on asks
+  iOS for permission at that moment; the app never asks at launch.
+- **Lock-screen text is generic by default.** It names the agent and the kind of
+  request, for example "Workstation needs your approval". It never includes a
+  command, a question, or a prompt.
+- **Request details are opt-in.** "Show request details" adds a shortened command
+  to an approval notification. It is never shown while App Lock is on, and it
+  never applies to passwords, secrets, or answers.
+- **Nothing you type is ever in a notification.** Passwords, secret values, and
+  answers do not leave the app through a notification.
+- **Deny from the notification, best effort.** Deny is sent in the background
+  only when the gateway connection for that conversation is still open. If it
+  cannot be sent, the notification says so and opens the request in the app.
+  Deny does not unlock App Lock. Approvals always need you to open the app,
+  unlock it, and confirm with Face ID or your passcode.
+- **Your control.** Turning the setting off removes the delivered notifications.
+  Notification history stays on this device and is removed with the app.
+
 ## Retention and deletion
 
 Local cached fleet and conversation data remains on the device until it is
