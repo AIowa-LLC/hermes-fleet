@@ -211,6 +211,13 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
             XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5),
                           "Appearance must offer \(label) in its menu")
         }
+        // Close Appearance before revealing the lazy About row below it.
+        app.buttons["System"].tap()
+        let aboutRow = app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.about").firstMatch
+        for _ in 0..<4 where !aboutRow.exists {
+            app.swipeUp(velocity: .fast)
+        }
         // ADR-0011 W8 + dogfood round 2: the version row moved to the About
         // tab, whose entry point is the Settings root's About row.
         XCTAssertTrue(app.descendants(matching: .any)
