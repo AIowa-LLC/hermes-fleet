@@ -348,7 +348,7 @@ final class AppLockControllerTests: XCTestCase {
         let auth = SuspendedPresence()
         let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
         let off = Task { await controller.requestSetEnabled(false) }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        await auth.waitUntilSuspended()
         _ = await controller.requestSetEnabled(true)
         auth.complete()
         _ = await off.value
@@ -359,13 +359,11 @@ final class AppLockControllerTests: XCTestCase {
         let auth = SuspendedPresence()
         let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
         let first = Task { await controller.requestSetEnabled(false) }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
-        let second = Task { await controller.requestSetEnabled(false) }
-        for _ in 0..<100 { await Task.yield() }
+        await auth.waitUntilSuspended()
+        _ = await controller.requestSetEnabled(false)
         XCTAssertEqual(auth.checks, 1)
         auth.complete()
         _ = await first.value
-        _ = await second.value
     }
 
     func testTurningOffRequiresPresenceExactlyOnceAndApplies() async {

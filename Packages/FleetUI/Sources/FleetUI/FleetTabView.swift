@@ -315,7 +315,9 @@ public struct FleetTabView: View {
                             drawerPresented = false
                         },
                         artifactsActive: navigation.selection == .fleet
-                            && navigation.paths[.fleet]?.last == .artifacts
+                            && navigation.paths[.fleet]?.last == .artifacts,
+                        inboxActive: navigation.selection == .fleet
+                            && navigation.paths[.fleet]?.last == .inbox
                     )
                     .frame(width: min(340, geometry.size.width * 0.78))
                     .frame(maxHeight: .infinity)
@@ -553,6 +555,9 @@ public struct FleetTabView: View {
         case .artifacts:
             // Card D: the device-local Artifacts destination (Fleet stack).
             ArtifactsView(environment: environment)
+        case .inbox:
+            // Phase B: the approvals inbox (Fleet stack; drawer badge = pending).
+            FleetInboxView(environment: environment)
         case .gatewayKanban(let id, let board):
             KanbanBoardView(environment: environment, gatewayID: id, board: board)
         case .cron(let id, let profile), .skills(let id, let profile), .memoryGraph(let id, let profile), .projects(let id, let profile, _):

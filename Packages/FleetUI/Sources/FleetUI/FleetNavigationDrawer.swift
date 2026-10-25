@@ -21,6 +21,8 @@ struct FleetNavigationDrawer: View {
     /// Card D: whether the Artifacts destination is the active Fleet screen
     /// (highlight state — restored navigation included).
     let artifactsActive: Bool
+    /// Phase B: whether the Inbox is the active Fleet screen (highlight state).
+    let inboxActive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.fleetTheme) private var theme
@@ -37,6 +39,11 @@ struct FleetNavigationDrawer: View {
 
     private var primaryTabs: [FleetTab] {
         FleetTab.allCases.filter(\.isPrimary)
+    }
+
+    /// Phase B: pending approvals across every gateway (drawer badge).
+    private var pendingApprovalCount: Int {
+        FleetInboxPresentation.pendingCount(environment.inbox.items)
     }
 
     private var pinnedIDs: Set<String> {
@@ -225,6 +232,45 @@ struct FleetNavigationDrawer: View {
                 .accessibilityAddTraits(selection == tab ? .isSelected : [])
                 .accessibilityIdentifier("fleet.drawer.destination.\(tab.rawValue)")
             }
+            // Phase B: the approvals Inbox is a pushed Fleet destination. Its
+            // badge is the pending count (the drawer's unread-dot style, with
+            // a number because approvals block an agent and must be counted).
+            Button { onOpenScreen(.inbox) } label: {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Label("Inbox", systemImage: "tray.full")
+                        .font(.body.weight(inboxActive ? .semibold : .regular))
+                        .imageScale(.large)
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer(minLength: 0)
+                    if pendingApprovalCount > 0 {
+                        Text("\(pendingApprovalCount)")
+                            .font(.caption.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(theme.onHighlight)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(theme.highlight, in: Capsule())
+                            .accessibilityIdentifier("fleet.drawer.inbox.badge")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, FleetTheme.spacingMd)
+                .padding(.vertical, 12)
+                // The whole row is the target. Without this, the spacer between
+                // the title and the pending badge is not hit-testable, so a tap
+                // in the middle of the row (once the badge is shown) did nothing.
+                .contentShape(Rectangle())
+                .background(
+                    inboxActive ? FleetTheme.neutralFill : .clear,
+                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(pendingApprovalCount > 0 ? "Inbox, \(pendingApprovalCount) pending" : "Inbox")
+            .accessibilityValue(inboxActive ? "Selected" : "")
+            .accessibilityAddTraits(inboxActive ? .isSelected : [])
+            .accessibilityIdentifier("fleet.drawer.destination.inbox")
+
             // Card D: Artifacts (observed generated media) is a pushed
             // destination on the Fleet stack — not a tab: the five-tab
             // architecture, pins, recents and nav-restore stay untouched.

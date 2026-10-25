@@ -194,6 +194,9 @@ extension FleetServiceGraph {
                 sourceTitle: "Fleet morning briefing",
                 sourceSubtitle: "default")
         }
+        // Phase B: `HERMES_FLEET_INBOX_FIXTURE=1` / `HERMES_FLEET_INBOX_OFFLINE=1`
+        // seed one pending approval through a registered answer source.
+        ScriptedInboxFixture.seed(into: environment.inbox)
         return environment
     }
 }
@@ -2935,7 +2938,9 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
     let gatewayID: GatewayID
 
     private var isOutage: Bool {
-        gatewayID.rawValue == "arch"
+        // Phase B: `HERMES_FLEET_INBOX_OFFLINE=1` leaves every gateway disconnected.
+        if ScriptedInboxFixture.offline { return true }
+        return gatewayID.rawValue == "arch"
             && ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] != "1"
     }
 

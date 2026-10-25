@@ -28,3 +28,11 @@ disconnected and removed-gateway states each get a safe destination.
 - Wiring `UNUserNotificationCenterDelegate` tap -> `NotificationTapResolver` -> navigation: touches `HermesFleetApp.swift`/`AppEnvironment` (shared; coordinate with the integrator and #168).
 - Mapping `requestStatus` from `approval.pending` after App Lock unlock.
 - Action buttons (#91) are intentionally absent.
+
+## Build 99 status: local notifications only
+
+Build 99 posts local notifications for new inbox items
+(`Packages/FleetCore/Sources/FleetCore/InboxNotificationPolicy.swift`,
+`Packages/FleetUI/Sources/FleetUI/InboxNotificationCoordinator.swift`). They are
+created on the device and do not use APNs, the push relay, or the payload
+described above. Remote push transport is deferred; no push config flag was added.

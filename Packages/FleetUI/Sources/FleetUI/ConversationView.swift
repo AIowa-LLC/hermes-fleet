@@ -323,14 +323,20 @@ public struct ConversationView: View {
         }
         // Draft restore is keyed on the durable session id and never waits on
         // the open: it runs the moment the id resolves, not after start().
-        .onChange(of: viewModel?.resolvedSessionID) { _, _ in
+        .onChange(of: viewModel?.resolvedSessionID) { _, id in
             restoreDraftIfNeeded()
+            // Notifications for this session are suppressed while it is on screen.
+            environment.inboxNotifications.setViewedSession(id)
+        }
+        .onAppear {
+            environment.inboxNotifications.setViewedSession(viewModel?.resolvedSessionID)
         }
         .onDisappear {
             pendingAddPresentation = nil
             showingAddActions = false
             viewModel?.teardown()
             environment.conversationDrafts.flush()
+            environment.inboxNotifications.setViewedSession(nil)
         }
         // P0.4a: App Lock / backgrounding can tear the view down before the
         // debounce fires — write pending draft text out first.

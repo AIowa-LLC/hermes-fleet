@@ -121,9 +121,11 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.openSettings(app)
 
         let row = app.buttons["fleet.settings.connect-server"]
+        // Form rows below Notifications enter the accessibility tree lazily.
+        // Keep the existing gesture cap, but reveal the row before requiring it.
+        for _ in 0..<8 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "Settings must expose an additional-server enrollment entry")
-        for _ in 0..<8 where !row.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(row.isHittable, "the Settings enrollment entry must be brought onscreen before tapping")
         row.tap()
 

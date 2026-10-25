@@ -87,6 +87,58 @@ when their owner changes: retired Gateways paths return under Fleet, and
 saved room destinations move from their former owners to Groups. Deleted or
 missing destinations are not silently substituted with same-named objects.
 
+## Inbox destination (approvals)
+
+`Inbox` is a pushed destination on the Fleet stack (`FleetScreen.inbox`),
+reached from the drawer. It is not a tab, so the tab count is unchanged. The
+drawer row carries the pending count (`fleet.drawer.destination.inbox`, badge
+`fleet.drawer.inbox.badge`).
+
+- Pending items come first (newest first), then History (most recently
+  resolved first). Expired and withdrawn rows are dimmed with their reason.
+- A row opens a detail sheet: the full command, the gateway's offered approve
+  scopes, Deny, a typed answer for clarify / sudo / secret, and the decision
+  records for that item. "Open session" links to the conversation.
+- With no gateway connected the inbox shows an offline banner and its decisions
+  stay visible but disabled.
+- A live server request (approval, clarify, sudo, secret) is answered only from
+  its open conversation. If a decision is refused for that reason, the sheet
+  says "Open the session to answer this request" and offers Open session.
+
+### Opening the Inbox from code
+
+- `AppEnvironment.openInbox(focus: InboxItemID?)` pushes the Inbox and, when a
+  focus item is given, opens its detail. The focus is one-shot
+  (`pendingInboxFocus`) and is not part of the persisted `FleetScreen` payload,
+  so a restored navigation never reopens a sheet.
+- `FleetScreen.inbox` opens the Inbox without a focus.
+
+### URL grammar
+
+Uses the app's conversation scheme (`hermes-fleet` or `hermes-fleet-dev` by
+build), handled in `onOpenURL` before conversation links:
+
+| URL | Result |
+|---|---|
+| `<scheme>://inbox` | Inbox |
+| `<scheme>://inbox?item=<gateway>#<session>#<request>` | Inbox, focused on that item |
+
+An `item` value that is not three non-empty `#`-separated parts (or contains
+spaces or control characters) opens the Inbox unfocused. A focus that is no
+longer in the inbox shows a notice rather than failing.
+
+There is one parser: `FleetInboxDeepLink` in FleetCore
+(`InboxNotificationPolicy.swift`). `onOpenURL` and the notification Review
+action (and a tap on a notification body) both go through it and then
+`openInbox(focus:)`, so tapping a notification opens the Inbox on that item.
+
+### Periodic reconcile
+
+The inbox reconciles against `approval.pending` every 60 seconds while protected
+content may be shown. That gate is `setForegroundRecoveryAllowed(true)`, so it
+starts on cold launch after App Lock, on resume, and on unlock, and stops when
+the app locks or backgrounds.
+
 ## Artifacts destination
 
 `Artifacts` is a pushed destination on the Fleet stack, opened from the

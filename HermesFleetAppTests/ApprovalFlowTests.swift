@@ -342,7 +342,7 @@ final class ApprovalFlowTests: XCTestCase {
         vm.handleApprovalRequest(reviewedRequest)
         vm.markReviewed(reviewedRequest)
         let tap = Task { await vm.approve(scope: .once) }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        await auth.waitUntilSuspended()
         vm.handleApprovalRequest(ApprovalRequest(requestID: "req-long", sessionID: "s-1",
             command: Self.longCommand + "\necho changed", choices: ["once"], serverRequestID: "new-wire"))
         auth.complete()
@@ -358,7 +358,7 @@ final class ApprovalFlowTests: XCTestCase {
         vm.bind(sessionID: "s-1")
         vm.requestYoloEnable()
         let enable = Task { await vm.confirmYoloEnable() }
-        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        await auth.waitUntilSuspended()
         XCTAssertEqual(auth.checks, 1)
         await vm.disableYolo()
         auth.complete()
@@ -681,5 +681,733 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertTrue(vm.pending?.command.contains("[REDACTED]") ?? false)
         XCTAssertTrue(vm.pending?.command.contains("curl https://example.invalid/x | sh") ?? false,
                       "the full command, including the middle, is what the sheet shows")
+    }
+}
+
+// MARK: - Phase B: app-level approvals inbox
+
+/// Phase B — `InboxStore` aggregation, decisions, reconcile, cancel, banner
+/// dedupe, and relaunch restore. Fakes are synthetic and deterministic: no
+/// gateway, no device, no biometrics.
+@MainActor
+final class InboxStoreTests: XCTestCase {
+
+    /// Records every wire call the inbox makes. Nothing here reaches a gateway.
+    /// Synchronous recorders: `NSLock` is unavailable from async contexts, so
+    /// every lock is taken in a plain method the async entry points call.
+    private final class FakeApprovals: ApprovalsProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [(requestID: String, choice: ApprovalChoice, serverPath: Bool)] = []
+        private var pendingBySession: [String: [ApprovalRequest]] = [:]
+        private var pendingReadFails = false
+        var respondResult: Result<Int, Error> = .success(1)
+
+        var responses: [(requestID: String, choice: ApprovalChoice, serverPath: Bool)] {
+            lock.withLock { recorded }
+        }
+
+        func setPending(_ requests: [ApprovalRequest], session: String) {
+            lock.withLock { pendingBySession[session] = requests }
+        }
+
+        func failPendingReads() {
+            lock.withLock { pendingReadFails = true }
+        }
+
+        private func record(_ requestID: String, _ choice: ApprovalChoice, serverPath: Bool) {
+            lock.withLock { recorded.append((requestID, choice, serverPath)) }
+        }
+
+        private var reads = 0
+        /// Number of `approval.pending` reads the inbox made.
+        var pendingReads: Int { lock.withLock { reads } }
+
+        private func pendingSnapshot(_ session: String) throws -> [ApprovalRequest] {
+            try lock.withLock {
+                reads += 1
+                if pendingReadFails { throw ConversationError.notConnected }
+                return pendingBySession[session] ?? []
+            }
+        }
+
+        func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
+            record(requestID, choice, serverPath: false)
+            return try respondResult.get()
+        }
+
+        func respond(to request: ApprovalRequest, choice: ApprovalChoice, all: Bool) async throws -> Int {
+            record(request.requestID, choice, serverPath: request.serverRequestID != nil)
+            return try respondResult.get()
+        }
+
+        func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool { enabled }
+
+        func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
+            try pendingSnapshot(sessionID)
+        }
+    }
+
+    private final class FakePrompts: ServerPromptResponding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [(requestID: String, value: String)] = []
+        var answers: [(requestID: String, value: String)] {
+            lock.withLock { recorded }
+        }
+        private func record(_ requestID: String, _ value: String) {
+            lock.withLock { recorded.append((requestID, value)) }
+        }
+        func answerClarify(requestID: String, answer: String) async throws {
+            record(requestID, answer)
+        }
+        func lockClarifyAnswer(requestID: String, questionID: String, answer: String) async throws -> ClarifyLockStatus {
+            .locked(remaining: [])
+        }
+        func cancelClarify(requestID: String) async throws {}
+        func answerValue(requestID: String, value: String) async throws {
+            record(requestID, value)
+        }
+    }
+
+    /// A feed the test pushes events into, standing in for one gateway transport.
+    /// A conversation-like answer source. `push` delivers an event the way a
+    /// conversation's transport would; the test wires `onEvent` to the store.
+    private final class FakeFeed: InboxAnswerSource, @unchecked Sendable {
+        let gatewayID: GatewayID
+        let approvalsFake: FakeApprovals
+        let promptsFake: FakePrompts
+        var onEvent: (@Sendable (InboxFeedEvent) -> Void)?
+
+        init(gatewayID: GatewayID, approvals: FakeApprovals = FakeApprovals(), prompts: FakePrompts = FakePrompts()) {
+            self.gatewayID = gatewayID
+            self.approvalsFake = approvals
+            self.promptsFake = prompts
+        }
+
+        var approvals: any ApprovalsProviding { approvalsFake }
+        var prompts: (any ServerPromptResponding)? { promptsFake }
+
+        func push(_ event: InboxFeedEvent) { onEvent?(event) }
+    }
+
+    private let gateway = GatewayID(rawValue: "gw-synthetic")
+    private let otherGateway = GatewayID(rawValue: "gw-synthetic-2")
+    private let clockDate = Date(timeIntervalSince1970: 1_000_000)
+
+    private func makeStore(
+        presence: PresenceOutcome = .success,
+        history: any InboxHistoryStoring = InMemoryInboxHistoryStore()
+    ) -> (InboxStore, ScriptedPresence) {
+        let auth = ScriptedPresence(biometrics: presence)
+        let date = clockDate
+        let store = InboxStore(history: history, biometrics: auth, now: { date })
+        return (store, auth)
+    }
+
+    private func approvalRequest(_ requestID: String, session: String, command: String = "echo synthetic") -> ApprovalRequest {
+        ApprovalRequest(
+            requestID: requestID,
+            sessionID: session,
+            command: command,
+            detail: "synthetic reason",
+            choices: ["once", "session", "deny"],
+            serverRequestID: "srq-\(requestID)")
+    }
+
+    private func serverApproval(_ requestID: String, session: String, command: String = "echo synthetic") -> InboxFeedEvent {
+        .serverRequest(ServerRequest(
+            id: "srq-\(requestID)", sessionID: session,
+            kind: .approval(approvalRequest(requestID, session: session, command: command))))
+    }
+
+    private func itemID(_ requestID: String, session: String, gateway: GatewayID? = nil) -> InboxItemID {
+        InboxItemID(gatewayID: gateway ?? self.gateway, sessionID: session, requestID: requestID)
+    }
+
+    /// Poll until `condition` holds (events are delivered asynchronously).
+    private func waitUntil(_ condition: @MainActor () -> Bool) async {
+        for _ in 0..<400 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    private func pendingCount(_ store: InboxStore) -> Int {
+        store.items.filter { $0.status == .pending }.count
+    }
+
+    /// Register a fake conversation source and route its pushed events to the store.
+    @discardableResult
+    private func attach(_ store: InboxStore, _ feed: FakeFeed, label: String) -> UUID {
+        let id = store.registerSource(feed, label: label)
+        feed.onEvent = { [weak store] event in
+            // The fake pushes from the test's main actor; the store is main actor too.
+            MainActor.assumeIsolated { store?.record(event, sourceID: id) }
+        }
+        return id
+    }
+
+    /// Wire the Live Ops poll source (approval.pending) for one connected gateway.
+    private func wirePoll(_ store: InboxStore, _ approvals: FakeApprovals, gateway: GatewayID, sessions: [String]) {
+        let fleetGateway = FleetGateway(id: gateway, displayName: "G")
+        store.setProviders(gateways: { [fleetGateway] }, connectionState: { _ in .connected })
+        store.setSessionProvider { _ in sessions }
+        store.setPollSource { id in InboxApprovalPollSource(gatewayID: id, approvals: approvals) }
+    }
+
+    // MARK: Aggregation
+
+    func testRequestsFromTwoSessionsAggregateIntoOneInbox() async {
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "Synthetic Gateway")
+        feed.push(serverApproval("r1", session: "s-1"))
+        feed.push(.legacyApproval(approvalRequest("r2", session: "s-2")))
+        feed.push(.serverRequest(ServerRequest(
+            id: "srq-c1", sessionID: "s-2",
+            kind: .clarify(ClarifyPrompt(sessionID: "s-2",
+                                         questions: [ClarifyQuestion(qid: "", question: "Which?")],
+                                         isBatch: false)))))
+        await waitUntil { store.items.count == 3 }
+
+        XCTAssertEqual(Set(store.items.map(\.agent.sessionID)), ["s-1", "s-2"])
+        XCTAssertEqual(store.items.first { $0.requestID == "srq-c1" }?.kind, .question)
+        XCTAssertEqual(pendingCount(store), 3)
+        XCTAssertEqual(store.items.first { $0.requestID == "r1" }?.agent.gatewayLabel, "Synthetic Gateway")
+    }
+
+    func testRedeliveredRequestOnLegacyAndServerPathsIsOneItem() async {
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        feed.push(.legacyApproval(approvalRequest("r1", session: "s-1")))
+        await waitUntil { store.items.count == 1 }
+        // Give any stray duplicate time to land before asserting it did not.
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(store.items.first?.id, itemID("r1", session: "s-1"))
+    }
+
+    func testWithdrawalCancelsWithoutAnyWireAnswer() async {
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        feed.push(.withdrawn(sessionID: "s-1", wireRequestID: "srq-r1"))
+        await waitUntil { store.items.first?.status == .cancelled }
+
+        XCTAssertEqual(store.items.first?.status, .cancelled)
+        XCTAssertTrue(feed.approvalsFake.responses.isEmpty, "a withdrawal is never answered")
+    }
+
+    func testWithdrawalKeepsOtherGatewayAndSessionRequestsPending() async {
+        let (store, _) = makeStore()
+        let first = FakeFeed(gatewayID: gateway)
+        let second = FakeFeed(gatewayID: otherGateway)
+        attach(store, first, label: "First")
+        attach(store, second, label: "Second")
+        first.push(serverApproval("r1", session: "s-1"))
+        first.push(serverApproval("r1", session: "s-2"))
+        second.push(serverApproval("r1", session: "s-1"))
+        await store.awaitLoaded()
+        XCTAssertEqual(pendingCount(store), 3)
+
+        second.push(.withdrawn(sessionID: "s-1", wireRequestID: "srq-r1"))
+        first.push(.withdrawn(sessionID: "s-2", wireRequestID: "srq-r1"))
+        XCTAssertEqual(store.items.first { $0.id == itemID("r1", session: "s-1") }?.status, .pending)
+        XCTAssertEqual(store.items.first { $0.id == itemID("r1", session: "s-2") }?.status, .cancelled)
+        XCTAssertEqual(store.items.first { $0.id == itemID("r1", session: "s-1", gateway: otherGateway) }?.status, .cancelled)
+        XCTAssertTrue(first.approvalsFake.responses.isEmpty)
+        XCTAssertTrue(second.approvalsFake.responses.isEmpty)
+    }
+
+    func testChangedCommandStillRequiresReviewForTheSameInboxItem() async {
+        let (store, presence) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "Synthetic")
+        feed.push(serverApproval("r1", session: "s-1", command: String(repeating: "echo first; ", count: 100)))
+        await store.awaitLoaded()
+        let id = itemID("r1", session: "s-1")
+        store.markReviewed(id)
+        feed.push(serverApproval("r1", session: "s-1", command: String(repeating: "echo changed; ", count: 100)))
+
+        do {
+            _ = try await store.decide(id, .approve(.once))
+            XCTFail("Reviewing an earlier command must not review its replacement")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .reviewRequired)
+        }
+        XCTAssertEqual(presence.presenceChecks, 0)
+        XCTAssertTrue(feed.approvalsFake.responses.isEmpty)
+    }
+
+    func testLongCommandReviewDoesNotTransferAcrossGateways() async throws {
+        let (store, presence) = makeStore()
+        let first = FakeFeed(gatewayID: gateway)
+        let second = FakeFeed(gatewayID: otherGateway)
+        attach(store, first, label: "First")
+        attach(store, second, label: "Second")
+        let command = String(repeating: "echo synthetic; ", count: 100)
+        first.push(serverApproval("r1", session: "s-1", command: command))
+        second.push(serverApproval("r1", session: "s-1", command: command))
+        await store.awaitLoaded()
+        let firstID = itemID("r1", session: "s-1")
+        let secondID = itemID("r1", session: "s-1", gateway: otherGateway)
+        store.markReviewed(firstID)
+
+        do {
+            _ = try await store.decide(secondID, .approve(.once))
+            XCTFail("Another gateway's command still needs its own review")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .reviewRequired)
+        }
+        XCTAssertTrue(second.approvalsFake.responses.isEmpty)
+        XCTAssertEqual(presence.presenceChecks, 0)
+        _ = try await store.decide(firstID, .approve(.once))
+        XCTAssertEqual(first.approvalsFake.responses.count, 1)
+        store.markReviewed(secondID)
+        _ = try await store.decide(secondID, .approve(.once))
+        XCTAssertEqual(second.approvalsFake.responses.count, 1)
+    }
+
+    // MARK: Decisions
+
+    func testApproveIsPresenceGatedAndSendsOnSuccess() async throws {
+        let (store, presence) = makeStore(presence: .success)
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        let record = try await store.decide(itemID("r1", session: "s-1"), .approve(.once))
+
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(feed.approvalsFake.responses.map(\.choice), [.once])
+        XCTAssertTrue(feed.approvalsFake.responses[0].serverPath, "a server request answers over JSON-RPC")
+        XCTAssertEqual(record.action, .approveOnce)
+        XCTAssertEqual(record.outcome, .succeeded)
+        XCTAssertEqual(store.items.first?.status, .approved)
+        XCTAssertEqual(store.auditTrail.first?.action, .approveOnce)
+    }
+
+    func testFailedPresenceSendsNothingAndLeavesItemPending() async {
+        let (store, presence) = makeStore(presence: .failed)
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .approve(.session))
+            XCTFail("approve must not succeed without presence")
+        } catch let error as InboxError {
+            XCTAssertEqual(error, .presenceNotVerified(.failed))
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertTrue(feed.approvalsFake.responses.isEmpty)
+        XCTAssertEqual(store.items.first?.status, .pending)
+        XCTAssertTrue(store.auditTrail.isEmpty, "a check that never passed is not a decision")
+    }
+
+    func testDenyIsFrictionFreeAndSkipsPresence() async throws {
+        let (store, presence) = makeStore(presence: .failed)
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+
+        XCTAssertEqual(presence.presenceChecks, 0)
+        XCTAssertEqual(feed.approvalsFake.responses.map(\.choice), [.deny])
+        XCTAssertEqual(store.items.first?.status, .denied)
+    }
+
+    func testLongCommandNeedsReviewBeforePresenceOrWire() async {
+        let (store, presence) = makeStore(presence: .success)
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        let long = (1...8).map { "echo line \($0)" }.joined(separator: "\n")
+        feed.push(serverApproval("r1", session: "s-1", command: long))
+        await waitUntil { store.items.count == 1 }
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .approve(.once))
+            XCTFail("an unreviewed long command must not be approved")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .reviewRequired)
+        }
+        XCTAssertEqual(presence.presenceChecks, 0, "review comes before the presence prompt")
+
+        store.markReviewed(itemID("r1", session: "s-1"))
+        _ = try? await store.decide(itemID("r1", session: "s-1"), .approve(.once))
+        XCTAssertEqual(feed.approvalsFake.responses.map(\.choice), [.once])
+    }
+
+    func testGatewayFailureLeavesItemPendingAndAuditsTheAttempt() async {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        approvals.respondResult = .failure(ConversationError.notConnected)
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+            XCTFail("a failed send must throw")
+        } catch {
+            XCTAssertTrue(error is InboxError)
+        }
+        XCTAssertEqual(store.items.first?.status, .pending, "retryable: still pending")
+        XCTAssertNotNil(store.items.first?.failureMessage)
+        XCTAssertEqual(store.auditTrail.first?.action, .deny)
+        if case .failed = store.auditTrail.first?.outcome {} else { XCTFail("audit must record the failed outcome") }
+    }
+
+    func testAlreadyAnsweredElsewhereExpiresTheItem() async {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        approvals.respondResult = .success(0)
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        _ = try? await store.decide(itemID("r1", session: "s-1"), .deny)
+        XCTAssertEqual(store.items.first?.status, .expired)
+    }
+
+    func testAnswerToClarifyIsSentAndSettled() async throws {
+        let (store, _) = makeStore()
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        feed.push(.serverRequest(ServerRequest(
+            id: "srq-q", sessionID: "s-1",
+            kind: .clarify(ClarifyPrompt(sessionID: "s-1",
+                                         questions: [ClarifyQuestion(qid: "", question: "Name?")],
+                                         isBatch: false)))))
+        await waitUntil { store.items.count == 1 }
+
+        _ = try await store.decide(itemID("srq-q", session: "s-1"), .answer("synthetic-answer"))
+
+        XCTAssertEqual(prompts.answers.map(\.value), ["synthetic-answer"])
+        XCTAssertEqual(store.items.first?.status, .answered)
+        let audit = store.auditTrail.first
+        XCTAssertEqual(audit?.action, .answer)
+        XCTAssertFalse(String(describing: audit).contains("synthetic-answer"), "audit never carries the answer value")
+    }
+
+    func testSecretAnswerIsPresenceGatedAndNeverAudited() async throws {
+        let (store, presence) = makeStore(presence: .success)
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        feed.push(.serverRequest(ServerRequest(
+            id: "srq-s", sessionID: "s-1",
+            kind: .secret(SecretPrompt(sessionID: "s-1", envVar: "SYNTHETIC_KEY", prompt: "Enter it")))))
+        await waitUntil { store.items.count == 1 }
+
+        _ = try await store.decide(itemID("srq-s", session: "s-1"), .answer("SYNTHETIC-VALUE"))
+
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(prompts.answers.map(\.value), ["SYNTHETIC-VALUE"])
+        let encoded = try String(decoding: JSONEncoder().encode(store.items), as: UTF8.self)
+        let audit = try String(decoding: JSONEncoder().encode(store.auditTrail), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("SYNTHETIC-VALUE"))
+        XCTAssertFalse(audit.contains("SYNTHETIC-VALUE"))
+    }
+
+    // MARK: Banner <-> inbox agreement
+
+    func testBannerDecisionSettlesInboxAndPublishesResolution() async throws {
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        let resolutions = store.resolutions()
+
+        store.noteConversationDecision(
+            gatewayID: gateway, sessionID: "s-1", requestID: "r1", decision: .approve(.session))
+
+        XCTAssertEqual(store.items.first?.status, .approved)
+        var iterator = resolutions.makeAsyncIterator()
+        let first = await iterator.next()
+        XCTAssertEqual(first?.status, .approved)
+        XCTAssertEqual(first?.requestID, "r1")
+        XCTAssertEqual(store.auditTrail.first?.action, .approveSession)
+
+        // The inbox can no longer answer it: the banner already did.
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+            XCTFail("a settled item cannot be decided again")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .notPending)
+        }
+    }
+
+    func testInboxResolutionDismissesBannerWithoutSending() {
+        let approvals = FakeApprovals()
+        let presence = ScriptedPresence(biometrics: .success)
+        let banner = ApprovalViewModel(approvals: approvals, biometrics: presence)
+        banner.bind(sessionID: "s-1")
+        banner.handleApprovalRequest(approvalRequest("r1", session: "s-1"))
+        banner.handleApprovalRequest(approvalRequest("r2", session: "s-1"))
+        XCTAssertEqual(banner.pending?.requestID, "r1")
+
+        banner.resolvedElsewhere(requestID: "r1")
+        XCTAssertEqual(banner.pending?.requestID, "r2", "the queued request is promoted")
+        banner.resolvedElsewhere(requestID: "r2")
+        XCTAssertNil(banner.pending)
+        XCTAssertTrue(approvals.responses.isEmpty, "a resolution from the inbox is never a denial")
+    }
+
+    // MARK: Reconcile and relaunch
+
+    func testReconcileExpiresItemsTheGatewayNoLongerLists() async {
+        let approvals = FakeApprovals()
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        feed.push(serverApproval("r2", session: "s-1"))
+        await waitUntil { store.items.count == 2 }
+
+        approvals.setPending([approvalRequest("r2", session: "s-1")], session: "s-1")
+        // Restart window: a fresh refresh should match the gateway's snapshot.
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+        await store.refresh()
+
+        XCTAssertEqual(store.items.first { $0.requestID == "r1" }?.status, .expired)
+        XCTAssertEqual(store.items.first { $0.requestID == "r2" }?.status, .pending)
+    }
+
+    func testReconcileFailureLeavesItemsUntouched() async {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        // A failed `approval.pending` read is not an answer: nothing expires.
+        approvals.failPendingReads()
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+        await store.refresh()
+        XCTAssertEqual(store.items.first?.status, .pending)
+    }
+
+    func testPendingItemsSurviveRelaunchAndAreRestoredPending() async {
+        let history = InMemoryInboxHistoryStore()
+        let (first, _) = makeStore(history: history)
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(first, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { first.items.count == 1 }
+        try? await Task.sleep(for: .milliseconds(30))
+
+        let (relaunched, _) = makeStore(history: history)
+        await relaunched.awaitLoaded()
+        XCTAssertEqual(relaunched.items.map(\.requestID), ["r1"])
+        XCTAssertEqual(relaunched.items.first?.status, .pending)
+    }
+
+    func testRemovingGatewayFailsItsPendingItems() async {
+        let (store, _) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+
+        store.forget(gatewayID: gateway)
+
+        XCTAssertEqual(store.items.first?.status, .failed)
+        XCTAssertEqual(store.items.first?.failureMessage, "gateway removed")
+    }
+
+    func testDecisionWithoutAttachedGatewayIsRefused() async {
+        let (store, presence) = makeStore()
+        let feed = FakeFeed(gatewayID: gateway)
+        let sourceID = attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        store.unregisterSource(sourceID)
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+            XCTFail("a detached gateway cannot be answered")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .gatewayUnavailable)
+        }
+        XCTAssertEqual(presence.presenceChecks, 0)
+        XCTAssertEqual(store.items.first?.status, .pending, "kept for when the gateway returns")
+    }
+
+    // MARK: Routing: an answer goes only to a source that can own it
+
+    func testServerRequestIsNeverAnsweredThroughThePollSource() async {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        let sourceID = attach(store, feed, label: "G")
+        feed.push(serverApproval("r1", session: "s-1"))
+        await waitUntil { store.items.count == 1 }
+        store.unregisterSource(sourceID)
+        wirePoll(store, approvals, gateway: gateway, sessions: [])
+
+        do {
+            _ = try await store.decide(itemID("r1", session: "s-1"), .deny)
+            XCTFail("a srq- request must not be answered on another transport")
+        } catch {
+            XCTAssertEqual(error as? InboxError, .gatewayUnavailable)
+        }
+        XCTAssertTrue(approvals.responses.isEmpty)
+        XCTAssertEqual(store.items.first?.status, .pending)
+    }
+
+    func testLegacyApprovalCanBeAnsweredThroughThePollSource() async throws {
+        let (store, _) = makeStore()
+        let approvals = FakeApprovals()
+        let feed = FakeFeed(gatewayID: gateway, approvals: approvals)
+        let sourceID = attach(store, feed, label: "G")
+        // A legacy `approval.request` carries no JSON-RPC id.
+        feed.push(.legacyApproval(ApprovalRequest(
+            requestID: "r2", sessionID: "s-1", command: "echo synthetic", choices: ["once", "deny"])))
+        await waitUntil { store.items.count == 1 }
+        store.unregisterSource(sourceID)
+        wirePoll(store, approvals, gateway: gateway, sessions: [])
+
+        _ = try await store.decide(itemID("r2", session: "s-1"), .deny)
+
+        XCTAssertEqual(approvals.responses.map(\.serverPath), [false], "answered with approval.respond")
+        XCTAssertEqual(store.items.first?.status, .denied)
+    }
+
+    // MARK: Periodic reconcile (injected clock)
+
+    func testPeriodicReconcileRunsOnlyWhileForegroundAndStopsOnBackground() async {
+        let gate = TickGate()
+        let date = clockDate
+        let store = InboxStore(
+            history: InMemoryInboxHistoryStore(),
+            biometrics: ScriptedPresence(biometrics: .success),
+            now: { date },
+            sleep: { _ in try await gate.wait() })
+        XCTAssertEqual(InboxStore.reconcileInterval, .seconds(60))
+        let approvals = FakeApprovals()
+        approvals.setPending([approvalRequest("r1", session: "s-1")], session: "s-1")
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+
+        XCTAssertFalse(store.isReconcilingPeriodically)
+        store.setForeground(true)
+        XCTAssertTrue(store.isReconcilingPeriodically)
+        await gate.tick()
+        await waitUntil { approvals.pendingReads == 1 }
+        XCTAssertEqual(store.items.first?.status, .pending, "the periodic pass ingested the gateway's pending approval")
+
+        store.setForeground(false)
+        XCTAssertFalse(store.isReconcilingPeriodically)
+        await gate.tick()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(approvals.pendingReads, 1, "no reconcile once backgrounded")
+    }
+
+    func testPeriodicReconcileSkipsGatewaysWithoutAPollSource() async {
+        let gate = TickGate()
+        let store = InboxStore(
+            history: InMemoryInboxHistoryStore(),
+            biometrics: ScriptedPresence(biometrics: .success),
+            now: { Date(timeIntervalSince1970: 1_000_000) },
+            sleep: { _ in try await gate.wait() })
+        let approvals = FakeApprovals()
+        wirePoll(store, approvals, gateway: gateway, sessions: ["s-1"])
+        // Disconnected: nothing to reconcile even though a source exists.
+        store.setProviders(gateways: { [FleetGateway(id: self.gateway, displayName: "G")] },
+                           connectionState: { _ in .disconnected })
+        store.setForeground(true)
+        await gate.tick()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(approvals.pendingReads, 0)
+        store.setForeground(false)
+    }
+
+    // MARK: Conversation prompts settle the inbox
+
+    func testClarifyAnsweredInConversationSettlesTheInboxItem() async {
+        let (store, _) = makeStore()
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        let request = ServerRequest(id: "srq-c", sessionID: "s-1", kind: .clarify(ClarifyPrompt(
+            sessionID: "s-1", questions: [ClarifyQuestion(qid: "", question: "Which?")], isBatch: false)))
+        feed.push(.serverRequest(request))
+        await waitUntil { store.items.count == 1 }
+
+        let gw = gateway
+        let vm = ServerPromptViewModel(prompts: prompts, biometrics: ScriptedPresence.success)
+        vm.bind(sessionID: "s-1")
+        vm.onAnswered = { [weak store] answered, decision in
+            store?.noteConversationDecision(gatewayID: gw, sessionID: answered.sessionID,
+                                            requestID: answered.id, decision: decision)
+        }
+        vm.handle(request)
+        await vm.answerClarify("synthetic-choice")
+
+        XCTAssertEqual(prompts.answers.map(\.value), ["synthetic-choice"])
+        XCTAssertEqual(store.items.first?.status, .answered)
+        XCTAssertEqual(store.auditTrail.first?.action, .answer)
+        XCTAssertFalse(String(describing: store.auditTrail).contains("synthetic-choice"))
+    }
+
+    func testSudoSkippedInConversationSettlesWithoutPresence() async {
+        let (store, presence) = makeStore(presence: .failed)
+        let prompts = FakePrompts()
+        let feed = FakeFeed(gatewayID: gateway, prompts: prompts)
+        attach(store, feed, label: "G")
+        let request = ServerRequest(id: "srq-s", sessionID: "s-1", kind: .sudo(SudoPrompt(sessionID: "s-1", command: "synthetic")))
+        feed.push(.serverRequest(request))
+        await waitUntil { store.items.count == 1 }
+
+        let gw = gateway
+        let vm = ServerPromptViewModel(prompts: prompts, biometrics: ScriptedPresence(biometrics: .failed))
+        vm.bind(sessionID: "s-1")
+        vm.onAnswered = { [weak store] answered, decision in
+            store?.noteConversationDecision(gatewayID: gw, sessionID: answered.sessionID,
+                                            requestID: answered.id, decision: decision)
+        }
+        vm.handle(request)
+        await vm.skipValue()
+
+        XCTAssertEqual(prompts.answers.map(\.value), [""])
+        XCTAssertEqual(store.items.first?.status, .answered)
+        XCTAssertEqual(store.auditTrail.first?.action, .skip)
+        XCTAssertEqual(presence.presenceChecks, 0, "declining needs no presence check")
+    }
+}
+
+/// Controllable periodic clock for the reconcile tests. A tick released before
+/// the loop waits is kept as a credit, so no tick is lost to scheduling.
+private actor TickGate {
+    private var waiters: [CheckedContinuation<Void, Error>] = []
+    private var credits = 0
+
+    func wait() async throws {
+        if credits > 0 {
+            credits -= 1
+            return
+        }
+        try await withCheckedThrowingContinuation { waiters.append($0) }
+    }
+
+    func tick() {
+        if waiters.isEmpty {
+            credits += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

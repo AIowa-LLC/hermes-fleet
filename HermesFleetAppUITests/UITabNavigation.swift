@@ -161,12 +161,17 @@ enum UITabNavigation {
 
     @discardableResult
     static func openDrawer(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
+        let drawer = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer").firstMatch
+        // An open drawer's scrim covers the Menu button, so the Menu is never
+        // hittable while the drawer is open. Return the open drawer instead of
+        // waiting on a Menu that cannot be hit (a retry after a dropped row tap
+        // would otherwise fail here, not in the caller).
+        if drawer.exists { return drawer }
         let menu = app.buttons["fleet.drawer.open"].firstMatch
         XCTAssertTrue(waitUntil(timeout: timeout) {
             menu.exists && menu.isEnabled && menu.isHittable
         }, "the universal Menu button must be ready for input")
-        let drawer = app.descendants(matching: .any)
-            .matching(identifier: "fleet.drawer").firstMatch
         // A launch/layout transition can swallow a synthesized tap. Retry
         // only while the drawer is closed; never toggle an already-open one.
         for _ in 0..<3 {

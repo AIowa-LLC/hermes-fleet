@@ -24,9 +24,11 @@ final class C2SetupPromptUITests: XCTestCase {
     private func openFromSettings(_ app: XCUIApplication) {
         UITabNavigation.openSettings(app)
         let row = app.buttons["fleet.settings.connect-server"]
+        // Form rows below Notifications enter the accessibility tree lazily.
+        // Keep the existing gesture cap, but reveal the row before requiring it.
+        for _ in 0..<8 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "configured users must have a path to connect another server")
-        for _ in 0..<8 where !row.isHittable { app.swipeUp(velocity: .fast) }
         XCTAssertTrue(row.isHittable, "the Settings enrollment entry must be onscreen before tapping")
         row.tap()
     }

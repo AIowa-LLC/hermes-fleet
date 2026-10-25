@@ -274,6 +274,31 @@ public final class AppEnvironment {
     /// so callers can read `environment.liveOps` unconditionally.
     public let liveOps: LiveOpsStore
 
+    /// Phase B: the app-level approvals inbox. Lives for the app's lifetime.
+    /// It opens no connection: open conversations register as sources, and the
+    /// Live Ops approvals seam is its poll source (see `InboxStore`).
+    public let inbox: InboxStore
+
+    /// Phase B deep link: the inbox item the Inbox screen should open on
+    /// arrival (or immediately, if it is already showing). One-shot: the
+    /// Inbox clears it once consumed. Use `openInbox(focus:)` to set it.
+    public var pendingInboxFocus: InboxItemID?
+
+    /// Open the Inbox destination (Fleet stack), optionally focused on one
+    /// item. Notifications, Live Activities, and `FleetInboxDeepLink` all enter
+    /// the inbox through here.
+    public func openInbox(focus itemID: InboxItemID? = nil) {
+        pendingInboxFocus = itemID
+        requestScreen(.inbox)
+    }
+
+    /// B3: local notifications for new inbox items. Off until the user opts in
+    /// in Settings; the composition root starts it.
+    public let inboxNotifications: InboxNotificationCoordinator
+    /// Synced from `connectionStates` changes; set at the end of init so the
+    /// observer cannot run before `inbox` exists.
+    @ObservationIgnored private var inboxSync: (@MainActor () -> Void)?
+
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
     /// 30-day retention, pruned when a gateway is removed. No secrets.
@@ -684,6 +709,9 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         liveOpsFactory: FleetLiveOpsFactory? = nil,
+        inboxHistory: (any InboxHistoryStoring)? = nil,
+        localNotifier: (any FleetLocalNotifier)? = nil,
+        inboxURLScheme: String = "hermes-fleet",
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
@@ -772,6 +800,15 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
+        let inboxStore = InboxStore(
+            history: inboxHistory ?? InMemoryInboxHistoryStore(),
+            biometrics: biometrics)
+        self.inbox = inboxStore
+        self.inboxNotifications = InboxNotificationCoordinator(
+            inbox: inboxStore,
+            notifier: localNotifier ?? UnavailableLocalNotifier(),
+            settings: InboxNotificationSettingsStore(),
+            urlScheme: inboxURLScheme)
         artifactImages.protectionReporter = { failure in
             diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
         }
@@ -780,6 +817,20 @@ public final class AppEnvironment {
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
             connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        // Phase B: the inbox reconciles the sessions Live Ops reports as
+        // waiting (never a roster-wide fan-out) and follows connection state.
+        inbox.setProviders(
+            gateways: { [weak self] in self?.gateways ?? [] },
+            connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        inbox.setSessionProvider { [weak self] id in
+            guard let snapshot = self?.liveOps.snapshot,
+                  let gateway = snapshot.gateways.first(where: { $0.gatewayID == id }) else { return [] }
+            return gateway.operations.filter { $0.status.isWaiting }.map { $0.id.runtimeSessionID }
+        }
+        inbox.setPollSource { [weak self] id in
+            guard let approvals = self?.liveOps.approvalsSeam(for: id) else { return nil }
+            return InboxApprovalPollSource(gatewayID: id, approvals: approvals)
+        }
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -2400,6 +2451,7 @@ public final class AppEnvironment {
     /// file may become unavailable, then connection/recovery ownership is
     /// suspended until an unlocked foreground restore.
     public func suspendForBackground() async {
+        inbox.setForeground(false)
         beginBackgroundSuspension()
         if let backgroundTeardownTask {
             await backgroundTeardownTask.value
@@ -2523,6 +2575,10 @@ public final class AppEnvironment {
     /// transport before that root authenticates protected content.
     public func setForegroundRecoveryAllowed(_ allowed: Bool) {
         foregroundRecoveryAllowed = allowed
+        // Phase B: the periodic inbox reconcile runs exactly while protected
+        // content may be shown. Cold launch (after App Lock), resume, and
+        // unlock all pass through here, so the reconcile is not resume-only.
+        inbox.setForeground(allowed)
         guard !allowed else { return }
         // A lock transition invalidates pending foreground reconciliation
         // without canceling its connect task (which would clear user intent).
@@ -3477,7 +3533,8 @@ public final class AppEnvironment {
                     && self.foregroundRecoveryAllowed
                     && self.connectionIntent.isIntended(route.gatewayID)
                     && self.gateways.contains(where: { $0.id == route.gatewayID })
-            }
+            },
+            inbox: inbox
         )
         model.prepareBotDraft = { [weak self] text, openedID in
             guard let self else { return BotConversationDraft(text: text) }

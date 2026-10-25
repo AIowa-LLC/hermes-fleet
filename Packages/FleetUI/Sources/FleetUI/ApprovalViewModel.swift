@@ -109,6 +109,10 @@ public final class ApprovalViewModel {
     private var boundSessionID: String?
     private var yoloIntent = 0
 
+    /// Phase B inbox sync: called after the gateway ACCEPTS a banner approve or
+    /// deny, so the app-level inbox settles the same request. Nil in tests.
+    @ObservationIgnored public var onDecided: (@MainActor (ApprovalRequest, InboxDecision) -> Void)?
+
     public init(
         approvals: any ApprovalsProviding,
         biometrics: any AppLockBiometricAuth,
@@ -192,6 +196,17 @@ public final class ApprovalViewModel {
         }
     }
 
+    /// Phase B: the approvals inbox resolved this request (answered or expired
+    /// on another surface). Dismiss it, and any queued copy, WITHOUT sending
+    /// anything. Never a denial.
+    public func resolvedElsewhere(requestID: String) {
+        if pending?.requestID == requestID {
+            promoteNext()
+        } else {
+            queued.removeAll { $0.requestID == requestID }
+        }
+    }
+
     private func promoteNext() {
         reviewTracker.retain(requestIDs: Set(queued.map(\.requestID)))
         if !queued.isEmpty {
@@ -244,6 +259,7 @@ public final class ApprovalViewModel {
         do {
             _ = try await approvals.respond(to: request, choice: .deny, all: false)
             clearApproval(requestID: request.requestID)
+            onDecided?(request, .deny)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
         }
@@ -291,6 +307,7 @@ public final class ApprovalViewModel {
         do {
             _ = try await approvals.respond(to: current, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
+            onDecided?(current, .approve(scope))
         } catch {
             state = .respondFailed(Self.nonSecret(error))
         }

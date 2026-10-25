@@ -45,11 +45,33 @@ final class ScriptedPresence: AppLockBiometricAuth, @unchecked Sendable {
 final class SuspendedPresence: AppLockBiometricAuth, @unchecked Sendable {
     private let lock = NSLock()
     private var waiting: [CheckedContinuation<PresenceOutcome, Never>] = []
+    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
     private var calls = 0
     var checks: Int { lock.withLock { calls } }
+
+    /// Observe registration, not a guessed number of executor turns. Checking
+    /// the condition and registering a waiter use the same lock as evaluate.
+    func waitUntilSuspended() async {
+        await withCheckedContinuation { continuation in
+            let suspended = lock.withLock {
+                if !waiting.isEmpty { return true }
+                suspensionWaiters.append(continuation)
+                return false
+            }
+            if suspended { continuation.resume() }
+        }
+    }
+
     func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
         await withCheckedContinuation { continuation in
-            lock.withLock { calls += 1; waiting.append(continuation) }
+            let observers = lock.withLock {
+                calls += 1
+                waiting.append(continuation)
+                let observers = suspensionWaiters
+                suspensionWaiters.removeAll()
+                return observers
+            }
+            observers.forEach { $0.resume() }
         }
     }
     func complete() {

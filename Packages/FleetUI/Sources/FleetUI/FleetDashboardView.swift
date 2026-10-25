@@ -109,6 +109,18 @@ public struct FleetDashboardView: View {
         (liveOpsSnapshot?.allOperations ?? []).sorted { $0.startedAt > $1.startedAt }
     }
     private var liveOpsAttentionItems: [LiveOpsAttentionItem] { environment.liveOps.attentionItems }
+    /// Pending approvals-inbox items, minus those a Live Ops row already shows.
+    private var inboxAttentionItems: [InboxItem] {
+        FleetHomeAttention.pendingInboxItems(
+            inbox: environment.inbox.items,
+            liveOpsAttention: liveOpsAttentionItems)
+    }
+    private var needsYouTotal: Int {
+        FleetHomeAttention.needsYouCount(
+            attentionCount: attentionItems.count,
+            liveOpsCount: liveOpsAttentionItems.count,
+            inboxPendingCount: inboxAttentionItems.count)
+    }
 
     private var continueEntries: [FleetContinueIndexStore.Entry] {
         Array(environment.continueIndex.entries().prefix(2))
@@ -270,7 +282,7 @@ public struct FleetDashboardView: View {
     }
 
     private var needsYouGlanceValue: String {
-        let count = attentionItems.count + liveOpsAttentionItems.count
+        let count = needsYouTotal
         if count > 0 { return "\(count)" }
         return attentionCoverageComplete ? "0" : "—"
     }
@@ -323,7 +335,7 @@ public struct FleetDashboardView: View {
 
     @ViewBuilder
     private var needsYouSection: some View {
-        let totalCount = attentionItems.count + liveOpsAttentionItems.count
+        let totalCount = needsYouTotal
         if totalCount == 0 {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                 needsYouHeader
@@ -345,11 +357,19 @@ public struct FleetDashboardView: View {
                 ForEach(liveOpsAttentionItems.prefix(3)) { item in
                     liveOpsAttentionRow(item)
                 }
-                let remainingSlots = max(0, 3 - liveOpsAttentionItems.count)
+                // Pending inbox requests (not already a Live Ops row) come next;
+                // each row opens the Inbox focused on its item.
+                let inboxSlots = max(0, 3 - liveOpsAttentionItems.count)
+                let inboxShown = Array(inboxAttentionItems.prefix(inboxSlots))
+                ForEach(inboxShown) { item in
+                    inboxAttentionRow(item)
+                }
+                let remainingSlots = max(0, inboxSlots - inboxShown.count)
                 ForEach(attentionItems.prefix(remainingSlots)) { item in
                     attentionRow(item)
                 }
-                let shown = min(liveOpsAttentionItems.count, 3) + min(attentionItems.count, remainingSlots)
+                let shown = min(liveOpsAttentionItems.count, 3) + inboxShown.count
+                    + min(attentionItems.count, remainingSlots)
                 if totalCount > shown {
                     Text("+ \(totalCount - shown) more")
                         .font(FleetTheme.secondaryFont)
@@ -493,6 +513,39 @@ public struct FleetDashboardView: View {
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.needsYou.header")
+    }
+
+    /// A pending inbox request on Home. Tapping it opens the Inbox focused on
+    /// that item; Home itself never hosts the decision controls.
+    private func inboxAttentionRow(_ item: InboxItem) -> some View {
+        Button {
+            environment.openInbox(focus: item.id)
+        } label: {
+            HStack(spacing: FleetTheme.spacingMd) {
+                Image(systemName: FleetInboxPresentation.symbol(for: item.kind))
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(FleetHomeAttention.rowTitle(item))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                    Text(FleetHomeAttention.rowDetail(item))
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text("Review")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.highlight)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.needsYou.inbox.\(sanitized(item.id.rawValue))")
     }
 
     private func attentionRow(_ item: FleetAttentionItem) -> some View {
