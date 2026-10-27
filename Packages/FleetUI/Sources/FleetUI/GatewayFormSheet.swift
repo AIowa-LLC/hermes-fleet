@@ -36,6 +36,9 @@ struct GatewayFormSheet: View {
     private let reviewKey: (URL) async throws -> TLSKeyReview
     /// True when the edited gateway already has a stored pin.
     private let tlsPinned: Bool
+    /// Hands a scanned invitation link to the pairing flow. Called only after
+    /// this form has been dismissed, so the review sheet can present.
+    private let onInvitation: ((String) -> Void)?
 
     /// The root-owned draft store this form binds to (P0-2).
     @Bindable private var draftStore: GatewayFormDraftStore
@@ -44,6 +47,8 @@ struct GatewayFormSheet: View {
     @State private var isSaving = false
     /// F2: camera pairing-scanner presentation (fills the draft on success).
     @State private var isShowingScanner = false
+    /// An invitation link the scanner took. Held only until this form is gone.
+    @State private var pendingInvitation: String?
     /// Fingerprint awaiting the user's explicit confirmation.
     @State private var pendingReview: TLSKeyReview?
     @State private var isReviewing = false
@@ -55,10 +60,12 @@ struct GatewayFormSheet: View {
         initial: FleetGateway?,
         draftStore: GatewayFormDraftStore,
         tlsPinned: Bool = false,
+        onInvitation: ((String) -> Void)? = nil,
         reviewKey: @escaping (URL) async throws -> TLSKeyReview,
         onSave: @escaping (GatewayRegistration, GatewayCredential?, TLSKeyReview?) async throws -> Void
     ) {
         self.tlsPinned = tlsPinned
+        self.onInvitation = onInvitation
         self.reviewKey = reviewKey
         self.title = title
         self.saveButton = saveButton
@@ -296,13 +303,32 @@ struct GatewayFormSheet: View {
         } message: { review in
             Text("\(trimmedName.isEmpty ? "This gateway" : trimmedName) at \(Redaction.redactedURL(review.endpoint)) presented this key (SHA-256):\n\n\(review.displayFingerprint)\n\nCompare it with a trusted source before you trust it. If it does not match, cancel.")
         }
-        .sheet(isPresented: $isShowingScanner) {
-            GatewayPairingScannerView(draftStore: draftStore)
+        .sheet(isPresented: $isShowingScanner, onDismiss: scannerDidDismiss) {
+            GatewayPairingScannerView(draftStore: draftStore) { raw in
+                pendingInvitation = raw
+            }
         }
         // P0-2: the form is deliberate — prevent accidental swipe-dismiss so
         // the user is never silently thrown out of an in-progress credential
         // entry. Dismissal is explicit (Cancel / Save).
         .interactiveDismissDisabled()
+        .onDisappear(perform: handOffPendingInvitation)
+    }
+
+    /// An invitation took over from the scanner: the scanner is gone, so close
+    /// this form too. The hand-off happens in `handOffPendingInvitation`.
+    private func scannerDidDismiss() {
+        if pendingInvitation != nil { dismiss() }
+    }
+
+    /// Runs once this form has actually left the screen. A sheet cannot present
+    /// over a form that still covers its presenter, so the review sheet waits.
+    /// The draft is cleared because the invitation supersedes the typed form.
+    private func handOffPendingInvitation() {
+        guard let link = pendingInvitation else { return }
+        pendingInvitation = nil
+        draftStore.clear()
+        onInvitation?(link)
     }
 
     /// P0-2: explicit "Paste" affordance next to a credential / URL field —
