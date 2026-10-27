@@ -307,22 +307,17 @@ final class GatewayRegistryServiceTests: XCTestCase {
 
     // MARK: P1-8 — removal / clear surface credential-cleanup failure
 
-    func testRemoveGatewaySurfacesCredentialCleanupFailure() async throws {
+    /// #210: removal is local; a Keychain cleanup failure is logged and never
+    /// keeps the entry on screen.
+    func testCredentialCleanupFailureDoesNotBlockRemoval() async throws {
         let store = FailingDeleteCredentialStore()
         let service = makeService(credentials: store, factory: successFactory())
         try await register(service)
 
-        do {
-            try await service.removeGateway(gatewayA)
-            XCTFail("expected credentialStoreFailed when Keychain cleanup fails")
-        } catch let error as GatewayRegistryError {
-            guard case .credentialStoreFailed = error else {
-                return XCTFail("expected credentialStoreFailed, got \(error)")
-            }
-        }
-        // The gateway must remain registered — no silent half-removed state.
-        let stillThere = await service.gateway(for: gatewayA)
-        XCTAssertNotNil(stillThere)
+        try await service.removeGateway(gatewayA)
+
+        let remaining = await service.gateway(for: gatewayA)
+        XCTAssertNil(remaining)
     }
 
     func testClearCredentialSurfacesDeletionFailure() async throws {

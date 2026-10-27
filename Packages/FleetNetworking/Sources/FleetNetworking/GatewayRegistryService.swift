@@ -1,5 +1,6 @@
 import Foundation
 import FleetCore
+import os
 
 /// Builds a single-gateway connection for a registered gateway, so the
 /// registry service can probe reachability + capability surface without
@@ -354,37 +355,11 @@ public actor GatewayRegistryService: GatewayRegistryManaging, GatewayPairingRegi
         guard let gateway = registry.gateway(for: id) else {
             throw GatewayRegistryError.notFound(id)
         }
-        // Clear the endpoint-scoped pending enrollment secret before any
-        // registry mutation. If secure cleanup fails, keep the gateway
-        // registered so the caller can retry removal.
-        if let enrollmentCleanup {
-            do {
-                try await enrollmentCleanup.removeEnrollmentMaterial(for: gateway)
-            } catch {
-                throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
-            }
-        }
-        // P1-8: credential cleanup failure must surface — never silently
-        // swallowed. Delete the credential first; only on success is the
-        // gateway removed, so a cleanup failure leaves the gateway registered
-        // (no "removed" UI while a secret may still exist).
-        do {
-            try await credentials.deleteCredential(for: id)
-        } catch {
-            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
-        }
-        // T3: retire the TLS pin with the credential — a removed gateway
-        // must leave no orphaned trust material. Failures surface (same
-        // P1-8 contract); missing pin is a no-op at the store level.
-        if let pinStore {
-            do {
-                try await pinStore.deletePin(for: id)
-            } catch {
-                throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
-            }
-        }
-        // P0-4: remove the durable record too — a removed gateway must not
-        // resurrect on relaunch.
+        // #210: removal is a local operation. The durable record is the
+        // commit marker — once it is gone the gateway is removed, whatever
+        // the gateway's reachability or the secure stores report. Only a
+        // failure to delete that local record keeps the entry (it would
+        // otherwise resurrect on relaunch).
         if let recordStore {
             do {
                 try await recordStore.deleteGatewayRecord(id: id)
@@ -393,7 +368,24 @@ public actor GatewayRegistryService: GatewayRegistryManaging, GatewayPairingRegi
             }
         }
         registry.remove(id)
+
+        // Secure material is retired best-effort after the commit. Enrollment
+        // cleanup runs first: it snapshots what the (detached, best-effort)
+        // device self-revoke needs before the credential and pin are deleted.
+        // A failure here is logged, never surfaced as a removal failure.
+        if let enrollmentCleanup {
+            do { try await enrollmentCleanup.removeEnrollmentMaterial(for: gateway) }
+            catch { Self.log.error("removal enrollment cleanup failed: \(Redaction.safeErrorDescription(error), privacy: .public)") }
+        }
+        do { try await credentials.deleteCredential(for: id) }
+        catch { Self.log.error("removal credential cleanup failed: \(Redaction.safeErrorDescription(error), privacy: .public)") }
+        if let pinStore {
+            do { try await pinStore.deletePin(for: id) }
+            catch { Self.log.error("removal pin cleanup failed: \(Redaction.safeErrorDescription(error), privacy: .public)") }
+        }
     }
+
+    private static let log = Logger(subsystem: "com.aiowa.hermesfleet", category: "gateway-registry")
 
     public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
         guard registry.gateway(for: id) != nil else {
