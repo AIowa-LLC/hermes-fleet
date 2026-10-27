@@ -41,6 +41,11 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
     /// Dogfood r2 (2026-09-23): scripted connection with a MUTABLE status and
     /// a typed disconnect reason — drives the runtime's bounded auto-recovery
     /// (failed connect / post-open drop → policy-gated retry).
+    private actor InvalidationRecorder {
+        private(set) var ids: [GatewayID] = []
+        func record(_ id: GatewayID) { ids.append(id) }
+    }
+
     private final class RecoveringConnection: GatewayConnectivityProviding, @unchecked Sendable {
         let gatewayID: GatewayID
         /// Each entry = the outcome of the next connect attempt (exhausted =
@@ -342,7 +347,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         timing: ConnectionRecoveryTiming,
         sessionList: any SessionListProviding = EmptySessions(),
         profiles: [ProfileDescriptor] = [],
-        recordStore: (any GatewayRecordStoring)? = nil
+        recordStore: (any GatewayRecordStoring)? = nil,
+        sessionInvalidator: FleetGatewaySessionInvalidator? = nil
     ) async -> AppEnvironment {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -362,6 +368,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             health: TestHealth(),
             seedRegistrations: [registration(id.rawValue)],
             connectionIntentDefaults: suiteDefaults(),
+            gatewaySessionInvalidator: sessionInvalidator,
             recoveryTiming: timing)
         await environment.load()
         environment.setForegroundRecoveryAllowed(true)
@@ -789,7 +796,51 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         let exhausted = await waitUntil { connection.connectCount == 3 }
         XCTAssertTrue(exhausted, "initial attempt + 2 retries")
         _ = await waitUntil(timeout: 0.4) { false }
-        XCTAssertEqual(connection.connectCount, 3, "the retry budget bounds the loop")
+        XCTAssertEqual(connection.connectCount, 3, "the fast retry budget bounds the loop")
+    }
+
+    /// #214: a gateway that stays down past the fast budget is still probed
+    /// at the steady cadence, so it reconnects unaided when it comes back.
+    func testTransientFailureKeepsProbingAfterBudgetAndReconnectsUnaided() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 5))
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 1,
+                steadyProbeInterval: 0.05))
+
+        await environment.connect(to: id)
+        let recovered = await waitUntil { environment.connectionStates[id] == .connected }
+        XCTAssertTrue(recovered, "the gateway reconnects without a manual retry")
+        XCTAssertEqual(connection.connectCount, 6, "5 failures past a 1-retry budget, then success")
+    }
+
+    /// #214: Retry after a failure is a genuinely fresh attempt — the failed
+    /// transport is torn down and the cached session lease is invalidated.
+    func testRetryAfterFailureDropsTransportAndSessionLease() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [
+            .failure(.authenticationRequired, .reauthenticationRequired),
+        ])
+        let invalidated = InvalidationRecorder()
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2),
+            sessionInvalidator: { await invalidated.record($0) })
+
+        await environment.connect(to: id)
+        XCTAssertEqual(environment.connectionStates[id], .failed(.authenticationRequired))
+        let before = await invalidated.ids
+        XCTAssertEqual(before, [], "a first connect has nothing stale to drop")
+
+        await environment.connect(to: id)  // the Retry Connection button
+        let after = await invalidated.ids
+        XCTAssertEqual(after, [id], "retry starts from a fresh session lease")
+        XCTAssertEqual(connection.connectCount, 2)
+        XCTAssertEqual(environment.connectionStates[id], .connected)
     }
 
     // MARK: Finding 5 — backoff survives short-lived connections
