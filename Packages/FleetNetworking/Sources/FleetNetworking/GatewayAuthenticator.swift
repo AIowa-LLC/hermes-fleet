@@ -221,6 +221,11 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             accessToken = try await nativeOAuthClient.validAccessToken()
         } catch NativeOAuthError.sessionExpired {
             throw AuthenticationError.missingLoopbackToken
+        } catch NativeOAuthError.providerUnreachable, NativeOAuthError.networkError {
+            // #214: the gateway could not be reached — not a sign-in problem.
+            throw URLError(.cannotConnectToHost)
+        } catch let error as URLError {
+            throw error
         } catch {
             throw AuthenticationError.storeUnavailable("oauth refresh failed")
         }

@@ -52,22 +52,28 @@ public struct DeviceLoginClient: Sendable {
             let (data, response) = try await session.boundedData(for: request, delegate: delegate)
             guard data.count <= AuthREST.maxResponseBytes,
                   let http = response as? HTTPURLResponse else {
-                throw AuthenticationError.ticketMintFailed("device login response malformed")
+                throw WSTicketClient.TicketMintError.malformedResponse
             }
             guard (200..<300).contains(http.statusCode) else {
                 throw AuthenticationError.httpStatus(http.statusCode)
             }
             guard let decoded = try? JSONDecoder().decode(LoginResponse.self, from: data), decoded.ok == true,
                   let parsed = PasswordLoginClient.parseSessionCookie(from: http) else {
-                throw AuthenticationError.ticketMintFailed("device login response malformed")
+                // The endpoint answered, but not with the gateway's login
+                // contract — never a sign-in problem (#214).
+                throw WSTicketClient.TicketMintError.malformedResponse
             }
             return SessionCookie(
                 name: parsed.name,
                 value: parsed.value,
                 expiresAt: parsed.expiresAt ?? decoded.expires_at.flatMap(Self.parseDate))
         } catch let error as AuthenticationError { throw error }
+        catch let error as WSTicketClient.TicketMintError { throw error }
         catch {
             if case .pinMismatch = trustHandler?.lastVerdict { throw AuthenticationError.httpStatus(495) }
+            // #214: an unreachable gateway is a network failure. Rethrow it so
+            // the transport classifies it as unreachable, never as sign-in.
+            if error is URLError { throw error }
             throw AuthenticationError.ticketMintFailed("device login unavailable")
         }
     }

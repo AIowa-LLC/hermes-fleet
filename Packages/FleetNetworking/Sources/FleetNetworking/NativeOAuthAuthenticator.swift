@@ -29,6 +29,11 @@ public struct NativeOAuthAuthenticator: AuthenticationProviding {
             _ = try await oauthClient.validAccessToken()
         } catch NativeOAuthError.sessionExpired {
             throw AuthenticationError.missingLoopbackToken
+        } catch NativeOAuthError.providerUnreachable, NativeOAuthError.networkError {
+            // #214: the gateway could not be reached — not a sign-in problem.
+            throw URLError(.cannotConnectToHost)
+        } catch let error as URLError {
+            throw error
         } catch {
             throw AuthenticationError.storeUnavailable("oauth refresh failed")
         }
@@ -36,6 +41,10 @@ public struct NativeOAuthAuthenticator: AuthenticationProviding {
         let ticket: WSTicket
         do {
             ticket = try await ticketMinter.mintTicket()
+        } catch let error as AuthenticationError {
+            throw error
+        } catch let error as URLError {
+            throw error
         } catch {
             throw AuthenticationError.ticketMintFailed("oauth ticket mint failed")
         }

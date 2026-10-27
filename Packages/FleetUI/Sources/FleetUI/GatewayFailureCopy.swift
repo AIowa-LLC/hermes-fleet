@@ -43,6 +43,10 @@ public enum GatewayFailureCopy {
             return "The gateway answered but this address isn't a supported Hermes surface. Check the endpoint and port."
         case .offline:
             if let detail {
+                if detail.contains("auth endpoint returned HTTP 5") {
+                    // #214: the connector answered; the Hermes service behind it is down.
+                    return "The gateway answered, but its Hermes service isn't responding. Check that the Hermes service is running on the gateway."
+                }
                 if detail.contains("auth endpoint returned HTTP") {
                     // Late-classified auth-surface failure — same guidance.
                     return "The gateway answered, but this address isn't a supported Hermes surface. Check the endpoint and port."
