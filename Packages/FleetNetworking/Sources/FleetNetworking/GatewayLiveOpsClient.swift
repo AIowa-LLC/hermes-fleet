@@ -327,7 +327,7 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
 
     static func coverage(for error: TransportError) -> LiveOpsGatewayCoverage {
         switch error {
-        case .authenticationFailed, .authSurfaceStatus, .authStrategyRejected:
+        case .authenticationFailed, .authSurfaceStatus, .authStrategyRejected, .localCredentialUnavailable:
             return .authFailed
         default:
             return .failed(reason: Redaction.safeErrorDescription(error))

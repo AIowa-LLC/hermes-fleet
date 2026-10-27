@@ -170,6 +170,7 @@ struct PairingInvitationReviewSheet: View {
                 }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.highlight)
+                    .foregroundStyle(theme.onHighlight)
                     .accessibilityIdentifier("fleet.pairing.retry")
             }
             if failure != .rollbackUnconfirmed || !coordinator.canRetry {
@@ -193,6 +194,7 @@ struct PairingInvitationReviewSheet: View {
         Button("Done") { leaveFlow() }
             .buttonStyle(.borderedProminent)
             .tint(theme.highlight)
+            .foregroundStyle(theme.onHighlight)
             .accessibilityIdentifier("fleet.pairing.done")
     }
 

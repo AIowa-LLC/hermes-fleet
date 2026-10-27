@@ -26,6 +26,9 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     /// token-strategy mint against a cookie-only gateway). Carries the
     /// server-echoed classification word, never secret material.
     case authStrategyRejected(AuthRejectionReason)
+    /// #214: this phone's saved credential is missing or unreadable — the
+    /// gateway was never contacted.
+    case localCredentialUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -40,6 +43,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .authenticationFailed(let s): return "authentication failed: \(s)"
         case .authSurfaceStatus(let code): return "auth endpoint returned HTTP \(code)"
         case .authStrategyRejected(let reason): return "auth rejected: \(reason.rawValue)"
+        case .localCredentialUnavailable: return "this phone's saved credential is unavailable"
         }
     }
 }
@@ -369,6 +373,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
             // tunnel's 401 "no_cookie" means the stored strategy is wrong for
             // this gateway (cookie-only), NOT a bad credential; the UI must
             // say "use username & password sign-in", not "re-authenticate".
+            if error == .localCredentialUnavailable {
+                await teardown(.reauthenticationRequired, error: TransportError.localCredentialUnavailable)
+                throw TransportError.localCredentialUnavailable
+            }
             if case .rejected(let reason) = error {
                 let wrapped = TransportError.authStrategyRejected(reason)
                 await teardown(.reauthenticationRequired, error: wrapped)

@@ -196,6 +196,9 @@ public final class AppEnvironment {
     public private(set) var cachedWatermarkCount = 0
     /// Per-gateway connection lifecycle, observable.
     public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
+    /// #214: gateways whose last connect failed because this phone's saved
+    /// credential is missing or unreadable (not a gateway sign-in rejection).
+    public private(set) var localCredentialFailures: Set<GatewayID> = []
 
     /// H2: latest per-gateway connection-health snapshots (uptime %,
     /// reconnects, last-disconnect reason, ping RTT). Updated by
@@ -2087,6 +2090,7 @@ public final class AppEnvironment {
                 return
             }
             connectionStates[id] = GatewayConnectionState(status: connection.status)
+            localCredentialFailures.remove(id)
             if connectionStates[id] == .connected {
                 scheduleRosterSyncAfterConnectionRepair(for: id)
             }
@@ -2100,6 +2104,11 @@ public final class AppEnvironment {
                 return
             }
             let status = GatewayStatus(connectivityError: error)
+            if error == .localCredentialUnavailable {
+                localCredentialFailures.insert(id)
+            } else {
+                localCredentialFailures.remove(id)
+            }
             connectionStates[id] = .failed(status)
             // P0-A: a failed connect is a recorded fault (one short line —
             // never a raw endpoint, never a secret).
@@ -2917,6 +2926,7 @@ public final class AppEnvironment {
         invalidateConnectionAttempt(for: id)
         cancelConnectionRecovery(for: id)
         connectionIntent.clear(id)
+        localCredentialFailures.remove(id)
         let removedRoutes = sessionRoutes(on: id)
         for route in removedRoutes {
             invalidateSessions(for: route)

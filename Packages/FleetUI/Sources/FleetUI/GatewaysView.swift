@@ -190,7 +190,9 @@ public struct GatewaysView: View {
                 LabeledContent("Gateway ID", value: gateway.id.rawValue)
                 Text(gateway.endpoint.map(Redaction.redactedURL) ?? "Endpoint not configured")
                     .font(.footnote).textSelection(.enabled)
-                LabeledContent("Phone connection", value: GatewayConnectionCopy.label(environment.connectionStates[gateway.id] ?? .idle))
+                LabeledContent("Phone connection", value: GatewayConnectionCopy.label(
+                    environment.connectionStates[gateway.id] ?? .idle,
+                    localCredentialProblem: environment.localCredentialFailures.contains(gateway.id)))
             }
             Section {
                 Button("Connect", systemImage: "bolt") { Task { await environment.connect(to: gateway.id) } }
