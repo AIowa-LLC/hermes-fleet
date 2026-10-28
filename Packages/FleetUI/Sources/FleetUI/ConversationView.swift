@@ -160,12 +160,6 @@ public struct ConversationView: View {
     /// composer's adaptive glass + shadow no longer read the color scheme
     /// directly — the shadow is a theme token, `theme.shadow`.)
 
-    /// The composer morphs: stadium when idle (fully-rounded pill), a soft
-    /// 26pt card when focused/expanding — ChatGPT/Hermex's presentation
-    /// recipe. Driven by focus (the honest signal the keyboard is up).
-    private var composerPillRadius: CGFloat {
-        composerFocused ? 26 : 22
-    }
     /// R10-T4: voice transcript review confirmation (sheet). Presented when a
     /// transcript lands for review (submit-on-silence OFF).
     @State private var showingTranscriptReview = false
@@ -357,11 +351,18 @@ public struct ConversationView: View {
 
     private func canvas(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
-            compactHeader(model)
+            header(model)
             // P0-B (RC-84): the Find in Conversation bar docks directly
             // under the compact header while active.
             if findActive {
-                findBar(model)
+                ConversationFindBar(
+                    query: $findQuery,
+                    fieldFocused: $findFieldFocused,
+                    statusText: findStatusText,
+                    hasMatches: !findMatches.isEmpty,
+                    onAdvance: { advanceFind(direction: $0) },
+                    onClose: { closeFind() },
+                    onQuerySettled: { recomputeFind(model) })
             }
             bannerArea(model)
             // R9-T4: transient tooling notices (fork/rename failures) —
@@ -492,12 +493,7 @@ public struct ConversationView: View {
             model.consumeForkedSession()
         }
         .navigationDestination(isPresented: forkNavigationBinding) {
-            ConversationView(
-                environment: environment,
-                route: route,
-                sessionID: forkTargetSessionID
-            )
-            .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
+            ConversationDestination(environment: environment, route: route, sessionID: forkTargetSessionID)
         }
         // Slash parity: command-driven navigation. /new pushes a fresh
         // conversation on the SAME route (gateway/profile preserved);
@@ -518,15 +514,10 @@ public struct ConversationView: View {
             model.consumeCommandNavigation()
         }
         .navigationDestination(isPresented: newChatBinding) {
-            ConversationView(
-                environment: environment,
-                route: route,
-                sessionID: newChatTargetSessionID
-            )
-            .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
+            ConversationDestination(environment: environment, route: route, sessionID: newChatTargetSessionID)
         }
         // (Toolbar intentionally empty: the former principal StatusPill and
-        // the trailing timeline/latest items now live in compactHeader and
+        // the trailing timeline/latest items now live in ConversationHeader and
         // the ⋯ session-actions menu; latest ALSO floats on the transcript.)
         .overlay(alignment: .bottomTrailing) {
             floatingLatestChevron
@@ -619,133 +610,26 @@ public struct ConversationView: View {
     // system navigation bar entirely and owns its chrome: back, drawer,
     // status dot, identity, meter, chip, actions — 44pt total).
 
-    /// ONE row: [‹] [☰] [avatar●status] Name / session-title … [3%] [chip] [⋯]
-    /// - Back: custom chevron (NavigationStack pop; swipe-back survives —
-    ///   the gesture rides the interactive pop, not the bar).
-    /// - Drawer: same `openFleetDrawer` action + `fleet.drawer.open` id.
-    /// - Status: colored dot on the avatar's corner (semantic color); the
-    ///   spoken form stays on the identity element ("Status: Online").
-    /// - Identity: 28pt avatar, name + title stacked; at accessibility
-    ///   sizes the trailing metadata drops (still reachable via ⋯).
-    /// - Timeline + jump-to-latest moved into the ⋯ session-actions menu;
-    ///   latest ALSO has a zero-chrome floating chevron on the transcript.
-    private func compactHeader(_ model: ConversationViewModel) -> some View {
+    /// Issue #215: the header is a nominal view; this only gathers its inputs.
+    private func header(_ model: ConversationViewModel) -> ConversationHeader {
         let bot = environment.bot(for: route)
-        let name = bot?.displayName ?? route.profileSlug.rawValue
-        let status = headerPillStatus(bot: bot, model: model)
-        return HStack(spacing: FleetTheme.spacingSm) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Back")
-            .accessibilityIdentifier("fleet.conversation.back")
-
-            Button {
-                openDrawer?()
-            } label: {
-                Image(systemName: "sidebar.leading")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Menu")
-            .accessibilityIdentifier("fleet.drawer.open")
-
-            avatarWithStatus(bot: bot, status: status)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("fleet.conversation.header.name")
-                Text(model.sessionTitle ?? route.id)
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .accessibilityIdentifier("fleet.conversation.header.title")
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("\(name), status \(status.label)")
-            .accessibilityIdentifier("fleet.conversation.header.identity")
-
-            // Keep the session actions trailing and make the custom chrome
-            // span the full width. Without a flexible spacer this HStack is
-            // content-sized and the header visibly collapses on entry.
-            Spacer(minLength: FleetTheme.spacingXs)
-
-            // P0-B (RC-84): Find in Conversation — a fixed 44pt control
-            // (the header's Spacer geometry keeps the row full-width).
-            Button {
-                if findActive {
-                    closeFind()
-                } else {
-                    openFind()
-                }
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Find in Conversation")
-            .accessibilityIdentifier("fleet.conversation.find")
-
-            // r9: the chip zone moved UNDER the composer (the Toolbelt) —
-            // nothing renders here anymore.
-            if let toolingModel = model.toolingViewModel {
-                SessionSteerControls(
-                    model: toolingModel,
-                    isStreaming: model.isStreaming,
-                    sessionTitle: model.sessionTitle,
-                    showsTimeline: hasUserTurns,
-                    showsLatest: showingJumpToLatest,
-                    onTimeline: { showingTimeline = true },
-                    onLatest: {
-                        followingLatest = true
-                        scrollPulse += 1
-                    },
-                    onFork: { _ in }
-                )
-            }
-
-            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
-            // on enable). Hidden when the session has no approvals seam.
-            // (Restored: e748746's single-row header dropped this mount while
-            // claiming identifier preservation; R9ApprovalBanner is the guard.)
-            if let approvalModel = model.approvalViewModel {
-                SessionYoloToggle(model: approvalModel)
-            }
-        }
-        .frame(minHeight: 44)
-        .padding(.horizontal, FleetTheme.spacingSm)
-        .padding(.vertical, 4)
-        // DEV19 AX5: header chrome stops growing past accessibility XL (the
-        // size its UI test pins) so the identity never collapses at AX4/AX5.
-        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-        .background(theme.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.border)
-                .frame(height: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("fleet.conversation.header")
+        return ConversationHeader(
+            model: model,
+            route: route,
+            bot: bot,
+            name: bot?.displayName ?? route.profileSlug.rawValue,
+            status: headerPillStatus(bot: bot, model: model),
+            management: environment.botManagement,
+            isFindActive: findActive,
+            showsTimeline: hasUserTurns,
+            showsLatest: showingJumpToLatest,
+            onBack: { dismiss() },
+            onToggleFind: { findActive ? closeFind() : openFind() },
+            onTimeline: { showingTimeline = true },
+            onLatest: {
+                followingLatest = true
+                scrollPulse += 1
+            })
     }
 
     // MARK: Find in Conversation (P0-B / RC-84)
@@ -810,222 +694,6 @@ public struct ConversationView: View {
         findScrollPulse += 1
     }
 
-    /// The find bar: field + match position + prev/next + close. Docks
-    /// under the compact header while active; every control is a 44pt
-    /// target. Typing is debounced via `.task(id:)` so long transcripts
-    /// are not rescanned per keystroke.
-    private func findBar(_ model: ConversationViewModel) -> some View {
-        HStack(spacing: FleetTheme.spacingSm) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .accessibilityHidden(true)
-                TextField("Find in conversation", text: $findQuery)
-                    .font(.subheadline)
-                    .foregroundStyle(theme.textPrimary)
-                    .tint(theme.highlight)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.search)
-                    .focused($findFieldFocused)
-                    .onSubmit { advanceFind(direction: 1) }
-                    .accessibilityIdentifier("fleet.conversation.find.field")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(theme.background, in: Capsule())
-            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
-
-            Text(findStatusText)
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .accessibilityIdentifier("fleet.conversation.find.count")
-
-            Button {
-                advanceFind(direction: -1)
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .disabled(findMatches.isEmpty)
-            .accessibilityLabel("Previous match")
-            .accessibilityIdentifier("fleet.conversation.find.prev")
-
-            Button {
-                advanceFind(direction: 1)
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .disabled(findMatches.isEmpty)
-            .accessibilityLabel("Next match")
-            .accessibilityIdentifier("fleet.conversation.find.next")
-
-            Button {
-                closeFind()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Close find")
-            .accessibilityIdentifier("fleet.conversation.find.close")
-        }
-        .padding(.horizontal, FleetTheme.spacingSm)
-        .padding(.vertical, 2)
-        .background(theme.surface)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.border)
-                .frame(height: 1)
-        }
-        // `.contain` (the compact-header pattern) makes the bar a container
-        // element so the field/stepper/close keep their OWN identifiers —
-        // without it the bar's id propagates onto every child (AX dump
-        // evidence, RC-84 CC UI test).
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("fleet.conversation.find.bar")
-        .task(id: findQuery) {
-            // Debounce: a short idle before rescanning keeps long
-            // transcripts off the per-keystroke path.
-            try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled else { return }
-            recomputeFind(model)
-        }
-        .onAppear { findFieldFocused = true }
-    }
-
-    /// 28pt avatar with a 10pt status dot pinned bottom-trailing. The dot is
-    /// decorative (the identity element carries the spoken status).
-    private func avatarWithStatus(bot: FleetBot?, status: FleetStatus) -> some View {
-        BotAvatar(bot: bot, management: environment.botManagement)
-            .frame(width: 28, height: 28)
-            .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(theme.semanticStatusColor(for: status))
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(theme.surface, lineWidth: 2))
-            }
-    }
-
-    /// DEV14: a toolbelt chip never grows past this (full value remains in
-    /// its accessibility value / popover) so one long model, folder or
-    /// profile name cannot push its neighbours off screen.
-    private static let toolbeltChipMaxWidth: CGFloat = 150
-
-    /// Working-project-folder chip: folder glyph + the LAST path component
-    /// (full path in the tap popover — phone-width chips must not truncate).
-    /// Hidden honestly when the gateway reports no cwd.
-    @ViewBuilder
-    private func folderChip(_ model: ConversationViewModel) -> some View {
-        if let cwd = model.sessionCWD {
-            // r9 toolbelt: the folder chip now opens the working-folder
-            // SWITCHER (session.cwd.set) — copy-path moved to a long-press.
-            Button {
-                showingWorkingFolder = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "folder")
-                        .font(.caption2)
-                        .foregroundStyle(theme.textSecondary)
-                    Text(ConversationHeaderChips.lastPathComponent(cwd))
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: Self.toolbeltChipMaxWidth)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(theme.background, in: Capsule())
-                .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
-            }
-            .buttonStyle(.fleetPressable)
-            .simultaneousGesture(LongPressGesture().onEnded { _ in
-                UIPasteboard.general.string = cwd
-            })
-            .accessibilityLabel("Working folder")
-            .accessibilityValue(cwd)
-            .accessibilityHint("Changes the session's working directory")
-            .accessibilityIdentifier("fleet.conversation.header.folder")
-            .sheet(isPresented: $showingWorkingFolder) {
-                if let toolingModel = model.toolingViewModel {
-                    WorkingFolderSheet(
-                        model: toolingModel,
-                        currentCWD: cwd,
-                        onChanged: { info in
-                            model.refreshCWD(info)
-                        }
-                    )
-                    .presentationDetents([.medium])
-                }
-            }
-        }
-    }
-
-    /// Selected-profile chip (display-only; the conversation is bound to
-    /// this profile's route).
-    @ViewBuilder
-    private func profileChip(_ model: ConversationViewModel) -> some View {
-        if let profile = model.sessionProfileName {
-            // r9 toolbelt: the profile chip opens the session DOSSIER —
-            // identity card + rename + branch (wires that already existed).
-            Button {
-                showingDossier = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "person.crop.circle")
-                        .font(.caption2)
-                        .foregroundStyle(theme.textSecondary)
-                    Text(profile)
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .frame(maxWidth: Self.toolbeltChipMaxWidth)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(theme.background, in: Capsule())
-                .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Profile")
-            .accessibilityValue(profile)
-            .accessibilityHint("Session details, rename, and branch")
-            .accessibilityIdentifier("fleet.conversation.header.profile")
-            .sheet(isPresented: $showingDossier) {
-                if let toolingModel = model.toolingViewModel {
-                    SessionDossierSheet(
-                        model: toolingModel,
-                        profileName: profile,
-                        gatewayName: model.route.gatewayID.rawValue,
-                        sessionID: model.sessionID ?? "—",
-                        sessionTitle: model.sessionTitle ?? "Session",
-                        onBranch: { branch in
-                            model.adoptFork(branch)
-                        }
-                    )
-                    .presentationDetents([.medium])
-                }
-            }
-        }
-    }
-
 /// Animated three-dot "working" glyph (Hermes `...` parity). Discrete phase
 /// animation ~0.9s cycle; purely decorative (the working label carries AX).
 private struct WorkingDots: View {
@@ -1082,41 +750,6 @@ enum ConversationHeaderChips {
         return String(trimmed.split(separator: "/").last ?? Substring(trimmed))
     }
 }
-
-    /// The compact model chip (no longer its own dedicated full-width row).
-    /// The chip shows the sticky pick (or the session's model readback);
-    /// tap opens the picker. Same identifiers and semantics as before.
-    private func modelChipButton(_ model: ConversationViewModel) -> some View {
-        Button {
-            showingModelPicker = true
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "cpu")
-                    .font(.caption2)
-                    .foregroundStyle(theme.textSecondary)
-                Text(model.toolingViewModel?.selectedModel?.shortName
-                     ?? model.sessionModel?.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces)
-                     ?? "model")
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(
-                        model.toolingViewModel?.selectedModel != nil
-                            ? theme.highlight
-                            : theme.textSecondary
-                    )
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .frame(maxWidth: Self.toolbeltChipMaxWidth)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(theme.background, in: Capsule())
-        }
-        .buttonStyle(.fleetPressable)
-        .accessibilityLabel("Model picker")
-        .accessibilityValue(model.toolingViewModel?.selectedModel?.model ?? "profile default")
-        .accessibilityHint("Choose the model for new chats on this device")
-        .accessibilityIdentifier("model.chip")
-    }
 
     private func headerPillStatus(bot: FleetBot?, model: ConversationViewModel) -> FleetStatus {
         if let bot {
@@ -1759,204 +1392,22 @@ enum ConversationHeaderChips {
         return results
     }
 
+    /// Issue #215: the composer is a nominal view (`ConversationComposer`) so
+    /// this screen's body never inlines its value or its generic type; the
+    /// toolbelt shares the header's chip state and stays here.
     private func composer(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
-            if let query = BotConversationMentions.query(in: composerText) {
-                let suggestions = BotConversationMentions.suggestions(query: query,
-                    roster: environment.mentionCandidates(), excluding: route,
-                    gatewayLabel: { environment.gateway(for: $0)?.displayName ?? $0.rawValue })
-                ScrollView {
-                    LazyVStack(alignment: .leading) {
-                        ForEach(suggestions) { suggestion in
-                            Button {
-                                composerText = BotConversationMentions.inserting(suggestion.alias, into: composerText)
-                            } label: {
-                                HStack {
-                                    BotAvatar(bot: environment.bot(for: suggestion.id), management: environment.botManagement)
-                                    VStack(alignment: .leading) {
-                                        Text(suggestion.candidate.friendlyTitle)
-                                        Text("@\(suggestion.alias) · \(suggestion.gatewayLabel)").font(.caption)
-                                    }
-                                }
-                            }
-                            .accessibilityLabel("Mention \(suggestion.candidate.friendlyTitle) on \(suggestion.gatewayLabel)")
-                            .accessibilityIdentifier("fleet.mention.\(suggestion.id.id)")
-                        }
-                    }
-                }.frame(maxHeight: 180)
-                 .accessibilityIdentifier("fleet.mentions")
-            }
-            if let notice = model.botDraftNotice {
-                Text(notice).font(.caption).padding(8)
-                    .accessibilityIdentifier("fleet.conversation.bot-notice")
-            }
-            // Issue #4: skill discovery lives in the same compact composer
-            // surface as the input, never as a full-screen command browser.
-            if model.isSlashPaletteVisible {
-                slashPalette(model)
-            }
-            // R10-T1: pending-attachment chips (name + size, removable) and
-            // the never-silent error banner sit directly above the input row.
-            if !model.pendingAttachments.isEmpty || model.isUploadingAttachment {
-                attachmentTray(model)
-            }
-            if let attachmentError = model.attachmentError {
-                attachmentErrorBanner(model, message: attachmentError)
-            }
-            // R10-T2: reaction error banner — never silent.
-            if let reactionError = model.reactionError {
-                reactionErrorBanner(model, message: reactionError)
-            }
-            // R10-T4: voice banners — honest authorization-denied gate +
-            // never-silent capture/synthesis failure.
-            if model.isVoiceDenied {
-                voiceDeniedBanner(model)
-            }
-            if let voiceError = model.voiceError {
-                voiceErrorBanner(model, message: voiceError)
-            }
-            // R10-T4: transcript review chip — the recognized text lands for
-            // review before any submit (review-first; never auto-sent unless
-            // the user opted into submit-on-silence).
-            if let transcript = model.latestVoiceTranscript,
-               !model.isListening {
-                transcriptReviewChip(model, transcript: transcript)
-            }
-            // Dogfood r6 (G1): ONE floating composer pill (ChatGPT
-            // anatomy) — +, field, mic, and send/stop live INSIDE the
-            // stadium; it morphs to a soft card when focused/expanded
-            // (Hermex's ChatComposerPresentation recipe: continuous
-            // corners, ultraThinMaterial glass, hairline + soft shadow).
-            // All controls keep their identifiers (zero test edits).
-            HStack(spacing: FleetTheme.spacingSm) {
-                // R10-T1: "+" affordance — Photos picker (images) + Files
-                // importer (PDF/any). Hidden while a turn streams (the
-                // gateway queues attaches for the NEXT submit; allowing
-                // mid-stream picks invites orphaned uploads).
-                if model.phase == .ready {
-                    Button {
-                        showingAddActions = true
-                    } label: {
-                        // r6: bare glyph inside the pill (the pill is the
-                        // surface; 44pt target via the frame).
-                        Image(systemName: "plus")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(theme.textSecondary)
-                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
-                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .disabled(isResolvingPickedAttachment || model.isUploadingAttachment)
-                    .accessibilityLabel("Add to message")
-                    .accessibilityIdentifier("fleet.conversation.attach")
-                }
-
-                TextField("Message", text: $composerText, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($composerFocused)
-                    .font(.body)
-                    .foregroundStyle(theme.textPrimary)
-                    .tint(theme.highlight)
-                    // r6: the pill is the field's surface — transparent
-                    // inside, no own chrome.
-                    .padding(.vertical, FleetTheme.spacingSm)
-                    .disabled(model.phase != .ready && model.phase != .streaming)
-                    .accessibilityIdentifier("fleet.conversation.composer")
-                    .onSubmit {
-                        Task { await submit(model) }
-                    }
-
-                // r8.1: thinking-level gauge — right cluster, FIRST
-                // position (ChatGPT placement: field … gauge, mic, send).
-                // Level-encoding needle; highlight ink once adjusted.
-                if let reasoningModel = model.reasoningViewModel {
-                    ReasoningChip(model: reasoningModel) {
-                        showingReasoningSlider = true
-                    }
-                }
-
-                // R10-T4: mic button — on-device transcription (Speech
-                // framework) into the composer. Hidden entirely when no
-                // voice engine is wired (fail-closed). While listening, the
-                // button becomes a stop control (best-partial capture).
-                // r8.1: moved to the RIGHT cluster (ChatGPT order:
-                // gauge, mic, send); idle ink is pure white (textPrimary)
-                // per Tony — the neutral among two accent buttons.
-                if model.isVoiceAvailable {
-                    Button {
-                        Task { await model.toggleMic() }
-                    } label: {
-                        Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
-                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
-                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
-                    .accessibilityIdentifier("fleet.conversation.mic")
-                }
-
-                if model.phase == .streaming || model.isStreaming {
-                    Button {
-                        Task { await model.interrupt() }
-                    } label: {
-                        // Hermes parity: the live turn's interrupt reads as
-                        // DESTRUCTIVE — bright red glyph on a dimmed red
-                        // circle (the mic-stop pattern), not a neutral chip.
-                        Image(systemName: "stop.fill")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(FleetTheme.statusDestructive)
-                            .frame(width: sendButtonSide, height: sendButtonSide)
-                            .background(Circle().fill(FleetTheme.statusDestructive.opacity(0.18)))
-                            .overlay(Circle().strokeBorder(FleetTheme.statusDestructive.opacity(0.45), lineWidth: 1))
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Stop")
-                    .accessibilityIdentifier("fleet.conversation.stop")
-                } else {
-                    Button {
-                        Task { await submit(model) }
-                    } label: {
-                        // V2 (Nous Direction A): FLAT highlight circle, derived
-                        // ink glyph — the one accent, no glow, no gradient.
-                        // The glyph ink is derived from the HIGHLIGHT fill
-                        // (not the canvas) so it stays legible for any user
-                        // highlight, including white or near-black.
-                        // r6: the accent ORB rides inside the pill —
-                        // the single interactive accent (ChatGPT's send).
-                        Image(systemName: "arrow.up")
-                            .font(.callout.weight(.bold))
-                            .foregroundStyle(theme.onHighlight)
-                            .frame(width: min(sendGlyphSide, Self.maxChromeGlyph), height: min(sendGlyphSide, Self.maxChromeGlyph))
-                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-                            .background(Circle().fill(theme.highlight))
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .disabled(model.phase != .ready || (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
-                    .accessibilityLabel("Send")
-                    .accessibilityIdentifier("fleet.conversation.send")
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 5)
-            .background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: composerPillRadius, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: composerPillRadius, style: .continuous)
-                    .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
-            )
-            .shadow(color: theme.shadow, radius: 10, y: 4)
-            .padding(.horizontal, FleetTheme.spacingMd)
-            .padding(.vertical, 6)
+            ConversationComposer(
+                model: model,
+                environment: environment,
+                route: route,
+                composerText: $composerText,
+                composerFocused: $composerFocused,
+                showingAddActions: $showingAddActions,
+                showingReasoningSlider: $showingReasoningSlider,
+                previewingAttachment: $previewingAttachment,
+                isResolvingPickedAttachment: isResolvingPickedAttachment,
+                onSubmit: { Task { await submit(model) } })
             // Scrollable chip zone: model · working folder · profile ·
             // context — the r9 TOOLBELT, docked UNDER the composer (moved
             // from the header in r9; actions live next to the input they
@@ -1965,8 +1416,14 @@ enum ConversationHeaderChips {
             // edge when it still overflows. The zone is no longer hidden at
             // accessibility sizes — the ⋯ menu never carried model/folder/
             // profile, so hiding it made them unreachable; instead the
-            // chips' own type size is capped (see `toolbeltZone`).
-            toolbeltZone(model)
+            // chips' own type size is capped (see `ConversationToolbelt`).
+            ConversationToolbelt(
+                model: model,
+                showingModelPicker: $showingModelPicker,
+                showingReasoningSlider: $showingReasoningSlider,
+                showingContextBreakdown: $showingContextBreakdown,
+                showingWorkingFolder: $showingWorkingFolder,
+                showingDossier: $showingDossier)
         }
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
@@ -1975,211 +1432,6 @@ enum ConversationHeaderChips {
             model.updateSlashSuggestions(for: newValue)
             persistDraft(newValue)
         }
-    }
-
-    /// r9 toolbelt — the chip zone UNDER the composer: model · folder ·
-    /// context · profile (actions left → identity right). Extracted from
-    /// the composer body (kept the parent expression type-checkable).
-    private func toolbeltZone(_ model: ConversationViewModel) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: FleetTheme.spacingSm) {
-                modelChipButton(model)
-                // Reasoning level beside the model it applies to. Hidden when
-                // the session has no reasoning seam (honest absence).
-                if let reasoningModel = model.reasoningViewModel {
-                    ReasoningHeaderChip(model: reasoningModel) {
-                        showingReasoningSlider = true
-                    }
-                }
-                folderChip(model)
-                if let toolingModel = model.toolingViewModel {
-                    ContextMeterView(model: toolingModel) {
-                        showingContextBreakdown = true
-                    }
-                }
-                profileChip(model)
-            }
-            .padding(.horizontal, FleetTheme.spacingMd)
-            .frame(minHeight: 36)
-        }
-        .frame(maxWidth: .infinity)
-        // DEV14: `.center` clipped BOTH edges whenever the chips overflowed
-        // (long model/profile names). Start at the leading edge instead.
-        .defaultScrollAnchor(.leading)
-        // Accessibility sizes: keep the strip reachable but bounded — the
-        // composer and transcript keep their space.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .accessibilityIdentifier("fleet.conversation.header.chipzone")
-        .scrollBounceBehavior(.basedOnSize)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .padding(.top, 2)
-    }
-
-    /// Compact, touch-friendly skill palette backed entirely by the active
-    /// Hermes session's discovery/completion responses.
-    private func slashPalette(_ model: ConversationViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: FleetTheme.spacingSm) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(theme.highlight)
-                Text("Commands")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                Spacer()
-                if model.isLoadingCommandSuggestions {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-            }
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.vertical, FleetTheme.spacingXs)
-
-            if let error = model.commandSuggestionError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(FleetTheme.statusDegraded)
-                    .padding(.horizontal, FleetTheme.spacingLg)
-                    .padding(.vertical, FleetTheme.spacingSm)
-                    .accessibilityIdentifier("fleet.conversation.command.error")
-            } else if model.commandSuggestions.isEmpty && !model.isLoadingCommandSuggestions {
-                Text("No commands available in this Hermes profile")
-                    .font(.caption)
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.horizontal, FleetTheme.spacingLg)
-                    .padding(.vertical, FleetTheme.spacingSm)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("No commands available in this Hermes profile")
-                    .accessibilityIdentifier("fleet.conversation.command.empty")
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        let commandRows = model.commandSuggestions.filter { $0.kind != .skill }
-                        let skillRows = model.commandSuggestions.filter { $0.kind == .skill }
-                        if !commandRows.isEmpty {
-                            paletteSectionLabel("Commands")
-                        }
-                        ForEach(commandRows) { suggestion in
-                            paletteRow(model, suggestion)
-                        }
-                        if !skillRows.isEmpty {
-                            paletteSectionLabel("Skills")
-                        }
-                        ForEach(skillRows) { suggestion in
-                            paletteRow(model, suggestion)
-                        }
-                    }
-                }
-                .frame(maxHeight: 176)
-            }
-        }
-        .background(theme.surfaceElevated)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(theme.border)
-                .frame(height: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("fleet.conversation.command.palette")
-    }
-
-    /// One palette row: canonical token + description. Inserting the token
-    /// never auto-executes; focus returns to the composer for arguments.
-    private func paletteRow(_ model: ConversationViewModel, _ suggestion: SlashCommandSuggestion) -> some View {
-        Button {
-            composerText = model.selectedCommandText(
-                suggestion,
-                replacing: composerText)
-            composerFocused = true
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(suggestion.text)
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textPrimary)
-                if !suggestion.description.isEmpty {
-                    Text(suggestion.description)
-                        .font(.caption2)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.vertical, FleetTheme.spacingSm)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("fleet.conversation.command.\(suggestion.text.dropFirst())")
-    }
-
-    private func paletteSectionLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.top, FleetTheme.spacingSm)
-    }
-
-    // MARK: R10-T1 — attachment tray + pickers
-
-    /// Pending-attachment chips: name + human-readable size, removable with
-    /// the X button; a spinner chip while an upload is in flight.
-    private func attachmentTray(_ model: ConversationViewModel) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: FleetTheme.spacingSm) {
-                if model.isUploadingAttachment {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Uploading…")
-                            .font(.caption)
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(theme.surfaceElevated))
-                    .accessibilityIdentifier("fleet.conversation.attachment.uploading")
-                }
-                ForEach(model.pendingAttachments) { chip in
-                    // R10-T5: the chip now carries the picture/document
-                    // preview affordance (thumbnail + tap-to-open) while
-                    // keeping the R10-T1 identifier the UI tests address.
-                    AttachmentChip(
-                        attachment: chip,
-                        onOpen: { previewingAttachment = chip },
-                        onRemove: { model.removePendingAttachment(chip.id) })
-                }
-            }
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.top, FleetTheme.spacingSm)
-        }
-    }
-
-    /// Composer attachment error banner — never silent (R10-T1 mandate).
-    private func attachmentErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDestructive)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(3)
-            Spacer(minLength: 0)
-            Button {
-                model.clearAttachmentError()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(theme.textSecondary)
-            }
-            .accessibilityLabel("Dismiss attachment error")
-        }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, 6)
-        // r6 G4: flat on canvas + hairline, no boxed card.
-        .overlay(alignment: .top) {
-            Rectangle().fill(FleetTheme.statusDestructive.opacity(0.35)).frame(height: 1)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.conversation.attachment.error")
     }
 
     /// Assistant-reply actions are user-initiated network operations; any
@@ -2208,142 +1460,6 @@ enum ConversationHeaderChips {
         .accessibilityIdentifier("fleet.conversation.reply-action.error")
     }
 
-    /// R10-T2: reaction error banner — never silent (same mandate).
-    private func reactionErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDestructive)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(3)
-            Spacer(minLength: 0)
-            Button {
-                model.clearReactionError()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(theme.textSecondary)
-            }
-            .accessibilityLabel("Dismiss reaction error")
-        }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, 6)
-        .background(theme.surfaceElevated)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.conversation.reaction.error")
-    }
-
-    // MARK: R10-T4 — voice banners + transcript review chip
-
-    /// Honest authorization-denied gate: mic/speech permission refused — the
-    /// ONLY action offered is opening Settings (never a fake retry).
-    private func voiceDeniedBanner(_ model: ConversationViewModel) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "mic.slash")
-                .foregroundStyle(FleetTheme.statusDestructive)
-            Text("Voice needs microphone + speech recognition access. Enable them in Settings to transcribe.")
-                .font(.caption)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(3)
-            Spacer(minLength: 0)
-            Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            } label: {
-                Text("Settings")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(theme.highlight)
-            }
-            .accessibilityIdentifier("fleet.conversation.voice.denied.settings")
-        }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, 6)
-        .background(theme.surfaceElevated)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.conversation.voice.denied")
-    }
-
-    /// Never-silent voice failure banner (capture/synthesis errors).
-    private func voiceErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDestructive)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(3)
-            Spacer(minLength: 0)
-            Button {
-                model.clearVoiceError()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(theme.textSecondary)
-            }
-            .accessibilityLabel("Dismiss voice error")
-        }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, 6)
-        .background(theme.surfaceElevated)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.conversation.voice.error")
-    }
-
-    /// Transcript review chip: the recognized text lands above the composer
-    /// for review. "Use" drops it into the composer field for editing;
-    /// "Send" submits it as-is; "Discard" clears it. A partial (manual-stop)
-    /// transcript is labeled honestly.
-    private func transcriptReviewChip(_ model: ConversationViewModel, transcript: VoiceTranscript) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "waveform")
-                .foregroundStyle(theme.highlight)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(transcript.text)
-                    .font(.caption)
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(3)
-                if !transcript.isFinal {
-                    Text("Partial — stopped early. Edit before sending.")
-                        .font(.caption2)
-                        .foregroundStyle(theme.textSecondary)
-                }
-            }
-            Spacer(minLength: 0)
-            Button {
-                composerText = transcript.text
-                model.discardTranscript()
-            } label: {
-                Text("Use")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(theme.highlight)
-            }
-            .accessibilityIdentifier("fleet.conversation.voice.transcript.use")
-            Button {
-                Task {
-                    model.discardTranscript()
-                    await model.send(transcript.text)
-                }
-            } label: {
-                Text("Send")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(theme.highlight)
-            }
-            .accessibilityIdentifier("fleet.conversation.voice.transcript.send")
-            Button {
-                model.discardTranscript()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(theme.textSecondary)
-            }
-            .accessibilityLabel("Discard transcript")
-            .accessibilityIdentifier("fleet.conversation.voice.transcript.discard")
-        }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, 6)
-        .background(theme.surfaceElevated)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("fleet.conversation.voice.transcript")
-    }
 
     /// Load picked photo bytes (the gateway image allowlist: PNG/JPEG/GIF/
     /// WebP/BMP) and stage them. HEIC/other camera formats convert to JPEG
@@ -2464,11 +1580,6 @@ enum ConversationHeaderChips {
         environment.conversationDrafts.scheduleSave(text, route: route, sessionID: draftID)
     }
 
-    /// Send/stop button side length (pt) — circular, per the hero mock.
-    @ScaledMetric(relativeTo: .title3) private var sendButtonSide: CGFloat = 44
-    @ScaledMetric(relativeTo: .title3) private var composerGlyphSide: CGFloat = 36
-    @ScaledMetric(relativeTo: .callout) private var sendGlyphSide: CGFloat = 30
-    @ScaledMetric(relativeTo: .callout) private var headerGlyphSide: CGFloat = 32
     /// DEV19 AX5: chrome glyph frames (header back/menu, composer plus/mic/
     /// send) scale with Dynamic Type up to this side, so at the largest
     /// sizes the composer field and header identity keep their room.
