@@ -87,9 +87,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             guard let credentialStore else {
                 throw AuthenticationError.notConfigured
             }
-            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
-                throw AuthenticationError.missingLoopbackToken
-            }
+            let credential = try await storedCredential(from: credentialStore)
             return .loopbackToken(StoredToken(rawValue: credential.rawValue))
         case .sessionToken, .bearerToken:
             guard let minter = try await makeTicketMinter() else {
@@ -113,9 +111,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             guard let baseURL else {
                 throw AuthenticationError.notConfigured
             }
-            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
-                throw AuthenticationError.missingLoopbackToken
-            }
+            let credential = try await storedCredential(from: credentialStore)
             guard let username = credential.username else {
                 throw AuthenticationError.missingUsername
             }
@@ -157,9 +153,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             guard let credentialStore, let baseURL else {
                 throw AuthenticationError.notConfigured
             }
-            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
-                throw AuthenticationError.missingLoopbackToken
-            }
+            let credential = try await storedCredential(from: credentialStore)
             let loginClient = DeviceLoginClient(
                 baseURL: baseURL,
                 deviceCredential: credential.rawValue,
@@ -200,15 +194,24 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         }
     }
 
+    /// #214: a missing or unreadable saved credential is a problem on this
+    /// phone — never reported as the gateway rejecting sign-in, and never as
+    /// the gateway being unreachable.
+    private func storedCredential(from store: any CredentialStoring) async throws -> GatewayCredential {
+        let credential: GatewayCredential?
+        do { credential = try await store.loadCredential(for: gatewayID) }
+        catch { throw AuthenticationError.localCredentialUnavailable }
+        guard let credential else { throw AuthenticationError.localCredentialUnavailable }
+        return credential
+    }
+
     /// The ticket minter for the session/bearer path: an injected minter wins
     /// (tests / explicit wiring), otherwise one is built from the stored
     /// credential so `X-Hermes-Session-Token` is actually sent on the mint.
     private func makeTicketMinter() async throws -> (any WSTicketMinting)? {
         if let ticketMinter { return ticketMinter }
         guard let credentialStore, let baseURL else { return nil }
-        guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
-            throw AuthenticationError.missingLoopbackToken
-        }
+        let credential = try await storedCredential(from: credentialStore)
         return WSTicketClient(baseURL: baseURL, sessionToken: credential.rawValue, urlSession: urlSession)
     }
 

@@ -52,6 +52,8 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
             // problem the user must fix (sign in with username & password);
             // the cause-specific guidance lives in the failure copy.
             self = .authenticationRequired
+        case .localCredentialUnavailable:
+            self = .authenticationRequired
         case .authSurfaceHTTP(let code) where code == 401 || code == 403:
             self = .authenticationRequired
         case .authSurfaceHTTP(429):

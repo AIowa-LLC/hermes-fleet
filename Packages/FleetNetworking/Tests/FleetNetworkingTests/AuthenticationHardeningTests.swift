@@ -150,12 +150,39 @@ final class AuthenticationHardeningTests: XCTestCase {
             credentialStore: StubCredentialStore())
         do {
             _ = try await auth.authenticate()
-            XCTFail("expected missingLoopbackToken")
+            XCTFail("expected localCredentialUnavailable")
         } catch let error as AuthenticationError {
-            XCTAssertEqual(error, .missingLoopbackToken)
+            XCTAssertEqual(error, .localCredentialUnavailable)
         } catch {
             XCTFail("unexpected error \(error)")
         }
+    }
+
+    /// #214: an unreadable Keychain item is a problem on this phone — never
+    /// classified as the gateway being unreachable.
+    func testAuthenticatorUnreadableCredentialIsLocalNotUnreachable() async {
+        struct ThrowingStore: CredentialStoring {
+            struct KeychainFailure: Error {}
+            func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {}
+            func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? { throw KeychainFailure() }
+            func deleteCredential(for gatewayID: GatewayID) async throws {}
+        }
+        for strategy in [GatewayAuthConfiguration.Strategy.loopbackToken, .deviceCredential, .usernamePassword] {
+            let auth = GatewayAuthenticator(
+                gatewayID: GatewayID(rawValue: "workstation"),
+                strategy: strategy,
+                credentialStore: ThrowingStore(),
+                baseURL: URL(string: "https://gateway.example.invalid")!)
+            do {
+                _ = try await auth.authenticate()
+                XCTFail("expected localCredentialUnavailable for \(strategy)")
+            } catch let error as AuthenticationError {
+                XCTAssertEqual(error, .localCredentialUnavailable, "\(strategy)")
+            } catch {
+                XCTFail("unexpected error \(error) for \(strategy)")
+            }
+        }
+        XCTAssertEqual(GatewayStatus(connectivityError: .localCredentialUnavailable), .authenticationRequired)
     }
 
     // MARK: L1 fix #1 — the loopback authenticator reads the SAME credential

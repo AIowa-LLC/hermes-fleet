@@ -72,6 +72,9 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
     case missingUsername
     /// The underlying store/keychain call failed (detail non-secret).
     case storeUnavailable(String)
+    /// #214: this phone's saved credential for the gateway is missing or
+    /// unreadable — a local problem, never the gateway rejecting sign-in.
+    case localCredentialUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -91,6 +94,8 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
             return "no username stored for this gateway"
         case .storeUnavailable(let detail):
             return "authentication store unavailable: \(detail)"
+        case .localCredentialUnavailable:
+            return "this phone's saved credential is unavailable"
         }
     }
 }

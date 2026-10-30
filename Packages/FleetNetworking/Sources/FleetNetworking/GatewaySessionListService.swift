@@ -94,6 +94,8 @@ public actor GatewaySessionListService: SessionListProviding {
             // "no_cookie" — a token mint against a cookie-only gateway).
             // Non-secret: the server-echoed reason word only.
             return .rpcFailed("auth strategy rejected (\(reason.rawValue))")
+        case .localCredentialUnavailable:
+            return .rpcFailed("this phone's saved credential is unavailable")
         case .authSurfaceHTTP(let code) where code == 401 || code == 403:
             return .rpcFailed("authentication required (HTTP \(code))")
         case .authSurfaceHTTP(let code):

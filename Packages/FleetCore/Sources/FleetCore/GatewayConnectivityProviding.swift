@@ -75,6 +75,11 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
     /// user must fix auth) with cause-specific guidance via the detail
     /// string, distinct from a bad credential.
     case authStrategyRejected(AuthRejectionReason)
+    /// #214: this phone's saved credential is missing or unreadable. A local
+    /// problem — the gateway was never asked. Classifies as
+    /// `authenticationRequired` (the user must restore a credential) with
+    /// its own label and copy.
+    case localCredentialUnavailable
     /// The endpoint answered but is not a usable gateway surface.
     case unsupported(String)
     /// Connect or `gateway.ready` handshake timed out.
@@ -90,6 +95,7 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
         case .authenticationRequired: return "authentication required"
         case .authSurfaceHTTP(let code): return "auth endpoint returned HTTP \(code)"
         case .authStrategyRejected(let reason): return "auth rejected: \(reason.rawValue)"
+        case .localCredentialUnavailable: return "this phone's saved credential is unavailable"
         case .unsupported(let detail): return "unsupported gateway: \(detail)"
         case .timeout: return "gateway connect timed out"
         case .connectionFailed(let detail): return "gateway connection failed: \(detail)"

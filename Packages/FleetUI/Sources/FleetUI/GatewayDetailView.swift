@@ -46,7 +46,9 @@ struct GatewayDetailView: View {
                     } header: {
                         Text("Needs You")
                     } footer: {
-                        Text("Authentication is required before this phone can connect.")
+                        Text(environment.localCredentialFailures.contains(gatewayID)
+                             ? GatewayConnectionCopy.localCredentialDetail
+                             : "Sign-in is required before this phone can connect.")
                     }
                 }
                 Section {
@@ -125,7 +127,9 @@ struct GatewayDetailView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gateway.displayName).font(.headline)
-                    Text(GatewayConnectionCopy.label(connectionState))
+                    Text(GatewayConnectionCopy.label(
+                        connectionState,
+                        localCredentialProblem: environment.localCredentialFailures.contains(gatewayID)))
                         .font(.subheadline)
                         .foregroundStyle(connectionState == .connected ? FleetTheme.statusOnline : theme.textSecondary)
                     Text(gateway.endpoint.map(Redaction.redactedURL) ?? "Endpoint not configured")
@@ -293,8 +297,13 @@ struct GatewayDetailView: View {
 
 /// §8 connection-state vocabulary shared by the cockpit and Connection rows.
 enum GatewayConnectionCopy {
-    static func label(_ state: GatewayConnectionState) -> String {
-        switch state {
+    /// #214: three causes, three labels — unreachable, the gateway asking for
+    /// sign-in, and a credential problem on this phone never share copy.
+    static func label(_ state: GatewayConnectionState, localCredentialProblem: Bool = false) -> String {
+        if localCredentialProblem, state == .failed(.authenticationRequired) {
+            return "Credential missing on this phone"
+        }
+        return switch state {
         case .idle: "Not checked"
         case .connecting: "Connecting"
         case .connected: "Connected"
@@ -305,6 +314,8 @@ enum GatewayConnectionCopy {
         case .failed: "Unavailable from this phone"
         }
     }
+
+    static let localCredentialDetail = "This phone's saved credential for this gateway is missing or unreadable. Sign in again, or remove the gateway and pair it with a new invitation."
 }
 
 /// §8 child: Groups hosted on (or replicated into view for) one gateway.

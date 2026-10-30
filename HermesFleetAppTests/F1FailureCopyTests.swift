@@ -1,6 +1,6 @@
 import XCTest
 import FleetCore
-import FleetUI
+@testable import FleetUI
 
 /// Cause-differentiated connection-failure copy. Every failure surface renders
 /// the same mapping from classified gateway status to a concise, actionable
@@ -84,9 +84,37 @@ final class F1FailureCopyTests: XCTestCase {
         }
     }
 
-    func testNilDetailFallsBackToCauseCopy() {
+    /// #214: with no detail, the copy states only what is known — nothing
+    /// answered — and never invents a timeout.
+    func testNilDetailSaysUnreachableWithoutInventingACause() {
         let copy = GatewayFailureCopy.detail(status: .offline, detail: nil)
-        XCTAssertTrue(copy.contains("timed out"), copy)
+        XCTAssertTrue(copy.contains("Couldn't reach"), copy)
+        XCTAssertFalse(copy.lowercased().contains("timed out"), copy)
+    }
+
+    /// #214: a credential problem on this phone never borrows the gateway
+    /// sign-in copy ("reachable but needs you to sign in").
+    func testLocalCredentialCopyIsDistinctFromGatewaySignIn() {
+        let local = GatewayFailureCopy.detail(
+            status: .authenticationRequired,
+            detail: GatewayConnectivityError.localCredentialUnavailable.errorDescription)
+        let signIn = GatewayFailureCopy.detail(status: .authenticationRequired, detail: "authentication required")
+        XCTAssertNotEqual(local, signIn)
+        XCTAssertTrue(local.contains("This phone"), local)
+        XCTAssertFalse(local.lowercased().contains("reachable"), local)
+    }
+
+    /// #214: unreachable, gateway-requires-sign-in, and local-credential are
+    /// three different labels.
+    func testConnectionLabelsDistinguishThreeCauses() {
+        let unreachable = GatewayConnectionCopy.label(.failed(.offline))
+        let signIn = GatewayConnectionCopy.label(.failed(.authenticationRequired))
+        let local = GatewayConnectionCopy.label(.failed(.authenticationRequired), localCredentialProblem: true)
+        XCTAssertEqual(Set([unreachable, signIn, local]).count, 3)
+        XCTAssertEqual(signIn, "Sign in required")
+        XCTAssertEqual(local, "Credential missing on this phone")
+        XCTAssertEqual(GatewayConnectionCopy.label(.failed(.offline), localCredentialProblem: true), unreachable,
+                       "a stale local-credential flag never relabels another cause")
     }
 
     // MARK: H2 surface doctor (t_eb6b573d)

@@ -25,6 +25,9 @@ public enum GatewayFailureCopy {
             // guidance. "no_cookie" from ws-ticket means the saved sign-in
             // method is a token, but this gateway only accepts username &
             // password — "re-authenticate" would loop the same failure.
+            if let detail, detail.contains("saved credential is unavailable") {
+                return GatewayConnectionCopy.localCredentialDetail
+            }
             if let detail, detail.contains("no_cookie") {
                 return "The gateway is reachable, but its saved sign-in method isn't accepted here. This gateway needs username & password sign-in — update it in the gateway's settings, not a token."
             }
@@ -55,7 +58,8 @@ public enum GatewayFailureCopy {
                     return "Couldn't reach \(name) — the connection timed out. Check that the gateway is running and the address is right."
                 }
             }
-            return "Couldn't reach \(name) — the connection timed out. Check that the gateway is running and the address is right."
+            // Unknown cause: say only what is known — nothing answered.
+            return "Couldn't reach \(name). Check that the gateway is running and that this phone can reach its network."
         }
     }
 }

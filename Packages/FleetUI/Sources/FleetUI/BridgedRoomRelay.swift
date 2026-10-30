@@ -721,6 +721,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             case .authenticationRequired: return "authentication_required"
             case .authSurfaceHTTP: return "auth_surface_error"
             case .authStrategyRejected: return "authentication_required"
+            case .localCredentialUnavailable: return "local_credential_unavailable"
             case .unsupported: return "gateway_unsupported_surface"
             case .timeout: return "gateway_timeout"
             case .connectionFailed: return "gateway_connection_failed"
