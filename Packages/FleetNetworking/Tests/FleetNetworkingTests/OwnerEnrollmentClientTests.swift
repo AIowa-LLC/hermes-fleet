@@ -372,7 +372,8 @@ final class OwnerEnrollmentClientTests: XCTestCase {
             id: gatewayID, displayName: "Synthetic gateway", endpoint: address,
             authConfiguration: GatewayAuthConfiguration(strategy: .deviceCredential, credentialStored: true))
 
-        try await client.removeEnrollmentMaterial(for: gateway)
+        let revoke = try await client.removeEnrollmentMaterialSchedulingRevoke(for: gateway)
+        await revoke?.value
 
         XCTAssertEqual(EnrollmentURLProtocol.requests.last?.url?.path, "/auth/device-revoke")
         let body = try XCTUnwrap(EnrollmentURLProtocol.requests.last.flatMap(EnrollmentURLProtocol.bodyData))
@@ -399,12 +400,36 @@ final class OwnerEnrollmentClientTests: XCTestCase {
             id: GatewayID(rawValue: "paired-http"), displayName: "Invalid paired gateway",
             endpoint: URL(string: "http://127.0.0.1:8765")!,
             authConfiguration: GatewayAuthConfiguration(strategy: .deviceCredential, credentialStored: true))
-        do {
-            try await client().removeEnrollmentMaterial(for: paired)
-            XCTFail("paired-device credentials require HTTPS for revocation")
-        } catch let error as OwnerEnrollmentError {
-            XCTAssertEqual(error, .insecureTransport)
-        }
+        // Removal stays local and succeeds; the credential is never sent
+        // over plain HTTP, so no revoke is attempted.
+        let revoke = try await client().removeEnrollmentMaterialSchedulingRevoke(for: paired)
+        XCTAssertNil(revoke)
+        XCTAssertTrue(EnrollmentURLProtocol.requests.isEmpty, "no device credential over HTTP")
+    }
+
+    /// #210: an unreachable gateway must not block local removal cleanup.
+    func testDeviceCredentialRemovalSucceedsWhenGatewayUnreachable() async throws {
+        let gatewayID = GatewayID(rawValue: "gw-instance-001")
+        let endpointID = GatewayID(endpoint: address)
+        let credential = "hfd1.0123456789abcdef0123456789abcdef.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        await credentials.seed(GatewayCredential(rawValue: credential), for: gatewayID)
+        try await identities.saveIdentity(PendingOwnerDeviceIdentity(
+            deviceID: "0123456789abcdef0123456789abcdef",
+            secret: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), for: endpointID)
+        let pins = InMemoryPinStore()
+        try await pins.savePin(SPKIFingerprint(rawBytes: [UInt8](repeating: 2, count: 32)), for: gatewayID)
+        EnrollmentURLProtocol.handler = nil  // every request fails: cannot connect to host
+        let client = OwnerEnrollmentClient(
+            credentialStore: credentials, identityStore: identities,
+            pinStore: pins, approvalStore: pins, urlSession: session)
+        let gateway = FleetGateway(
+            id: gatewayID, displayName: "Synthetic gateway", endpoint: address,
+            authConfiguration: GatewayAuthConfiguration(strategy: .deviceCredential, credentialStored: true))
+
+        let revoke = try await client.removeEnrollmentMaterialSchedulingRevoke(for: gateway)
+        let remainingIdentity = try await identities.loadIdentity(for: endpointID)
+        XCTAssertNil(remainingIdentity, "local material is cleared before any network call")
+        await revoke?.value  // best-effort revoke fails quietly
     }
 
     func testTLSReviewPersistsOnlyPresentedFingerprintAndRejectsReplacement() async throws {

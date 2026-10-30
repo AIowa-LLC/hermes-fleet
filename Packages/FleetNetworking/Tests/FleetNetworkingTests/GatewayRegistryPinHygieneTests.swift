@@ -50,19 +50,16 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
         XCTAssertNil(after, "removing a gateway must retire its TLS pin")
     }
 
-    func testRemoveGatewaySurfacesPinDeleteFailure() async throws {
+    /// #210: removal is local; a pin-store failure is logged, not surfaced.
+    func testPinDeleteFailureDoesNotBlockRemoval() async throws {
         let pins = FailingDeletePinStore()
         let registry = makeRegistry(pins: pins)
         let gateway = try await registry.addGateway(registration())
 
-        do {
-            try await registry.removeGateway(gateway.id)
-            XCTFail("expected pin-delete failure to surface")
-        } catch let error as GatewayRegistryError {
-            guard case .pinStoreFailed = error else {
-                return XCTFail("expected pinStoreFailed, got \(error)")
-            }
-        }
+        try await registry.removeGateway(gateway.id)
+
+        let remaining = await registry.gateway(for: gateway.id)
+        XCTAssertNil(remaining)
     }
 
     func testEditEndpointDoesNotClearPin() async throws {
@@ -101,22 +98,20 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
         XCTAssertNil(remaining)
     }
 
-    func testEnrollmentCleanupFailureKeepsGatewayRegistered() async throws {
+    /// #210: an enrollment-cleanup failure (formerly surfaced as "credential
+    /// store failed: Secure enrollment could not be prepared") never blocks
+    /// removal of the local entry.
+    func testEnrollmentCleanupFailureDoesNotBlockRemoval() async throws {
         let cleanup = RecordingEnrollmentCleanup(fail: true)
         let registry = makeRegistry(enrollmentCleanup: cleanup)
         let gateway = try await registry.addGateway(registration())
 
-        do {
-            try await registry.removeGateway(gateway.id)
-            XCTFail("cleanup failure must block removal")
-        } catch let error as GatewayRegistryError {
-            guard case .credentialStoreFailed = error else { return XCTFail("unexpected error: \(error)") }
-        }
+        try await registry.removeGateway(gateway.id)
 
         let removedIDs = await cleanup.removedIDs
         let remaining = await registry.gateway(for: gateway.id)
         XCTAssertEqual(removedIDs, [gateway.id])
-        XCTAssertNotNil(remaining)
+        XCTAssertNil(remaining)
     }
 }
 

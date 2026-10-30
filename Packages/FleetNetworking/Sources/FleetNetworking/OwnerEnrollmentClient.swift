@@ -363,40 +363,61 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
         }
     }
 
+    /// Local-only removal cleanup (#210). Removing a gateway must never depend
+    /// on the gateway being reachable, so the device self-revoke is a
+    /// best-effort follow-up that runs after local material is gone and can
+    /// never fail or delay the removal.
     public func removeEnrollmentMaterial(for gateway: FleetGateway) async throws {
-        guard let rawEndpoint = gateway.endpoint else {
-            if gateway.authConfiguration.strategy == .deviceCredential {
-                throw OwnerEnrollmentError.invalidAddress
-            }
-            return
-        }
-        let endpoint: URL
-        if gateway.authConfiguration.strategy == .deviceCredential {
-            endpoint = try validatedBase(rawEndpoint)
-        } else {
-            // The registry also handles advanced/manual HTTP loopback entries.
-            // Their local removal cleanup must not force a new HTTPS policy.
-            do { endpoint = try GatewayEndpoint.normalizedOrigin(from: rawEndpoint) }
-            catch { throw OwnerEnrollmentError.invalidAddress }
+        _ = try await removeEnrollmentMaterialSchedulingRevoke(for: gateway)
+    }
+
+    /// Clears local enrollment material and returns the detached best-effort
+    /// self-revoke, if one was scheduled (exposed for tests).
+    @discardableResult
+    func removeEnrollmentMaterialSchedulingRevoke(for gateway: FleetGateway) async throws -> Task<Void, Never>? {
+        guard let rawEndpoint = gateway.endpoint,
+              let endpoint = try? GatewayEndpoint.normalizedOrigin(from: rawEndpoint) else {
+            // Nothing endpoint-scoped can exist for an entry without a usable
+            // origin; the registry still removes the entry itself.
+            return nil
         }
         let endpointID = GatewayID(endpoint: endpoint)
         let endpointLock = await EnrollmentEndpointLocks.shared.lock(for: endpointID)
         await endpointLock.acquire()
         defer { Task { await endpointLock.release() } }
-        do {
-            if gateway.authConfiguration.strategy == .deviceCredential {
-                if let credential = try await credentials.loadCredential(for: gateway.id),
-                   credential.rawValue.hasPrefix("hfd1.") {
-                    try await revokeDeviceCredential(credential.rawValue, at: endpoint, gatewayID: gateway.id)
-                }
-            }
-            try await cleanupLocalEnrollmentMaterial(endpointID: endpointID, gatewayID: gateway.id)
-        } catch {
-            throw OwnerEnrollmentError.identityStorageFailed
+
+        // Snapshot what the self-revoke needs before the registry deletes the
+        // credential and canonical pin. Without a pin the revoke is skipped:
+        // a device credential is never sent to an unpinned peer.
+        var revoke: (credential: String, pin: SPKIFingerprint, base: URL)?
+        if gateway.authConfiguration.strategy == .deviceCredential,
+           let base = try? validatedBase(rawEndpoint),
+           let credential = try? await credentials.loadCredential(for: gateway.id),
+           credential.rawValue.hasPrefix("hfd1."),
+           let pin = try? pinStore?.syncLoadPin(for: gateway.id) {
+            revoke = (credential.rawValue, pin, base)
+        }
+
+        try await cleanupLocalEnrollmentMaterial(endpointID: endpointID, gatewayID: gateway.id)
+
+        guard let revoke else { return nil }
+        let handler = fixedTrustHandler ?? trustHandlerFactory?(gateway.id) ?? PinningTrustHandler(
+            gatewayID: gateway.id,
+            pinStore: SnapshotPinStore(gatewayID: gateway.id, pin: revoke.pin),
+            approvalStore: DenyUnconfiguredFirstUseApprovalStore())
+        let gatewayID = gateway.id
+        return Task.detached { [self] in
+            try? await revokeDeviceCredential(
+                revoke.credential, at: revoke.base, gatewayID: gatewayID, trustHandler: handler)
         }
     }
 
-    private func revokeDeviceCredential(_ credential: String, at base: URL, gatewayID: GatewayID) async throws {
+    private func revokeDeviceCredential(
+        _ credential: String,
+        at base: URL,
+        gatewayID: GatewayID,
+        trustHandler: PinningTrustHandler
+    ) async throws {
         let fields = credential.split(separator: ".", omittingEmptySubsequences: false)
         guard fields.count == 3, fields[0] == "hfd1", fields[1].count == 32, fields[2].count == 43 else {
             throw OwnerEnrollmentError.malformedResponse
@@ -406,7 +427,7 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["device_credential": credential])
-        let (data, response) = try await perform(request, pinningGatewayID: gatewayID)
+        let (data, response) = try await perform(request, pinningGatewayID: gatewayID, trustHandler: trustHandler)
         guard let http = response as? HTTPURLResponse else { throw OwnerEnrollmentError.unreachable }
         try validateStatus(http, data: data)
     }
@@ -495,12 +516,13 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
 
     private func perform(
         _ request: URLRequest,
-        pinningGatewayID override: GatewayID? = nil
+        pinningGatewayID override: GatewayID? = nil,
+        trustHandler explicitHandler: PinningTrustHandler? = nil
     ) async throws -> (Data, URLResponse) {
         var boundedRequest = request
         AuthREST.bounded(&boundedRequest)
         let pinningID = override ?? request.url.map(GatewayID.init(endpoint:))
-        let handler = fixedTrustHandler ?? pinningID.flatMap { gatewayID in
+        let handler = explicitHandler ?? fixedTrustHandler ?? pinningID.flatMap { gatewayID in
             if let trustHandlerFactory { return trustHandlerFactory(gatewayID) }
             guard let pinStore else { return nil }
             return PinningTrustHandler(
@@ -617,6 +639,19 @@ private struct DenyUnconfiguredFirstUseApprovalStore: SynchronousTLSFirstUseAppr
     func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
         false
     }
+}
+
+/// Read-only single-pin store for the post-removal self-revoke: the canonical
+/// pin is deleted with the gateway, so the revoke carries the key it saw.
+private struct SnapshotPinStore: SynchronousPinStoring {
+    let gatewayID: GatewayID
+    let pin: SPKIFingerprint
+    func syncSavePin(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws {}
+    func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
+        gatewayID == self.gatewayID ? pin : nil
+    }
+    func syncDeletePin(for gatewayID: GatewayID) throws {}
+    func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool { false }
 }
 
 private extension URL {
