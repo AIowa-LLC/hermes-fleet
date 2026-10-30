@@ -40,10 +40,47 @@ final class F1FailureClassificationTests: XCTestCase {
             .unsupported)
     }
 
-    func testAuthSurface500ClassifiesUnsupported() {
-        XCTAssertEqual(
-            GatewayStatus(connectivityError: .authSurfaceHTTP(500)),
-            .unsupported)
+    /// #214: a connector/proxy answering 5xx means the gateway behind it is
+    /// down — transient and retryable, never "unsupported".
+    func testAuthSurface5xxClassifiesOffline() {
+        for code in [500, 502, 503, 504] {
+            XCTAssertEqual(GatewayStatus(connectivityError: .authSurfaceHTTP(code)), .offline)
+        }
+    }
+
+    /// #214: an authenticator that cannot reach the gateway (device login /
+    /// ticket mint network failure) must classify as unreachable end-to-end,
+    /// never as a sign-in problem.
+    func testAuthNetworkFailureClassifiesUnreachableNotSignIn() async throws {
+        struct UnreachableAuthenticator: AuthenticationProviding {
+            let code: URLError.Code
+            func authenticate() async throws -> ConnectionAuthentication {
+                throw URLError(code)
+            }
+        }
+        for code in [URLError.Code.cannotConnectToHost, .timedOut, .cannotFindHost, .networkConnectionLost] {
+            let transport = GatewayWebSocketTransport(
+                baseURL: URL(string: "http://127.0.0.1:1")!,
+                authentication: UnreachableAuthenticator(code: code),
+                configuration: TransportConfiguration(
+                    pingInterval: .seconds(30),
+                    inboundDeadline: .seconds(30),
+                    connectTimeout: .seconds(2),
+                    requestTimeout: .seconds(2))
+            )
+            let connection = SingleGatewayConnection(
+                gatewayID: GatewayID(rawValue: "arch"),
+                displayName: "Arch",
+                endpoint: URL(string: "http://127.0.0.1:1")!,
+                transport: transport
+            )
+            do {
+                try await connection.connect()
+                XCTFail("expected a connectivity failure for \(code)")
+            } catch let error as GatewayConnectivityError {
+                XCTAssertEqual(GatewayStatus(connectivityError: error), .offline, "\(code) → \(error)")
+            }
+        }
     }
 
     // MARK: SingleGatewayConnection error mapping

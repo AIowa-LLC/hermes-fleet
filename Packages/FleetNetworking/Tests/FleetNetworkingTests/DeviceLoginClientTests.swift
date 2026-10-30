@@ -174,8 +174,17 @@ final class DeviceLoginClientTests: XCTestCase {
         do {
             _ = try await DeviceLoginClient(baseURL: baseURL, deviceCredential: credential, urlSession: session).login()
             XCTFail("a successful status without the session cookie is malformed")
-        } catch let error as AuthenticationError {
-            XCTAssertEqual(error, .ticketMintFailed("device login response malformed"))
+        } catch let error as WSTicketClient.TicketMintError {
+            XCTAssertEqual(error, .malformedResponse, "an off-contract answer is not a sign-in problem")
+        }
+
+        // #214: an unreachable gateway surfaces as the network failure itself.
+        DeviceAuthURLProtocol.reset()  // no handler: every request fails to connect
+        do {
+            _ = try await DeviceLoginClient(baseURL: baseURL, deviceCredential: credential, urlSession: session).login()
+            XCTFail("an unreachable gateway must fail")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .cannotConnectToHost)
         }
 
         DeviceAuthURLProtocol.reset { _ in
@@ -184,8 +193,9 @@ final class DeviceLoginClientTests: XCTestCase {
         do {
             _ = try await DeviceLoginClient(baseURL: baseURL, deviceCredential: credential, urlSession: session).login()
             XCTFail("credential-bearing device login redirects must be blocked")
-        } catch let error as AuthenticationError {
-            XCTAssertEqual(error, .ticketMintFailed("device login unavailable"))
+        } catch {
+            // The blocked redirect fails the request; the invariant is that
+            // the redirect target never receives the credential (below).
         }
         XCTAssertEqual(DeviceAuthURLProtocol.requests.count, 1, "redirect target must not receive the credential")
         XCTAssertEqual(DeviceAuthURLProtocol.requests.first?.url?.host, "fleet-gateway.example.invalid")

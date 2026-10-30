@@ -59,6 +59,10 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
             // intent and allow a later retry instead of calling it an
             // unsupported gateway surface.
             self = .offline
+        case .authSurfaceHTTP(let code) where (500...599).contains(code):
+            // #214: a front (connector/proxy) answered but the gateway behind
+            // it is down — transient and retryable, never "unsupported".
+            self = .offline
         case .authSurfaceHTTP:
             // The endpoint ANSWERED — it is reachable — but it is not the
             // gateway API surface (wrong port; the F1 8642-vs-9119 case).
