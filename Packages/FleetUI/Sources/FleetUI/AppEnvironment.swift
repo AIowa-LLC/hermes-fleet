@@ -2056,6 +2056,15 @@ public final class AppEnvironment {
         // `performConnect` directly so it can never reset its own budget.
         if connectionStates[id] != .connecting, connectionStates[id] != .connected {
             resetReconnectBackoff(for: id)
+            // #214: a connect after a failure (Retry, restore) is a genuinely
+            // fresh attempt — never the failed transport or its session lease.
+            // The stale entry is removed before any suspension so a concurrent
+            // connect cannot have its new transport dropped here.
+            if case .failed = connectionStates[id],
+               let stale = activeConnections.removeValue(forKey: id) {
+                await stale.disconnect()
+                await gatewaySessionInvalidator?(id)
+            }
         }
         await performConnect(to: id)
     }
@@ -2241,9 +2250,10 @@ public final class AppEnvironment {
         }
     }
 
-    /// Bounded retry with exponential backoff, gated on connection intent and
-    /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
-    /// gateway stays failed until a foreground restore or a manual retry.
+    /// Retry with exponential backoff, gated on connection intent and the spec
+    /// §8.6 policy (transient reasons only). After `maxAttempts` a transient
+    /// failure is still probed every `steadyProbeInterval` while foregrounded
+    /// (#214): a gateway that comes back reconnects without a manual retry.
     private func scheduleAutoReconnect(for id: GatewayID) {
         guard foregroundRecoveryAllowed, !connectionsSuspended else { return }
         guard !gatewayRemovalInProgress.contains(id) else { return }
@@ -2253,7 +2263,7 @@ public final class AppEnvironment {
         // retry now would only burn budget (its connect would be dropped).
         guard connectionStates[id] != .connecting else { return }
         var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
-        guard let delay = backoff.nextDelay() else { return } // budget spent
+        let delay = backoff.nextDelay() ?? recoveryTiming.steadyProbeInterval
         reconnectBackoffs[id] = backoff
         reconnectRetryTasks[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
