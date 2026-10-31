@@ -10,6 +10,8 @@ The default way to connect a server is described in [universal-login.md](univers
 2. Open the link on the iPhone, scan its QR code, or tap **Paste link**.
 3. Review the server and tap **Connect this phone**, then approve the code Fleet shows with `/fleet approve <code>` (or `y` in the waiting terminal).
 
+Every scan entry point accepts the invitation link from `hermes fleet pair` (or `/fleet pair`): the first-server scanner, the additional-server scanner and the Advanced form's **Scan Pairing Code** button. A scanned link opens the same review sheet as a pasted one. The Advanced scanner also still accepts the legacy v1 JSON code.
+
 Cancelling, retrying or rescanning never removes servers that are already saved. Failures are explained in plain words with **Try again** (see "Reachability diagnosis" in the contract). App behaviour and simulator testing: [universal-login-app.md](universal-login-app.md).
 
 ### Legacy: v1 QR invitation (first connector release)
@@ -65,7 +67,7 @@ On the iPhone:
 
 1. Open **Add Gateway**, then **Other ways to connect** > **Enter gateway details manually**.
 2. Choose **Scan Pairing Code**.
-3. Scan the newly generated QR code.
+3. Scan the newly generated QR code. An invitation link from `hermes fleet pair` opens the same review as **Paste link**; the legacy JSON code still fills the form.
 4. Review the populated endpoint and credential fields.
 5. Save the gateway.
 6. Revoke or rotate the temporary pairing credential when your gateway policy requires it.

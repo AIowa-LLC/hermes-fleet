@@ -7,6 +7,31 @@ import VisionKit
 import AVFoundation
 #endif
 
+/// Where a string scanned by the Advanced (draft-store) scanner is sent.
+public enum AdvancedScanRoute: Equatable, Sendable {
+    /// An invitation link from `hermes fleet pair`: handed to the pairing flow.
+    case invitation
+    /// Anything else keeps the legacy v1 JSON decode into the draft.
+    case legacyPairingJSON
+}
+
+/// Pure classification for the Advanced scanner. Uses the same link acceptance
+/// as the invitation intake: a string is an invitation when it looks like a
+/// pairing link or parses as one. JSON never takes the invitation route.
+public enum AdvancedScanRouting {
+    public static func route(_ raw: String) -> AdvancedScanRoute {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasPrefix("{") else { return .legacyPairingJSON }
+        if let url = URL(string: trimmed), PairingInvitationLink.looksLikePairingLink(url) {
+            return .invitation
+        }
+        if (try? PairingInvitationLink.parse(trimmed)) != nil {
+            return .invitation
+        }
+        return .legacyPairingJSON
+    }
+}
+
 /// QR scanner shared by first-server invitation pairing and Advanced Gateway setup.
 ///
 /// Presents the system camera QR barcode scanner (VisionKit
@@ -20,7 +45,8 @@ import AVFoundation
 ///
 /// The sheet is presentation-only: it never stores or logs scan text. In the
 /// first-server route the invitation passes directly to the coordinator; the
-/// Advanced route keeps its existing JSON draft decoder.
+/// Advanced route hands invitation links to the same pairing flow (#213) and
+/// keeps its legacy JSON draft decoder for everything else.
 ///
 /// SECURITY (F2 card): the QR encodes a short-lived scoped credential. The
 /// camera preview is live-only — nothing is retained beyond the decoded
@@ -31,6 +57,9 @@ struct GatewayPairingScannerView: View {
     @ScaledMetric(relativeTo: .largeTitle) private var heroGlyphSize: CGFloat = 44
     private let draftStore: GatewayFormDraftStore?
     private let onInvitation: ((String) -> Void)?
+    /// Advanced-mode invitation intake (draft store present). Invitation links
+    /// are handed here instead of being decoded as JSON.
+    private let onAdvancedInvitation: ((String) -> Void)?
     @State private var didReceiveInvitation = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -52,9 +81,10 @@ struct GatewayPairingScannerView: View {
 
     enum CameraPermission { case undetermined, granted, denied }
 
-    init(draftStore: GatewayFormDraftStore) {
+    init(draftStore: GatewayFormDraftStore, onInvitation: ((String) -> Void)? = nil) {
         self.draftStore = draftStore
         self.onInvitation = nil
+        self.onAdvancedInvitation = onInvitation
     }
 
     /// First-server invitation intake. Raw text is handed off immediately and
@@ -62,6 +92,7 @@ struct GatewayPairingScannerView: View {
     init(onInvitation: @escaping (String) -> Void) {
         self.draftStore = nil
         self.onInvitation = onInvitation
+        self.onAdvancedInvitation = nil
     }
 
     var body: some View {
@@ -310,6 +341,15 @@ struct GatewayPairingScannerView: View {
         }
         guard let draftStore else {
             scanError = "Pairing could not start. Cancel and try again."
+            return
+        }
+        if let onAdvancedInvitation, AdvancedScanRouting.route(raw) == .invitation {
+            // Same single-delivery and foreground guards as the first-server
+            // intake. The raw link is handed off and never displayed or logged.
+            guard scenePhase == .active, !didReceiveInvitation else { return }
+            didReceiveInvitation = true
+            onAdvancedInvitation(raw)
+            dismiss()
             return
         }
         do {

@@ -248,6 +248,7 @@ struct PairingOtherWaysPage: View {
                 saveButton: "Add",
                 initial: nil,
                 draftStore: environment.gatewayFormDraft,
+                onInvitation: { _ = environment.pairing.receive(text: $0, entry: .link) },
                 reviewKey: { try await environment.reviewTLSKey(for: $0) }
             ) { registration, credential, tlsReview in
                 _ = try await environment.addGateway(

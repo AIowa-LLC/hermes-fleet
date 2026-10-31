@@ -92,6 +92,39 @@ final class F2PairingApplyTests: XCTestCase {
         }
     }
 
+    // MARK: Advanced scanner routing (#213)
+
+    /// Synthetic invitation link in the shape `hermes fleet pair` issues.
+    private let invitationLink = "https://gateway.example.invalid/pair#v=1&i=AbCdEfGhIjKlMnOpQrStUv&s=0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+
+    func testAdvancedScanRoutesInvitationLinkToPairingNotJSON() throws {
+        XCTAssertNoThrow(try PairingInvitationLink.parse(invitationLink))
+        XCTAssertEqual(AdvancedScanRouting.route(invitationLink), .invitation)
+        XCTAssertEqual(AdvancedScanRouting.route("\n  \(invitationLink)  \n"), .invitation,
+                       "surrounding whitespace from a scan is tolerated")
+    }
+
+    func testAdvancedScanRoutesV1JSONToLegacyDecodeAndStillFillsDraft() throws {
+        let json = PairingPayload(
+            url: "https://gateway.example.invalid:8642",
+            username: "fixture-user",
+            password: "NOT-A-CREDENTIAL"
+        ).encoded()
+        XCTAssertEqual(AdvancedScanRouting.route(json), .legacyPairingJSON)
+
+        let store = makeStoreWithAddDraft()
+        try store.applyPairing(json)
+        XCTAssertEqual(store.endpointText, "https://gateway.example.invalid:8642")
+        XCTAssertEqual(store.usernameText, "fixture-user")
+        XCTAssertEqual(store.passwordText, "NOT-A-CREDENTIAL")
+    }
+
+    func testAdvancedScanRejectsUnrelatedTextAsLegacyJSON() {
+        XCTAssertEqual(AdvancedScanRouting.route("not a code"), .legacyPairingJSON)
+        XCTAssertEqual(AdvancedScanRouting.route("{\"hello\":\"https://gateway.example.invalid/pair\"}"),
+                       .legacyPairingJSON, "JSON never takes the invitation route")
+    }
+
     // MARK: Draft lifecycle still holds
 
     func testClearAfterPairingWipesSecrets() throws {

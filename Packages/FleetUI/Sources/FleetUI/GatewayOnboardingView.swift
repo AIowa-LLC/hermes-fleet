@@ -25,6 +25,9 @@ public struct GatewayOnboardingView: View {
     @State private var errorMessage: String?
     @State private var tlsFingerprint: SPKIFingerprint?
     @State private var isWorking = false
+    /// #213: an invitation scanned in Advanced setup, held until this sheet
+    /// is gone so the pairing review can present.
+    @State private var pendingInvitation: String?
     @State private var isShowingAdvancedForm = false
     @State private var didSaveAdvancedGateway = false
     @State private var flowGeneration = 0
@@ -124,6 +127,10 @@ public struct GatewayOnboardingView: View {
                 && !canDismiss
                 && metadata.map { expected in environment.gateways.contains(where: { $0.id == expected.gatewayID }) } == true
             if !completedFirstRunAdoption { invalidateFlow() }
+            if let link = pendingInvitation {
+                pendingInvitation = nil
+                _ = environment.pairing.receive(text: link, entry: .link)
+            }
         }
         .sheet(isPresented: $isShowingAdvancedForm, onDismiss: advancedFormDidDismiss) {
             GatewayFormSheet(
@@ -131,6 +138,7 @@ public struct GatewayOnboardingView: View {
                 saveButton: "Add",
                 initial: nil,
                 draftStore: environment.gatewayFormDraft,
+                onInvitation: handOffInvitation,
                 reviewKey: { try await environment.reviewTLSKey(for: $0) }
             ) { registration, credential, tlsReview in
                 _ = try await environment.addGateway(
@@ -140,6 +148,17 @@ public struct GatewayOnboardingView: View {
                 didSaveAdvancedGateway = true
             }
         }
+    }
+
+    /// The Advanced form is already gone. This sheet would still cover the
+    /// pairing review, so close it first when it can be closed.
+    private func handOffInvitation(_ link: String) {
+        guard canDismiss else {
+            _ = environment.pairing.receive(text: link, entry: .link)
+            return
+        }
+        pendingInvitation = link
+        dismiss()
     }
 
     private func advancedFormDidDismiss() {
