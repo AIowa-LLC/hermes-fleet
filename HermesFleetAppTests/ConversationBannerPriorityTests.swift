@@ -187,7 +187,15 @@ final class ConversationBannerPriorityTests: XCTestCase {
                       "Reconnect must keep its identifier")
         XCTAssertTrue(source.contains("\"fleet.conversation.reauthenticate\""),
                       "Re-authenticate must keep its identifier")
-        XCTAssertTrue(source.contains("\"model.chip\""),
+        // #215: the toolbelt (model chip) is its own view in ConversationChrome.
+        let chromeSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Packages/FleetUI/Sources/FleetUI/ConversationChrome.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(chromeSource.contains("\"model.chip\""),
                       "the model chip must keep its identifier")
         // Compaction round 2: timeline.open lives in the ⋯ session-actions
         // menu (SessionSteerControls) — guarded there, not in ConversationView.
