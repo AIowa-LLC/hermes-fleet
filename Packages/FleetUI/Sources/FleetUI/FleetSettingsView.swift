@@ -218,11 +218,12 @@ public struct FleetSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("fleet.settings.about")
+                FleetSupportLinkRow(identifier: "fleet.settings.project-support")
             } header: {
                 Text("About")
                     .foregroundStyle(theme.textSecondary)
             } footer: {
-                Text("Version, terms, privacy, and support.")
+                Text("Version, terms, privacy, and project links.")
                     .foregroundStyle(theme.textSecondary)
             }
         }

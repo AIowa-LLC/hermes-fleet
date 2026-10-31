@@ -57,6 +57,13 @@ public struct FleetAboutView: View {
             }
 
             Section {
+                FleetSupportLinkRow(identifier: "fleet.about.project-support")
+            } header: {
+                Text("Support")
+                    .foregroundStyle(theme.textSecondary)
+            }
+
+            Section {
                 Link(destination: FleetLegal.termsURL) {
                     Label("Terms of Use", systemImage: "doc.text")
                         .foregroundStyle(theme.textPrimary)

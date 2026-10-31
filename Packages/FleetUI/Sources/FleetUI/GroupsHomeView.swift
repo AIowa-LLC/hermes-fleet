@@ -160,7 +160,7 @@ struct GroupsHomeView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.fleetPressable)
-        .background(.ultraThinMaterial)
+        .fleetGlass(in: Circle(), interactive: true)
         .accessibilityLabel("New Group")
         .accessibilityIdentifier("fleet.groups.new")
     }

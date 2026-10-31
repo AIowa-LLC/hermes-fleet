@@ -165,9 +165,11 @@ public struct FleetRosterView: View {
                         .font(.footnote)
                         .foregroundStyle(theme.textSecondary)
                 }
+                .padding(.horizontal, FleetTheme.spacingMd)
+                .padding(.vertical, FleetTheme.spacingXs + 2)
+                .fleetGlass(in: Capsule())
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .background(.ultraThinMaterial)
+                .padding(.vertical, FleetTheme.spacingXs)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("fleet.roster.launch-updating")
             }
@@ -232,9 +234,10 @@ public struct FleetRosterView: View {
             if hiddenBotsNoticeID != nil {
                 Text("No hidden bots")
                     .font(.callout)
+                    .foregroundStyle(theme.textPrimary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
+                    .fleetGlass(in: Capsule())
                     .padding(.top, 8)
                     .accessibilityIdentifier("fleet.roster.hidden-empty")
                     .allowsHitTesting(false)

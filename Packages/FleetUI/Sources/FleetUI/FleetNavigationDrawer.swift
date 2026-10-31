@@ -143,7 +143,10 @@ struct FleetNavigationDrawer: View {
         // Drawer polish: the scrollbar indicator is chrome noise on a
         // compact drawer — hidden; scrolling/momentum/dismiss untouched.
         .scrollIndicators(.hidden)
-        .background(theme.background)
+        // Refinement Phase 1: rows dissolve under the pinned footer with the
+        // native iOS 26 soft scroll edge instead of a hard cut. The panel
+        // surface itself is supplied by the host (`FleetDrawerPanel`).
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         .accessibilityIdentifier("fleet.drawer")
         .onAppear {
             hiddenIDs = FleetChatsArchiveStore.hiddenIDs()
@@ -295,7 +298,7 @@ struct FleetNavigationDrawer: View {
     }
 
     /// Codex-parity pinned footer (ADR-0008): the compose pill leads, the
-    /// glass Settings control sits at the drawer's trailing edge.
+    /// neutral Settings circle sits at the drawer's trailing edge.
     /// Identifiers are unchanged (contract stability) — only position moved.
     /// The pill follows the active theme highlight (ADR-0009): fill
     /// theme.highlight, ink theme.onHighlight — the guaranteed-legible ink
@@ -324,8 +327,10 @@ struct FleetNavigationDrawer: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                    // ADR-0008: the drawer's circular controls share the
+                    // explicit neutral fill (material on the opaque panel
+                    // read as nothing on the light canvas).
+                    .background(FleetTheme.neutralFill, in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -528,5 +533,28 @@ private struct ConversationSwipeActions: ViewModifier {
                 .tint(theme.archiveSwipeTint)
                 .accessibilityIdentifier("fleet.drawer.swipe.archive.\(identity.id)")
             }
+    }
+}
+
+/// Refinement Phase 1: the compact drawer's panel surface. The panel stays
+/// OPAQUE canvas (ADR-0008 legibility — selection must read on both
+/// appearances; glass over a flat canvas is the invisible-fill trap the
+/// neutral fill exists to avoid). It floats: continuous trailing corners and
+/// a soft depth shadow lift it off the scrimmed content. The surface ignores
+/// the safe area so the rounded edge reaches the display corners.
+struct FleetDrawerPanel: ViewModifier {
+    @Environment(\.fleetTheme) private var theme
+    static let trailingRadius: CGFloat = 32
+
+    func body(content: Content) -> some View {
+        content.background {
+            UnevenRoundedRectangle(
+                bottomTrailingRadius: Self.trailingRadius,
+                topTrailingRadius: Self.trailingRadius,
+                style: .continuous)
+            .fill(theme.background)
+            .shadow(color: theme.shadow, radius: 24)
+            .ignoresSafeArea()
+        }
     }
 }

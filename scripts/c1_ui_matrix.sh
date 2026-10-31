@@ -116,6 +116,8 @@ ENVIRONMENTAL_CLASSES=(
   P3FixLANGateway P3FixLoopbackGateway T2FixTailnetGateway
   # DEV19 release evidence: screenshot tour (records images, asserts nothing).
   DEV19ScreenshotTour
+  # Refinement program evidence: screenshot tour (records images, asserts nothing).
+  RefinementTour
 )
 
 die() { printf 'UI-MATRIX FAIL: %s\n' "$1" >&2; exit 1; }

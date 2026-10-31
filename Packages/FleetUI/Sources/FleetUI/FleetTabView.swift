@@ -321,7 +321,7 @@ public struct FleetTabView: View {
                     )
                     .frame(width: min(340, geometry.size.width * 0.78))
                     .frame(maxHeight: .infinity)
-                    .background(theme.background)
+                    .modifier(FleetDrawerPanel())
                     .offset(x: drawerDrag)
                     .transition(reduceMotion ? .identity : .move(edge: .leading))
                     .zIndex(2)

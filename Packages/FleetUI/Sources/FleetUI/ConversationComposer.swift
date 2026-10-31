@@ -114,7 +114,7 @@ struct ConversationComposer: View {
             // anatomy) — +, field, mic, and send/stop live INSIDE the
             // stadium; it morphs to a soft card when focused/expanded
             // (Hermex's ChatComposerPresentation recipe: continuous
-            // corners, ultraThinMaterial glass, hairline + soft shadow).
+            // corners; Liquid Glass via `ComposerPillChrome`).
             // All controls keep their identifiers (zero test edits).
             HStack(spacing: FleetTheme.spacingSm) {
                 // R10-T1: "+" affordance — Photos picker (images) + Files
@@ -582,25 +582,19 @@ struct ComposerSendButton: View {
 }
 
 /// Dogfood r6 (G1): ONE floating composer pill (ChatGPT anatomy) — it morphs
-/// to a soft card when focused/expanded (continuous corners,
-/// ultraThinMaterial glass, hairline + soft shadow).
+/// to a soft card when focused/expanded (continuous corners).
+/// Refinement Phase 1: the capsule is iOS 26 Liquid Glass via the shared
+/// chrome seam (opaque under Reduce Transparency / Increase Contrast). Glass
+/// carries its own depth, so the old hairline + drop shadow are retired.
+/// Kept a nominal modifier so the composer body's type stays shallow (#215).
 struct ComposerPillChrome: ViewModifier {
-    @Environment(\.fleetTheme) private var theme
     let radius: CGFloat
 
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, 6)
             .padding(.vertical, 5)
-            .background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
-            )
-            .shadow(color: theme.shadow, radius: 10, y: 4)
+            .fleetGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.vertical, 6)
     }
