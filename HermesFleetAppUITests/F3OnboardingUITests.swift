@@ -17,6 +17,12 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["fleet.first-run.title"].label, "Connect to Hermes")
         XCTAssertTrue(app.staticTexts["fleet.first-run.intro"].exists)
         XCTAssertTrue(app.staticTexts["fleet.first-run.expiry"].exists)
+        // Refinement Phase 4: the trust statement is on the first screen.
+        for point in ["open-source", "your-servers", "no-account", "no-middleman"] {
+            XCTAssertTrue(app.descendants(matching: .any)["fleet.first-run.trust.\(point)"].firstMatch.exists,
+                          "first run must state \(point)")
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.first-run.trust.source"].firstMatch.exists)
 
         // The three steps of the universal-login flow (docs/universal-login.md).
         let step1 = app.descendants(matching: .any)["fleet.first-run.step.1"].firstMatch

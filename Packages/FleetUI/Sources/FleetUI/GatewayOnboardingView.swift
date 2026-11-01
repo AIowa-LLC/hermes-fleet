@@ -102,7 +102,9 @@ public struct GatewayOnboardingView: View {
             }
         }
         .tint(theme.highlight)
-        .preferredColorScheme(.dark)
+        // Refinement Phase 4: no forced dark scheme. The root Appearance
+        // preference won for the content but not for sheet chrome, so a light
+        // appearance showed white toolbar text on a light sheet.
         .modifier(ConditionalInteractiveDismissDisabled(isDisabled: canDismiss ? isWorking : nil))
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
@@ -176,11 +178,13 @@ public struct GatewayOnboardingView: View {
                 .font(FleetTheme.titleFont)
                 .foregroundStyle(theme.highlight)
                 .accessibilityIdentifier("fleet.onboarding.title")
-            Text(canDismiss ? "Connect another Hermes server" : "Connect your first Hermes server")
+            // Refinement Phase 4: "another" only when a server is already set up
+            // (first run reaches this sheet dismissible, via Other ways).
+            Text(environment.gateways.isEmpty ? "Connect your first Hermes server" : "Connect another Hermes server")
                 .font(.headline)
                 .foregroundStyle(theme.textPrimary)
                 .accessibilityIdentifier("fleet.onboarding.headline")
-            Text("You’ll need a running Hermes server reachable at an HTTPS address and an owner account for that server. Fleet will use the server’s detected sign-in provider and choose a display name automatically.")
+            Text("You’ll need a Hermes server reachable over HTTPS and its owner account — your server’s own login, not a Fleet account. Fleet detects how the server signs in and names this phone automatically.")
                 .font(FleetTheme.secondaryFont)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -246,6 +250,14 @@ public struct GatewayOnboardingView: View {
                         .textContentType(.password)
                         .focused($focusedField, equals: .password)
                         .accessibilityIdentifier("fleet.onboarding.password")
+                    // Refinement Phase 4: the password is posted to this
+                    // server's own login, exchanged for a session, and
+                    // cleared; it is never stored (OwnerEnrollmentClient).
+                    Text("Your password goes only to this server and isn’t saved on this phone.")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("fleet.onboarding.password-note")
                         .disabled(isWorking || isBlockedByEarlierTransaction)
                     Button(action: { Task { await signIn() } }) {
                         HStack {
