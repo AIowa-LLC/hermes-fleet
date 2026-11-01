@@ -136,6 +136,7 @@ struct ConversationComposer: View {
 
                 ComposerMessageField(
                     text: $composerText,
+                    placeholder: model.isListening ? "Listening…" : "Message",
                     focused: composerFocused,
                     isEnabled: model.phase == .ready || model.phase == .streaming,
                     onSubmit: onSubmit)
@@ -157,11 +158,7 @@ struct ConversationComposer: View {
                 // gauge, mic, send); idle ink is pure white (textPrimary)
                 // per Tony — the neutral among two accent buttons.
                 if model.isVoiceAvailable {
-                    ComposerGlyphButton(
-                        systemName: model.isListening ? "stop.circle.fill" : "mic.fill",
-                        ink: model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary),
-                        glyphSide: chromeGlyphSide
-                    ) {
+                    ComposerMicButton(isListening: model.isListening, glyphSide: chromeGlyphSide) {
                         Task { await model.toggleMic() }
                     }
                     .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
@@ -514,17 +511,67 @@ struct ComposerGlyphButton: View {
     }
 }
 
+/// Refinement Phase 2: the voice control. Idle, a neutral mic glyph; while
+/// listening, a destructive stop control inside a breathing ring so the
+/// capture state is unmistakable (static ring under Reduce Motion).
+struct ComposerMicButton: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var breathing = false
+    let isListening: Bool
+    let glyphSide: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isListening ? "stop.fill" : "mic.fill")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(isListening ? FleetTheme.statusDestructive : theme.textPrimary)
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .frame(width: glyphSide, height: glyphSide)
+                .background {
+                    if isListening {
+                        Circle().fill(FleetTheme.statusDestructive.opacity(0.16))
+                    }
+                }
+                .overlay {
+                    if isListening {
+                        Circle()
+                            .strokeBorder(FleetTheme.statusDestructive.opacity(0.6), lineWidth: 1.5)
+                            .scaleEffect(breathing ? 1.2 : 1)
+                            .opacity(breathing ? 0.2 : 0.9)
+                    }
+                }
+                .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.fleetPressable)
+        .onChange(of: isListening, initial: true) { _, listening in
+            guard listening, !reduceMotion else {
+                breathing = false
+                return
+            }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                breathing = true
+            }
+        }
+    }
+}
+
 /// The composer's text field. The pill is the field's surface —
 /// transparent inside, no own chrome (r6).
 struct ComposerMessageField: View {
     @Environment(\.fleetTheme) private var theme
     @Binding var text: String
+    /// Refinement Phase 2: "Listening…" while dictation captures.
+    var placeholder: String = "Message"
     var focused: FocusState<Bool>.Binding
     let isEnabled: Bool
     let onSubmit: () -> Void
 
     var body: some View {
-        TextField("Message", text: $text, axis: .vertical)
+        TextField(placeholder, text: $text, axis: .vertical)
             .lineLimit(1...5)
             .focused(focused)
             .font(.body)
@@ -563,6 +610,10 @@ struct ComposerStopButton: View {
 /// including white or near-black. r6: the accent ORB rides inside the pill.
 struct ComposerSendButton: View {
     @Environment(\.fleetTheme) private var theme
+    /// Refinement Phase 2: an empty composer reads as "nothing to send" — a
+    /// neutral orb with secondary ink — instead of a dimmed accent orb.
+    /// Both states set explicit ink for their own fill.
+    @Environment(\.isEnabled) private var isEnabled
     let glyphSide: CGFloat
     let action: () -> Void
 
@@ -570,10 +621,10 @@ struct ComposerSendButton: View {
         Button(action: action) {
             Image(systemName: "arrow.up")
                 .font(.callout.weight(.bold))
-                .foregroundStyle(theme.onHighlight)
+                .foregroundStyle(isEnabled ? theme.onHighlight : theme.textSecondary)
                 .frame(width: glyphSide, height: glyphSide)
                 .dynamicTypeSize(...DynamicTypeSize.accessibility3)
-                .background(Circle().fill(theme.highlight))
+                .background(Circle().fill(isEnabled ? theme.highlight : FleetTheme.neutralFill))
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Circle())
         }

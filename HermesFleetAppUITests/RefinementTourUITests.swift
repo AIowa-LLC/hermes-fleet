@@ -127,4 +127,80 @@ final class RefinementTourUITests: XCTestCase {
         shot("10-support-link")
         app.terminate()
     }
+
+    // MARK: Phase 2 — home top, rooms, streaming, code, attachments
+
+    private func openDefaultSession(_ app: XCUIApplication) -> XCUIElement {
+        let row = element(app, "fleet.bot-detail.sessions.row.workstation.default.s1")
+        var attempts = 0
+        while !(row.exists && row.isHittable) && attempts < 12 {
+            app.swipeUp(velocity: .slow)
+            attempts += 1
+        }
+        tapIfPresent(row)
+        let composer = app.textFields["fleet.conversation.composer"]
+        if composer.waitForExistence(timeout: 15) {
+            let deadline = Date().addingTimeInterval(15)
+            while !composer.isEnabled && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        }
+        return composer
+    }
+
+    func testTourRoomConversation() throws {
+        let app = makeApp(["HERMES_FLEET_AUTO_NAV": "groups"])
+        app.launch()
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.groups.row.")).firstMatch
+        guard tapIfPresent(row, timeout: 15) else { shot("11-room-unreached"); return }
+        Thread.sleep(forTimeInterval: 2.0)
+        shot("11-room-conversation")
+        app.terminate()
+    }
+
+    func testTourStreamingPresence() throws {
+        let app = makeApp(["HERMES_FLEET_AUTO_NAV": "bot-detail",
+                           "HERMES_FLEET_REASONING_DEMO": "1",
+                           "HERMES_FLEET_REASONING_DEMO_HOLD_MS": "6000"])
+        app.launch()
+        let composer = openDefaultSession(app)
+        guard tapIfPresent(composer) else { return }
+        composer.typeText("Plan the release checklist")
+        tapIfPresent(element(app, "fleet.conversation.send"))
+        _ = element(app, "fleet.conversation.working").waitForExistence(timeout: 10)
+        shot("12-conversation-thinking")
+        Thread.sleep(forTimeInterval: 4)
+        shot("13-conversation-streaming")
+        app.terminate()
+    }
+
+    func testTourCodeBlock() throws {
+        let app = makeApp(["HERMES_FLEET_AUTO_NAV": "bot-detail"])
+        app.launchArguments += ["-issue5-markdown-fixture"]
+        app.launch()
+        let composer = openDefaultSession(app)
+        guard tapIfPresent(composer) else { return }
+        composer.typeText("Show me the release snippet")
+        tapIfPresent(element(app, "fleet.conversation.send"))
+        let block = element(app, "fleet.conversation.code.block")
+        _ = block.waitForExistence(timeout: 20)
+        Thread.sleep(forTimeInterval: 3)
+        // At rest the reply's end is in view and the card sits just above
+        // the viewport; drag the transcript down by about one card height.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = start.withOffset(CGVector(dx: 0, dy: 170))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("14-code-block")
+        app.terminate()
+    }
+
+    func testTourAttachmentTray() throws {
+        let app = makeApp(["HERMES_FLEET_AUTO_NAV": "bot-detail",
+                           "HERMES_FLEET_ATTACHMENT_PICK": "1"])
+        app.launch()
+        _ = openDefaultSession(app)
+        _ = element(app, "fleet.conversation.attachment.chip.notes.md").waitForExistence(timeout: 15)
+        shot("15-attachment-tray")
+        app.terminate()
+    }
 }

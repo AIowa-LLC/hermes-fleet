@@ -19,6 +19,7 @@ import AppKit
 ///   marks hidden content only while the line overflows.
 /// - Syntax colors come from `CodeBlockAppearance` (palette chosen from the
 ///   active card, contrast-gated), not from the system color scheme.
+/// - Refinement Phase 2: tinted header band with a hairline, language glyph, capsule Copy, roomier code rhythm.
 struct FleetCodeBlockView: View {
     let fence: CodeFence
     let appearance: CodeBlockAppearance
@@ -40,13 +41,17 @@ struct FleetCodeBlockView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            Rectangle()
+                .fill(appearance.chromeInk.swiftUIColor.opacity(0.16))
+                .frame(height: 0.5)
+                .accessibilityHidden(true)
             codeScroller
         }
         .background(appearance.card.swiftUIColor)
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .strokeBorder(appearance.chromeInk.swiftUIColor.opacity(0.14), lineWidth: 0.5)
+                .strokeBorder(appearance.chromeInk.swiftUIColor.opacity(0.18), lineWidth: 0.5)
         }
         .fleetHaptic(.success, trigger: copyCount)
         .accessibilityElement(children: .contain)
@@ -72,19 +77,27 @@ struct FleetCodeBlockView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: FleetTheme.spacingSm) {
             if let languageLabel {
-                Text(languageLabel)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(appearance.chromeInk.swiftUIColor)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityHidden(true) // folded into the block label
-                    .accessibilityIdentifier("fleet.conversation.code.language")
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(appearance.chromeInk.swiftUIColor)
+                        .accessibilityHidden(true)
+                    Text(languageLabel)
+                        .font(.caption.monospaced().weight(.medium))
+                        .foregroundStyle(appearance.chromeInk.swiftUIColor)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityHidden(true) // folded into the block label
+                        .accessibilityIdentifier("fleet.conversation.code.language")
+                }
             }
             Spacer(minLength: 0)
             copyButton
         }
         .padding(.leading, FleetTheme.spacingLg)
         .padding(.trailing, FleetTheme.spacingXs)
+        .frame(minHeight: 40)
+        .background(appearance.ink.swiftUIColor.opacity(0.06))
     }
 
     private var copyButton: some View {
@@ -98,7 +111,9 @@ struct FleetCodeBlockView: View {
             .labelStyle(.titleAndIcon)
             .font(.footnote.weight(.medium))
             .foregroundStyle(appearance.chromeInk.swiftUIColor)
-            .padding(.horizontal, FleetTheme.spacingMd)
+            .padding(.horizontal, FleetTheme.spacingSm + 2)
+            .padding(.vertical, 4)
+            .background(appearance.ink.swiftUIColor.opacity(copied ? 0.14 : 0.08), in: Capsule())
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -119,11 +134,12 @@ struct FleetCodeBlockView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             codeText
                 .font(.system(.callout, design: .monospaced))
+                .lineSpacing(3)
                 .fixedSize(horizontal: true, vertical: true)
                 .textSelection(.enabled)
                 .padding(.horizontal, FleetTheme.spacingLg)
-                .padding(.top, FleetTheme.spacingXs)
-                .padding(.bottom, FleetTheme.spacingLg)
+                .padding(.top, FleetTheme.spacingMd)
+                .padding(.bottom, FleetTheme.spacingMd)
                 .accessibilityIdentifier("fleet.conversation.code.text")
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
