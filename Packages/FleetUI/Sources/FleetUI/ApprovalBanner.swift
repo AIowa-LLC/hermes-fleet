@@ -21,6 +21,9 @@ public struct ApprovalBanner: View {
     /// Haptic triggers: bumped only once the gateway has accepted the decision.
     @State private var approveFeedback = 0
     @State private var denyFeedback = 0
+    /// Refinement Phase 3: the brief "Approved" confirmation shown in the
+    /// banner's place once the gateway accepts an approval.
+    @State private var showsApprovedMoment = false
 
     public init(
         model: ApprovalViewModel,
@@ -37,10 +40,14 @@ public struct ApprovalBanner: View {
             if let request = model.pending {
                 scrollingIfNeeded(banner(for: request))
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+            } else if showsApprovedMoment {
+                ApprovalApprovedMoment(isPresented: $showsApprovedMoment)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92)))
             } else {
                 EmptyView()
             }
         }
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.3), value: showsApprovedMoment)
         // Observed here, not on the banner, so the clearing of `pending` (the
         // gateway accepting a Deny) is still seen after the banner disappears.
         .onChange(of: model.pending?.requestID) { _, current in
@@ -188,7 +195,10 @@ public struct ApprovalBanner: View {
                 await model.approve(scope: choice)
                 // The gateway accepted it only if the pending request moved on;
                 // a failed or cancelled presence check leaves it in place.
-                if model.pending?.requestID != requestID { approveFeedback += 1 }
+                if model.pending?.requestID != requestID {
+                    approveFeedback += 1
+                    showsApprovedMoment = true
+                }
             }
         }
         let allowed = model.canApprove
@@ -259,5 +269,45 @@ public struct ApprovalBanner: View {
             .foregroundStyle(FleetTheme.statusNeedsIntervention)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("approval.banner.hint")
+    }
+}
+
+/// Refinement Phase 3 approval success moment: a compact confirmation that
+/// replaces the banner for a beat after the gateway accepts an approval, so
+/// the decision visibly lands instead of the card just vanishing. The seal
+/// bounces once; Reduce Motion keeps it still. Presentation only — it is
+/// driven by the same gateway-accepted trigger as the approve haptic. It
+/// owns its own dismissal: the banner's body is a `Group`, which copies
+/// modifiers onto each child, so a timer there would restart on every swap.
+struct ApprovalApprovedMoment: View {
+    static let holdSeconds = 1.6
+    @Binding var isPresented: Bool
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var landed = false
+
+    var body: some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: "checkmark.seal.fill")
+                .foregroundStyle(FleetTheme.statusOnline)
+                .symbolEffect(.bounce, value: landed)
+                .accessibilityHidden(true)
+            Text("Approved")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
+        }
+        .padding(.horizontal, FleetTheme.spacingMd)
+        .padding(.vertical, FleetTheme.spacingSm)
+        .background(theme.surface, in: Capsule())
+        .overlay(Capsule().strokeBorder(FleetTheme.statusOnline.opacity(0.5), lineWidth: 1))
+        .frame(maxWidth: .infinity)
+        .onAppear { if !reduceMotion { landed = true } }
+        .task {
+            AccessibilityNotification.Announcement("Approved").post()
+            try? await Task.sleep(for: .seconds(Self.holdSeconds))
+            isPresented = false
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("approval.approved-moment")
     }
 }

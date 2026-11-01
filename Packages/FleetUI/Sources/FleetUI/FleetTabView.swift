@@ -225,6 +225,11 @@ public struct FleetTabView: View {
                                 }
                             }
                         }
+                        // Refinement Phase 3: a short crossfade between
+                        // destinations instead of a hard cut; Reduce Motion
+                        // keeps the instant swap.
+                        .animation(reduceMotion ? nil : .easeInOut(duration: Self.destinationCrossfade),
+                                   value: navigation.selection)
                     }
                 }
                 .onAppear { visitedDestinations.insert(navigation.selection) }
@@ -328,7 +333,9 @@ public struct FleetTabView: View {
                 }
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: drawerPresented)
+        // Refinement Phase 3: the drawer moves on a critically damped spring
+        // (no overshoot) so open, close, and drag release share one feel.
+        .animation(reduceMotion ? nil : Self.drawerSpring, value: drawerPresented)
         .environment(\.openFleetDrawer, drawerAction)
         .onChange(of: horizontalSizeClass) { _, _ in drawerPresented = false }
         .sheet(isPresented: $showingCommandCenter) {
@@ -407,12 +414,17 @@ public struct FleetTabView: View {
                     drawerDrag = 0
                     drawerPresented = false
                 } else {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    withAnimation(reduceMotion ? nil : Self.drawerSpring) {
                         drawerDrag = 0
                     }
                 }
             }
     }
+
+    /// Destination crossfade (seconds) on compact tab switches.
+    static let destinationCrossfade: TimeInterval = 0.18
+    /// Drawer open/close and drag-release motion.
+    static let drawerSpring: Animation = .snappy(duration: 0.3, extraBounce: 0)
 
     private var drawerAction: (@MainActor () -> Void)? {
         // The drawer is universal now: on iPad the top control hosts only

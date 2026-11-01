@@ -4,7 +4,10 @@ import UIKit
 #endif
 
 /// FOS-7 (SPEC §14) — accent selection RETIRED. Fleet uses one fixed
-/// interface accent (the Fleet violet in `FleetTheme.accent`).
+/// interface accent (the Fleet violet in `FleetTheme.accent`). Refinement
+/// Phase 3: Settings ▸ Theme offers `FleetCuratedTheme` instead; an install
+/// that applied one of these accents keeps its palette verbatim ("Custom"),
+/// except White, which is exactly the Graphite theme.
 ///
 /// This type is preserved ONLY as a stored-value holder for rollback: the
 /// persisted `fleet.settings.accent` UserDefaults pick is migration-unsafe

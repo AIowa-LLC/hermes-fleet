@@ -119,6 +119,7 @@
 		6A440418F7ACD1D16739ACFE /* RefinementPhase2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D62FC1B0197E24175FA6CAB5 /* RefinementPhase2Tests.swift */; };
 		6AC11F4E4AB93D71284181CC /* P2GatewayFormDraftUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73276D7D335DD1FFAF4D238A /* P2GatewayFormDraftUITests.swift */; };
 		6AC7FDB9D7DE509A16915205 /* R10VoiceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4B9CA2708C4F6346F45A41 /* R10VoiceUITests.swift */; };
+		6E1B3F1FD01E960A799AABBA /* RefinementPhase3Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1B9C5C7869B2415C72B8B3 /* RefinementPhase3Tests.swift */; };
 		6EB2A11AFDAD25444A0305D6 /* FleetConversationShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A08506C47F80EF97B548420 /* FleetConversationShortcuts.swift */; };
 		6F12EBE51397948FD54E7F2E /* CronManagementUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA4C0E692D2131E0D07EA16 /* CronManagementUITests.swift */; };
 		6F9871E160358940DD836835 /* BotRoutinesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */; };
@@ -495,6 +496,7 @@
 		AB9D5A666BBC20E8D5453331 /* HermesFleetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABB56BC7A753092D2919AB8B /* ImageMemoryBoundsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageMemoryBoundsTests.swift; sourceTree = "<group>"; };
 		ACAAD4E91BFE5028C5EF5791 /* FleetSharedServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSharedServices.swift; sourceTree = "<group>"; };
+		AF1B9C5C7869B2415C72B8B3 /* RefinementPhase3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefinementPhase3Tests.swift; sourceTree = "<group>"; };
 		AF524BB131167B4F4E65D756 /* UITestLaunchSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchSupport.swift; sourceTree = "<group>"; };
 		AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H2SurfaceDoctorDeviceTests.swift; sourceTree = "<group>"; };
 		B066A503BF426E07D5165863 /* FleetSettingsAccentUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSettingsAccentUITests.swift; sourceTree = "<group>"; };
@@ -735,6 +737,7 @@
 				261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */,
 				6B7DB1E86D99814851F64AF7 /* ReadAloudViewModelTests.swift */,
 				D62FC1B0197E24175FA6CAB5 /* RefinementPhase2Tests.swift */,
+				AF1B9C5C7869B2415C72B8B3 /* RefinementPhase3Tests.swift */,
 				9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */,
 				3DD3A9A9291742EF20BB8C37 /* RoomDraftStoreStorageTests.swift */,
 				48B01CAFCD3DAC324B7ABD7E /* RoomDriverStatusIntegerBoundaryTests.swift */,
@@ -1413,6 +1416,7 @@
 				8D5D7A4794C4F5C1DEE340BD /* RT4LogicRegressionTests.swift in Sources */,
 				0D1A4D0772071AC5C9FE0CCD /* ReadAloudViewModelTests.swift in Sources */,
 				6A440418F7ACD1D16739ACFE /* RefinementPhase2Tests.swift in Sources */,
+				6E1B3F1FD01E960A799AABBA /* RefinementPhase3Tests.swift in Sources */,
 				023319986EDBAC88CE708F61 /* RoomChatViewModelTests.swift in Sources */,
 				0D59F2203982F1B190A05D6A /* RoomDraftStoreStorageTests.swift in Sources */,
 				1CCC1537AC9748D00E0404C1 /* RoomDriverStatusIntegerBoundaryTests.swift in Sources */,
@@ -1587,6 +1591,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 6FFB58881BA7CB6D29010568 /* FleetDev.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIconMidnight AppIconViolet AppIconGraphite AppIconSilver";
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_ENTITLEMENTS = Config/FleetDev.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -1795,6 +1800,7 @@
 		520B8CD80B486F6273D163E6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIconMidnight AppIconViolet AppIconGraphite AppIconSilver";
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_ENTITLEMENTS = "$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -1859,6 +1865,7 @@
 		7DA6329A7118C964983BF34C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIconMidnight AppIconViolet AppIconGraphite AppIconSilver";
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_ENTITLEMENTS = "$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -1924,6 +1931,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 6FFB58881BA7CB6D29010568 /* FleetDev.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIconMidnight AppIconViolet AppIconGraphite AppIconSilver";
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_ENTITLEMENTS = Config/FleetDev.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";

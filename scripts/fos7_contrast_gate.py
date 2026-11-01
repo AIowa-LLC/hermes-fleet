@@ -44,6 +44,49 @@ TOKENS = [
 CANVAS = (0xF8F9FC, 0x101216)
 GROUPED = (0xFFFFFF, 0x1B1E24)
 
+# Refinement Phase 3 curated themes (FleetCuratedTheme.swift — the two
+# tables are pinned to each other by RefinementPhase3Tests). Each theme is a
+# highlight per appearance over the default canvases, so the §14 status
+# ratios above are unaffected; each highlight must itself reach normal-text
+# contrast (it tints link text and button labels) on the canvas, the grouped
+# surface, and the theme's derived dark surface (canvas 12% toward white),
+# and the ink drawn ON a highlight fill must too. A theme that fails does not
+# ship.
+# (name, light highlight, dark highlight)
+CURATED_THEMES = [
+    ("fleet",    0x5B35D5, 0xFFFFFF),
+    ("violet",   0x5B35D5, 0xBDA7FF),
+    ("ocean",    0x1A5FC4, 0x8CBBFF),
+    ("orchid",   0x9C2A8F, 0xF0A6E4),
+    ("graphite", 0x1C1C1E, 0xFFFFFF),
+]
+CURATED_MIN = 4.5
+DERIVED_SURFACE_DARK = 0x2D2E32
+INK_DARK, INK_LIGHT = 0x0D0D0F, 0xFFFFFF
+
+
+def curated_theme_failures():
+    failures = 0
+    for name, light, dark in CURATED_THEMES:
+        checks = [
+            ("canvas light", light, CANVAS[0]),
+            ("grouped light", light, GROUPED[0]),
+            ("canvas dark", dark, CANVAS[1]),
+            ("grouped dark", dark, GROUPED[1]),
+            ("surface dark", dark, DERIVED_SURFACE_DARK),
+        ]
+        for bgname, fg, bg in checks:
+            r = ratio(fg, bg)
+            ok = r >= CURATED_MIN
+            failures += 0 if ok else 1
+            print(f"{'theme ' + name:34s} {bgname:10s} {r:7.2f} {CURATED_MIN:6.2f}  {'PASS' if ok else 'FAIL'}")
+        for mode, fill in (("light", light), ("dark", dark)):
+            r = max(ratio(INK_DARK, fill), ratio(INK_LIGHT, fill))
+            ok = r >= CURATED_MIN
+            failures += 0 if ok else 1
+            print(f"{'theme ' + name + ' ink on fill':34s} {mode:10s} {r:7.2f} {CURATED_MIN:6.2f}  {'PASS' if ok else 'FAIL'}")
+    return failures
+
 def main():
     failures = 0
     print(f"{'token':34s} {'bg':10s} {'ratio':>7s} {'min':>6s}  verdict")
@@ -70,6 +113,7 @@ def main():
         print(f"{name:34s} {'filled':10s} {r:7.2f} {need:6.2f}  {'PASS' if ok else 'FAIL'}")
         if not ok:
             failures += 1
+    failures += curated_theme_failures()
     if failures:
         print(f"FAIL: {failures} ratio(s) below spec minimum")
         return 1

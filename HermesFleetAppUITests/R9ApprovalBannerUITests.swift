@@ -330,7 +330,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
         let cleanup = XCUIApplication()
         cleanup.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         cleanup.launch()
-        setAppearance(cleanup, "System", accent: "Purple")
+        setAppearance(cleanup, "System", accent: "Fleet")
         cleanup.terminate()
     }
 
@@ -411,7 +411,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
         element.tap()
     }
 
-    private func setAppearance(_ app: XCUIApplication, _ appearance: String, accent: String = "White") {
+    private func setAppearance(_ app: XCUIApplication, _ appearance: String, accent: String = "Graphite") {
         UITabNavigation.openSettings(app)
         let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
         XCTAssertTrue(picker.waitForExistence(timeout: 10), "appearance setting should render")
@@ -426,7 +426,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
         let accentOption = app.buttons[accent].firstMatch
         XCTAssertTrue(accentOption.waitForExistence(timeout: 5))
         accentOption.tap()
-        XCTAssertTrue(accentPicker.label.contains("Accent, \(accent)"),
+        XCTAssertTrue(accentPicker.label.contains("Theme, \(accent)"),
                       "review regression must exercise explicit \(accent) highlight ink")
     }
 

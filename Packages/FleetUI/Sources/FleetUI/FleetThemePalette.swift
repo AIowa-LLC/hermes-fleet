@@ -179,6 +179,10 @@ public enum FleetThemePaletteAppearance: String, Codable, Equatable, Sendable {
     /// mode and resolves it to pure white in dark mode, over the
     /// Fleet-default dark text/background.
     case adaptiveMono
+    /// Refinement Phase 3 curated theme: keeps the stored highlight in light
+    /// mode and resolves the theme's own dark highlight (see
+    /// `FleetCuratedTheme`) over the Fleet-default dark text/background.
+    case adaptiveCurated
 }
 
 /// Versioned persisted user palette. V1 intentionally stores exactly one
@@ -291,6 +295,14 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
                 highlight: FleetStoredColor(hex: 0xFFFFFF),
                 text: Self.fleetDefaultDark.text,
                 background: Self.fleetDefaultDark.background,
+                version: version,
+                appearance: .fixed)
+        case .adaptiveCurated:
+            let dark = Self.fleetDefaultDark
+            return FleetThemePalette(
+                highlight: FleetCuratedTheme.curatedDarkHighlight(forLight: highlight) ?? highlight,
+                text: dark.text,
+                background: dark.background,
                 version: version,
                 appearance: .fixed)
         case .fixed:
