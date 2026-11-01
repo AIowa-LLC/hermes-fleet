@@ -134,4 +134,23 @@ final class FleetAboutCompositionTests: XCTestCase {
                            "\(file) must not read the pasteboard for pairing links")
         }
     }
+
+    // MARK: Refinement Phase 1 — Support the Project
+
+    func testSupportLinkTargetsTheSupportPageWithNeutralCopy() {
+        XCTAssertEqual(FleetSupportLink.url.absoluteString, "https://hermes-fleet.aiowa.dev/support")
+        XCTAssertEqual(FleetSupportLink.title, "Support the Project")
+        for word in ["donat", "purchase", "unlock", "tip", "$", "pay"] {
+            XCTAssertFalse(FleetSupportLink.title.lowercased().contains(word))
+        }
+    }
+
+    func testSupportLinkRowRendersInAboutAndSettings() throws {
+        let about = try repoSource("Packages/FleetUI/Sources/FleetUI/FleetAboutView.swift")
+        XCTAssertTrue(about.contains("FleetSupportLinkRow(identifier: \"fleet.about.project-support\")"))
+        let settings = try repoSource("Packages/FleetUI/Sources/FleetUI/FleetSettingsView.swift")
+        XCTAssertTrue(settings.contains("FleetSupportLinkRow(identifier: \"fleet.settings.project-support\")"))
+        let link = try repoSource("Packages/FleetUI/Sources/FleetUI/FleetSupportLink.swift")
+        XCTAssertTrue(link.contains("SFSafariViewController"), "the support page opens in-app via Safari view")
+    }
 }

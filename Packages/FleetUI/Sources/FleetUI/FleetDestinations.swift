@@ -112,7 +112,6 @@ enum FleetChatsArchiveStore {
 
 struct FleetChatsView: View {
     @Environment(\.fleetTheme) private var theme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
@@ -276,9 +275,11 @@ struct FleetChatsView: View {
                         .font(.footnote)
                         .foregroundStyle(theme.textSecondary)
                 }
+                .padding(.horizontal, FleetTheme.spacingMd)
+                .padding(.vertical, FleetTheme.spacingXs + 2)
+                .fleetGlass(in: Capsule())
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
-                .background(.ultraThinMaterial)
+                .padding(.vertical, FleetTheme.spacingXs)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("fleet.chats.launch-updating")
             }
@@ -447,7 +448,7 @@ struct FleetChatsView: View {
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, FleetTheme.spacingMd)
                     .padding(.vertical, FleetTheme.spacingSm)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .fleetGlass(in: Capsule())
                     .padding(.leading, FleetTheme.spacingLg)
                     .padding(.bottom, FleetTheme.spacingMd)
                     .task {
@@ -482,9 +483,9 @@ struct FleetChatsView: View {
         .task { await refresh() }
     }
 
-    /// A single, labeled Chat button with a larger target and shared material
-    /// treatment. Material keeps hit-testing reliable; Reduce Transparency
-    /// uses a solid theme surface.
+    /// A single, labeled Chat button with a larger target. Its chrome is the
+    /// shared Liquid Glass chrome seam (`fleetGlass`), which falls back to an
+    /// opaque themed surface under Reduce Transparency / Increase Contrast.
     private var floatingChatButton: some View {
         HStack {
             Button {
@@ -510,16 +511,7 @@ struct FleetChatsView: View {
             .accessibilityLabel("New chat")
             .accessibilityIdentifier("fleet.chats.new")
         }
-        .background {
-            if reduceTransparency {
-                Capsule().fill(theme.surfaceElevated)
-            } else {
-                Capsule().fill(.ultraThinMaterial)
-            }
-        }
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .fleetGlass(in: Capsule(), interactive: true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.chats.actions")
     }

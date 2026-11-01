@@ -324,3 +324,35 @@ final class UserFacingErrorTextGuardTests: XCTestCase {
                       "use Redaction.userFacingErrorDescription for UI text:\n" + violations.joined(separator: "\n"))
     }
 }
+
+/// Refinement Phase 1: Liquid Glass chrome postures and placement.
+final class FleetGlassChromeTests: XCTestCase {
+
+    /// Reduce Transparency and Increase Contrast each force opaque chrome;
+    /// glass renders only when neither posture is on.
+    func testGlassChromeFallsBackToOpaqueUnderAccessibilityPostures() {
+        XCTAssertFalse(FleetGlassChromePolicy.rendersOpaque(reduceTransparency: false, increasedContrast: false))
+        XCTAssertTrue(FleetGlassChromePolicy.rendersOpaque(reduceTransparency: true, increasedContrast: false))
+        XCTAssertTrue(FleetGlassChromePolicy.rendersOpaque(reduceTransparency: false, increasedContrast: true))
+        XCTAssertTrue(FleetGlassChromePolicy.rendersOpaque(reduceTransparency: true, increasedContrast: true))
+    }
+
+    /// Glass is chrome-only: the conversation transcript and cards never use
+    /// it, and the composer reaches glass only through the shared seam.
+    func testGlassIsAppliedOnlyThroughTheSharedChromeSeam() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let sources = root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI")
+        let enumerator = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
+        var offenders: [String] = []
+        while let url = enumerator?.nextObject() as? URL {
+            guard url.pathExtension == "swift", url.lastPathComponent != "FleetGlassChrome.swift" else { continue }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            if text.contains(".glassEffect(") { offenders.append(url.lastPathComponent) }
+        }
+        XCTAssertTrue(offenders.isEmpty, "use .fleetGlass(in:) so postures fall back to opaque: \(offenders)")
+        let composer = try String(contentsOf: sources.appendingPathComponent("ConversationComposer.swift"), encoding: .utf8)
+        XCTAssertTrue(composer.contains(".fleetGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))"))
+        let code = composer.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+        XCTAssertFalse(code.contains(".ultraThinMaterial"), "the composer capsule is Liquid Glass, not legacy material")
+    }
+}
