@@ -39,14 +39,18 @@ public struct FleetDashboardView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
     private let environment: AppEnvironment
+    /// Refinement Phase 2: the Groups hub card selects the Groups tab (the
+    /// shell owns tab selection; Home has no other way to reach a tab root).
+    private let onOpenGroups: () -> Void
 
     @State private var now = Date()
     /// P0.2a: the Home approval row whose full command is being reviewed.
     @State private var reviewingItem: LiveOpsAttentionItem?
     @State private var refreshOutcome = FleetRefreshOutcome()
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, onOpenGroups: @escaping () -> Void = {}) {
         self.environment = environment
+        self.onOpenGroups = onOpenGroups
     }
 
     // MARK: derived truth (pure reads of observable state — no I/O here)
@@ -132,9 +136,14 @@ public struct FleetDashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
                 if hasGateways {
+                    // Refinement Phase 2: the top tells the fleet story —
+                    // state, the machines and their agents, then the two
+                    // places that need the user. Everything below is unchanged.
                     connectionStatusLine
                     glanceStrip
                     coverageLine
+                    FleetMachineStrip(machines: machineSummaries, management: environment.botManagement)
+                    FleetHubCards(environment: environment, onOpenGroups: onOpenGroups)
                     needsYouSection
                     if liveOpsAvailable {
                         liveOperationsSection
@@ -1045,6 +1054,62 @@ public struct FleetDashboardView: View {
         }
         .buttonStyle(.fleetPressable)
         .accessibilityIdentifier("fleet.dashboard.gateway.\(gateway.id.rawValue)")
+    }
+
+    // MARK: Fleet strip (refinement Phase 2)
+
+    /// One summary per machine, exceptions first (the Gateways order). Bots
+    /// come from the live roster when it loaded, else the last-known cache;
+    /// an unanswered roster stays unknown.
+    private var machineSummaries: [FleetMachineSummary] {
+        orderedGateways.map { gateway in
+            var bots: [FleetBot] = []
+            var known: Int?
+            var lastKnown = false
+            switch environment.rosterSnapshot?.outcome(for: gateway.id) {
+            case .loaded:
+                bots = environment.rosterSnapshot?.bots(on: gateway.id) ?? []
+                known = bots.count
+            case .failed:
+                if let cached = environment.cachedBotsByGateway[gateway.id], !cached.isEmpty {
+                    bots = cached
+                    known = cached.count
+                    lastKnown = true
+                }
+            case nil:
+                break
+            }
+            return FleetMachineSummary(
+                id: gateway.id,
+                name: gateway.displayName,
+                stateLabel: gatewayStateLabel(gateway),
+                tone: gatewayTone(gateway),
+                bots: bots,
+                knownBotCount: known,
+                isLastKnown: lastKnown)
+        }
+    }
+
+    /// Tone for the strip's status dot, from the same classified state as
+    /// `gatewayStateLabel` (the label always carries the meaning).
+    private func gatewayTone(_ gateway: FleetGateway) -> FleetMachineTone {
+        func tone(for status: GatewayStatus) -> FleetMachineTone {
+            switch status {
+            case .authenticationRequired: .needsYou
+            case .unsupported, .degraded: .degraded
+            default: .neutral
+            }
+        }
+        switch environment.connectionStates[gateway.id] {
+        case .connected: return .connected
+        case .connecting: return .connecting
+        case .failed(let status): return tone(for: status)
+        case .disconnected, .idle, nil:
+            if case .failed(let status, _) = environment.rosterSnapshot?.outcome(for: gateway.id) {
+                return tone(for: status)
+            }
+            return .neutral
+        }
     }
 
     /// Connection state label — classified truth, never a guess.

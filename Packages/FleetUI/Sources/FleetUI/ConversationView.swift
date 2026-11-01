@@ -694,52 +694,6 @@ public struct ConversationView: View {
         findScrollPulse += 1
     }
 
-/// Animated three-dot "working" glyph (Hermes `...` parity). Discrete phase
-/// animation ~0.9s cycle; purely decorative (the working label carries AX).
-private struct WorkingDots: View {
-    @State private var phase = 0.0
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(Color.secondary.opacity(0.85))
-                    .frame(width: 4, height: 4)
-                    .opacity(0.35 + 0.65 * pulse(index: index))
-            }
-        }
-        .onAppear { phase = 0 }
-        .task {
-            while !Task.isCancelled {
-                phase += 0.15
-                try? await Task.sleep(for: .milliseconds(135))
-            }
-        }
-    }
-
-    /// 0...1 opacity wave for dot `index` at the current phase.
-    private func pulse(index: Int) -> Double {
-        let offset = Double(index) / 3.0
-        let t = (phase.truncatingRemainder(dividingBy: 3.0)) / 3.0
-        return 0.5 + 0.5 * sin((t - offset) * 2 * .pi)
-    }
-}
-
-/// GitHub #107: the thinking placeholder glyph. A gentle SF Symbol pulse while
-/// the turn has produced nothing yet; static under Reduce Motion.
-private struct ThinkingGlyph: View {
-    @Environment(\.fleetTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Image(systemName: "sparkle")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(theme.textSecondary)
-            .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-            .accessibilityHidden(true)
-    }
-}
-
 /// Header chip string helpers.
 enum ConversationHeaderChips {
     /// Last path component of a working directory ("/a/b/hermes-fleet" ->
@@ -919,59 +873,6 @@ enum ConversationHeaderChips {
         .accessibilityIdentifier("fleet.conversation.history.loading")
     }
 
-    /// "••• Working for 7s" — dots + live elapsed, one line under the last
-    /// row (Hermes placement). TimelineView ticks 1s; the label is the AX
-    /// surface (VoiceOver reads the live elapsed). Reduce Motion: dots stop.
-    private func workingIndicator(_ model: ConversationViewModel) -> some View {
-        TimelineView(.periodic(from: model.turnStartedAt ?? .now, by: 1)) { timeline in
-            let elapsed = Int(timeline.date.timeIntervalSince(model.turnStartedAt ?? timeline.date))
-            if model.conversationPresence == .thinking {
-                thinkingRow(elapsed: elapsed)
-            } else {
-                HStack(spacing: 6) {
-                    if reduceMotion {
-                        Image(systemName: "ellipsis")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(theme.textSecondary)
-                    } else {
-                        WorkingDots()
-                    }
-                    Text("Working for \(Self.workingDuration(elapsed))")
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .monospacedDigit()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
-                .accessibilityIdentifier("fleet.conversation.working")
-            }
-        }
-    }
-
-    /// GitHub #107: the pre-text placeholder, in the assistant's position
-    /// (flat, leading-aligned, like an assistant row). A breathing sparkle plus
-    /// "Thinking", with the clock once 3s have elapsed. Shares the working
-    /// identifier so the one-indicator-per-turn contract holds.
-    private func thinkingRow(elapsed: Int) -> some View {
-        let spoken = ConversationPresence.showsElapsed(elapsed)
-            ? "Thinking, \(Self.workingSpoken(elapsed))"
-            : "Thinking"
-        return HStack(spacing: 6) {
-            ThinkingGlyph()
-            Text(ConversationPresence.showsElapsed(elapsed)
-                 ? "Thinking · \(Self.workingDuration(elapsed))"
-                 : "Thinking…")
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(theme.textSecondary)
-                .monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spoken)
-        .accessibilityIdentifier("fleet.conversation.working")
-    }
-
     /// 7s / 1m 05s — compact elapsed format.
     static func workingDuration(_ seconds: Int) -> String {
         seconds < 60 ? "\(seconds)s" : String(format: "%dm %02ds", seconds / 60, seconds % 60)
@@ -984,9 +885,10 @@ enum ConversationHeaderChips {
 
     /// Stage 1 (+ extensions): builds one transcript bubble with its footer
     /// wiring as a sub-expression — the inline form outgrew the type-checker.
-    private func bubbleView(model: ConversationViewModel, row: ConversationRow) -> some View {
+    private func bubbleView(model: ConversationViewModel, row: ConversationRow, showsTimestamp: Bool) -> some View {
         ConversationBubbleView(
             row: row,
+            showsTimestamp: showsTimestamp,
             environment: environment,
             react: { emoji in
                 Task { await model.react(rowID: row.rowID, kind: row.kind, emoji: emoji) }
@@ -1118,6 +1020,9 @@ enum ConversationHeaderChips {
                 // generation row are excluded by the grouping function
                 // itself and always render as their own live row below.
                 let blocks = ToolActivityGrouping.group(model.transcript)
+                // Refinement Phase 2: grouped timestamps + date separators,
+                // one pass over the same bounded window.
+                let rhythm = ConversationRhythm.marks(for: model.transcript)
                 LazyVStack(spacing: 12) {
                     // #188: paged chats load older messages on demand, from
                     // the top of the transcript.
@@ -1128,7 +1033,11 @@ enum ConversationHeaderChips {
                     ForEach(blocks) { block in
                         switch block {
                         case .row(let row):
-                            bubbleView(model: model, row: row)
+                            if let date = rhythm.separators[row.id] {
+                                ConversationTimeSeparator(date: date)
+                            }
+                            bubbleView(model: model, row: row,
+                                       showsTimestamp: rhythm.timestampRowIDs.contains(row.id))
                             .id(block.id)
                             // P0-B: the active find match gets a border ring
                             // (decorative — the find bar carries the AX truth).
@@ -1163,7 +1072,11 @@ enum ConversationHeaderChips {
                     // (submit → complete/error/interrupt) — the tool/reasoning
                     // phases finally say "working" out loud.
                     if model.isWorking {
-                        workingIndicator(model)
+                        ConversationPresenceIndicator(
+                            presence: model.conversationPresence,
+                            startedAt: model.turnStartedAt,
+                            bot: environment.bot(for: route),
+                            management: environment.botManagement)
                     }
                     // GitHub #107 — the transcript's last row is the streaming
                     // row; the caret inside ConversationBubbleView marks it.
@@ -1844,6 +1757,9 @@ private struct ConversationBubbleView: View {
     @State private var showingCopyConfirmation = false
     @State private var copyConfirmationResetTask: Task<Void, Never>?
     let row: ConversationRow
+    /// Refinement Phase 2: only the last message of a run shows its time
+    /// (`ConversationRhythm`); the date lives in the run's separator.
+    var showsTimestamp: Bool = true
     /// Card D: needed to retrieve/render inline generated-image artifacts on
     /// the row that cited them. Optional so previews/tests that only exercise
     /// plain bubbles keep working.
@@ -2056,9 +1972,10 @@ private struct ConversationBubbleView: View {
     /// stamped the row (persisted history); live unstamped rows omit it
     /// rather than fabricate a time.
     private var timestampText: String? {
-        guard row.kind == .user || row.kind == .assistant,
+        guard showsTimestamp,
+              row.kind == .user || row.kind == .assistant,
               let timestamp = row.timestamp else { return nil }
-        return FleetSessionDateText.text(timestamp)
+        return ConversationRhythm.timeText(timestamp)
     }
 
     @ViewBuilder

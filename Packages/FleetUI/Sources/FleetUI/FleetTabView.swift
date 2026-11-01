@@ -484,7 +484,9 @@ public struct FleetTabView: View {
 
     @ViewBuilder private func root(_ tab: FleetTab) -> some View {
         switch tab {
-        case .fleet: FleetDashboardView(environment: environment)
+        case .fleet: FleetDashboardView(
+            environment: environment,
+            onOpenGroups: { navigation.selection = .groups })
         case .chats: FleetChatsView(environment: environment)
         case .groups: GroupsHomeView(environment: environment)
         case .bots: FleetRosterView(environment: environment)

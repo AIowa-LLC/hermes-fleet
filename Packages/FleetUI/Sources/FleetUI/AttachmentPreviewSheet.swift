@@ -58,6 +58,7 @@ enum AttachmentPreviewThumbnail {
 /// size, tap to preview, X to remove. The accessibility identifier of the
 /// chip itself is unchanged from R10-T1 so the existing UI tests keep
 /// addressing the same element.
+/// Refinement Phase 2: larger thumbnail tile, two-line name, roomier remove target.
 struct AttachmentChip: View {
     @Environment(\.fleetTheme) private var theme
     let attachment: ConversationViewModel.PendingAttachment
@@ -65,6 +66,7 @@ struct AttachmentChip: View {
     var onRemove: () -> Void
 
     @State private var thumbnail: UIImage?
+    @ScaledMetric(relativeTo: .caption) private var tileSide: CGFloat = 40
 
     private var kind: AttachmentPreviewKind { attachment.previewKind }
     /// A staged file with retained bytes can always be opened: for an
@@ -79,14 +81,16 @@ struct AttachmentChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: FleetTheme.spacingXs) {
             Button(action: onOpen) {
-                HStack(spacing: 6) {
+                HStack(spacing: FleetTheme.spacingSm) {
                     leadingGlyph
                     Text(attachment.caption)
-                        .font(.caption)
+                        .font(.footnote.weight(.medium))
                         .foregroundStyle(theme.textPrimary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 180, alignment: .leading)
                 }
                 .contentShape(Rectangle())
             }
@@ -99,19 +103,23 @@ struct AttachmentChip: View {
 
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.caption)
+                    .font(.body)
                     .foregroundStyle(theme.textSecondary)
+                    .frame(minWidth: 32, minHeight: 32)
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Remove attachment \(attachment.displayName)")
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 6)
+        .padding(.trailing, 2)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                .fill(theme.surfaceElevated))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.surface))
         .overlay(
-            RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                .strokeBorder(theme.border, lineWidth: 1))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(theme.border, lineWidth: 0.5))
         // `.contain`, not `.combine`: the chip now holds two actions (open the
         // preview, remove the attachment) and combining would swallow both.
         // The caption label is carried ON the container because
@@ -131,8 +139,8 @@ struct AttachmentChip: View {
                 Image(uiImage: thumbnail)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 32, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .frame(width: tileSide, height: tileSide)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .accessibilityHidden(true)
             } else {
                 placeholderGlyph(systemName: "photo")
@@ -146,11 +154,12 @@ struct AttachmentChip: View {
 
     private func placeholderGlyph(systemName: String) -> some View {
         Image(systemName: systemName)
-            .font(.caption2)
+            .font(.callout)
             .foregroundStyle(theme.highlight)
-            .frame(width: 32, height: 32)
+            .frame(width: tileSide, height: tileSide)
             .background(
-                RoundedRectangle(cornerRadius: 6).fill(theme.background))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.highlight.opacity(0.12)))
             .accessibilityHidden(true)
     }
 

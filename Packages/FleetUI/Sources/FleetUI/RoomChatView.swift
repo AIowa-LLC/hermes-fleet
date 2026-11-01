@@ -925,6 +925,8 @@ public struct RoomChatView: View {
     @State private var latestScrollTargetFrame: RoomLatestScrollTargetFrame?
     @State private var scrollViewportFrame = CGRect.null
     @State private var composerFrame = CGRect.null
+    /// Send orb glyph side, capped like the 1:1 composer's.
+    @ScaledMetric(relativeTo: .callout) private var roomSendGlyphSide: CGFloat = 30
     @FocusState private var composing: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Parity with the 1:1 floating Latest chevron (ConversationView): the
@@ -1950,23 +1952,23 @@ public struct RoomChatView: View {
                     .accessibilityIdentifier("fleet.room.composer.field")
                     .onSubmit { Task { await submit() } }
                     if viewModel.capabilities.canSend {
-                        Button {
+                        // Refinement Phase 2: the same send orb as the 1:1
+                        // composer (accent when sendable, neutral when not).
+                        ComposerSendButton(glyphSide: roomSendGlyphSide) {
                             Task { await submit() }
-                        } label: {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.title2)
-                                .frame(minWidth: 44, minHeight: 44)
-                                .contentShape(Rectangle())
                         }
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSending)
                         .accessibilityLabel("Send message")
                         .accessibilityIdentifier("fleet.room.send")
                     }
                 }
-                .padding(.horizontal, FleetTheme.spacingMd)
-                .padding(.vertical, 10)
-                .background(theme.surfaceElevated)
-                .clipShape(Capsule())
+                .padding(.leading, FleetTheme.spacingMd)
+                .padding(.trailing, 4)
+                .padding(.vertical, 4)
+                // Refinement Phase 2: Rooms share the 1:1 composer's Liquid
+                // Glass capsule (opaque under Reduce Transparency /
+                // Increase Contrast via the shared seam).
+                .fleetGlass(in: Capsule())
             }
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.bottom, FleetTheme.spacingSm)
