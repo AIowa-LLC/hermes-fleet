@@ -57,8 +57,7 @@ public struct BotPetPickerSheet: View {
             Group {
                 switch phase {
                 case .idle, .loadingLocal:
-                    ProgressView("Loading pets…")
-                        .accessibilityIdentifier("fleet.bot.pet.loading")
+                    loadingSkeleton
                 case .unsupported:
                     unsupportedState
                 case .failed(let message):
@@ -77,6 +76,32 @@ public struct BotPetPickerSheet: View {
             .searchable(text: $query, prompt: Text("Search pets"))
             .task { await management.loadPetGallery(for: bot) }
         }
+    }
+
+    /// Cold-load placeholder shaped like the gallery grid, so the layout does
+    /// not jump when pets arrive.
+    private var loadingSkeleton: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 96), spacing: 12)],
+                spacing: 12
+            ) {
+                ForEach(0..<9, id: \.self) { _ in
+                    VStack(spacing: 6) {
+                        FleetSkeletonBlock(cornerRadius: 12)
+                            .frame(height: 88)
+                        FleetSkeletonBlock(cornerRadius: 4)
+                            .frame(width: 64, height: 10)
+                        FleetSkeletonBlock(cornerRadius: 4)
+                            .frame(width: 44, height: 8)
+                    }
+                }
+            }
+            .padding()
+        }
+        .accessibilityIdentifier("fleet.bot.pet.loading")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading pets")
     }
 
     /// Pets unavailable (method-not-found): a capability fact — no retry
@@ -207,8 +232,18 @@ struct BotPetCell: View {
         } label: {
             VStack(spacing: 6) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(theme.surfaceElevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(theme.border.opacity(0.5), lineWidth: 0.5)
+                        )
+                        .overlay {
+                            if selectionInFlight {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(theme.highlight, lineWidth: 2)
+                            }
+                        }
                     if let thumbnail, let image = BoundedImageDecoder.decode(thumbnail) {
                         Image(uiImage: image)
                             .resizable()
@@ -224,7 +259,8 @@ struct BotPetCell: View {
                         }
                         .accessibilityIdentifier("fleet.bot.pet.thumb-retry.\(pet.slug)")
                     } else {
-                        ProgressView()
+                        FleetSkeletonBlock(cornerRadius: 10)
+                            .padding(6)
                     }
                     if selectionInFlight { ProgressView() }
                 }
@@ -232,26 +268,22 @@ struct BotPetCell: View {
                 VStack(spacing: 2) {
                     Text(pet.displayName)
                         .font(.caption)
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     Text(pet.slug)
                         .font(.caption2)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
-                HStack(spacing: 4) {
-                    if pet.installed {
-                        badge("Installed")
-                    }
-                    if pet.generated {
-                        badge("Generated")
-                    }
-                    if pet.curated {
-                        badge("Curated")
-                    }
+                // Refinement Phase 3: badges never break mid-word — side by
+                // side when they fit, stacked when they don't.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) { badges }
+                    VStack(spacing: 3) { badges }
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.fleetPressable)
         .task(id: pet.slug) {
             // Lazy: the request fires only when the cell materializes in
             // the grid (LazyVGrid virtualizes off-screen cells away).
@@ -272,9 +304,24 @@ struct BotPetCell: View {
         }
     }
 
+    @ViewBuilder
+    private var badges: some View {
+        if pet.installed {
+            badge("Installed")
+        }
+        if pet.generated {
+            badge("Generated")
+        }
+        if pet.curated {
+            badge("Curated")
+        }
+    }
+
     private func badge(_ text: String) -> some View {
         Text(text)
             .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Capsule().fill(theme.highlight.opacity(0.18)))

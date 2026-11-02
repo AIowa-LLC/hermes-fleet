@@ -12,6 +12,8 @@ import SwiftUI
 public struct FleetSettingsView: View {
     private let appearanceController: FleetAppearanceController
     private let themeController: FleetThemeController
+    /// Refinement Phase 3: nil omits the App Icon row (previews, tests).
+    private let appIconController: FleetAppIconController?
     /// Dogfood round 2 (ADR-0011): the About row selects the About TAB
     /// (the drawer circle is retired — Settings is About's entry point).
     private let onSelectAbout: () -> Void
@@ -33,11 +35,13 @@ public struct FleetSettingsView: View {
 
     public init(appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
                 themeController: FleetThemeController = FleetThemeController.shared,
+                appIconController: FleetAppIconController? = FleetAppIconController.shared,
                 onSelectAbout: @escaping () -> Void = {},
                 onOpenGateways: @escaping () -> Void = {},
                 environment: AppEnvironment? = nil) {
         self.appearanceController = appearanceController
         self.themeController = themeController
+        self.appIconController = appIconController
         self.onSelectAbout = onSelectAbout
         self.onOpenGateways = onOpenGateways
         self.environment = environment
@@ -89,43 +93,13 @@ public struct FleetSettingsView: View {
                 .accessibilityLabel("Appearance, \(appearanceController.selection.label)")
                 .accessibilityIdentifier("fleet.settings.appearance")
 
-                // ChatGPT-style accent picker (dogfood: the full theme
-                // editor is retired from Settings; the picker applies a
-                // curated highlight over Fleet-default colors IMMEDIATELY).
-                Menu {
-                    ForEach(FleetAccent.allCases) { accent in
-                        Button {
-                            applyAccent(accent)
-                        } label: {
-                            HStack {
-                                Text(accent.label)
-                                if accent == currentAccent {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                        .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
-                    }
-                } label: {
-                    HStack {
-                        Circle()
-                            .fill(Color(accentColorHighlight.uiColor))
-                            .frame(width: 18, height: 18)
-                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
-                            .accessibilityHidden(true)
-                        Text("Accent")
-                            .foregroundStyle(theme.textSecondary)
-                        Spacer()
-                        Text(currentAccent?.label ?? "Custom")
-                            .foregroundStyle(theme.textSecondary)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2)
-                            .foregroundStyle(theme.textSecondary)
-                            .accessibilityHidden(true)
-                    }
+                // Refinement Phase 3: curated themes (each contrast-gated
+                // in both appearances) replace the eight-color accent set,
+                // plus the alternate app icon.
+                FleetThemeMenuRow(controller: themeController)
+                if let appIconController, appIconController.supportsAlternateIcons {
+                    FleetAppIconMenuRow(controller: appIconController)
                 }
-                .accessibilityLabel("Accent, \(currentAccent?.label ?? "Custom")")
-                .accessibilityIdentifier("fleet.settings.accent")
             } header: {
                 Text("Theme")
                     .foregroundStyle(theme.textSecondary)
@@ -237,25 +211,6 @@ public struct FleetSettingsView: View {
                 AdditionalGatewaySheet(environment: environment)
             }
         }
-    }
-
-    // MARK: - Accent picker support (ChatGPT-style)
-
-    private var currentAccent: FleetAccent? {
-        FleetAccent.matching(active: themeController.activePalette)
-    }
-
-    private var accentColorHighlight: FleetStoredColor {
-        // ADR-0009: the swatch shows the ACTIVE appearance's resolution
-        // (the mono White accent renders near-black in light, white in dark).
-        theme.resolvedPalette.highlight
-    }
-
-    private func applyAccent(_ accent: FleetAccent) {
-        // Immediate apply — the ChatGPT contract. The controller's
-        // invisible-pair guard still runs (all 7 pass over Fleet-default
-        // backgrounds by construction).
-        themeController.apply(accent.palette)
     }
 }
 

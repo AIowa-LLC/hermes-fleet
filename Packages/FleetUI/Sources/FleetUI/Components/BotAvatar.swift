@@ -59,7 +59,12 @@ public struct BotAvatar: View {
         }
         .frame(width: Self.side, height: Self.side)
         .background(theme.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+        // Refinement Phase 3: hairline so an avatar never dissolves into a
+        // surface of the same tone (photo avatars on a matching card).
+        .overlay(
+            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(theme.border.opacity(0.35), lineWidth: 0.5))
         .accessibilityHidden(true)
         .task(id: "\(bot?.route.id ?? "")/\(bot?.hasAvatar ?? false)/\(String(bot?.uiMetaRevisions?[BotModeContract.botsMetaKey] ?? 0))") {
             if let bot { await management?.loadAvatar(for: bot) }
@@ -119,11 +124,27 @@ public struct BotAvatarFace: View {
     public var body: some View {
         ZStack {
             BotAvatarShapePath(name: shape, seed: seed).fill(tint)
+            // Refinement Phase 3: a soft top-light sheen gives the face
+            // depth without changing its identity color.
+            BotAvatarShapePath(name: shape, seed: seed)
+                .fill(LinearGradient(
+                    colors: [FleetThemeContrast.inkLight.swiftUIColor.opacity(0.22), .clear],
+                    startPoint: .top,
+                    endPoint: .center))
             HStack(spacing: 7) {
                 Capsule().frame(width: 3, height: 6)
                 Capsule().frame(width: 3, height: 6)
-            }.foregroundStyle(.black.opacity(0.8))
+            }.foregroundStyle(Self.eyeInk(on: tint).opacity(0.85))
         }.padding(4)
+    }
+
+    /// Eyes take the higher-contrast ink for the face color, so a dark
+    /// metadata color (e.g. #1A1A2E) no longer swallows black eyes.
+    static func eyeInk(on tint: Color) -> Color {
+        guard let stored = FleetStoredColor(color: tint) else {
+            return FleetThemeContrast.inkDark.swiftUIColor
+        }
+        return FleetThemeContrast.maxContrastInk(on: stored).swiftUIColor
     }
 }
 

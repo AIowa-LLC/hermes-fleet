@@ -6,7 +6,9 @@ import SwiftUI
 /// primary label with the colored glyph (SPEC §14 status row).
 ///
 /// Motion (SPEC §15): one 150–200 ms crossfade when the status changes;
-/// Reduce Motion replaces it with an instant label swap.
+/// Reduce Motion replaces it with an instant label swap. Refinement Phase 3
+/// adds a symbol replace on change and a repeating pulse on the executing
+/// glyph, both suppressed under Reduce Motion.
 public struct StatusPill: View {
     @Environment(\.fleetTheme) private var theme
     private let status: FleetStatus
@@ -21,10 +23,16 @@ public struct StatusPill: View {
             Image(systemName: status.symbolName)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(semanticColor)
+                // Refinement Phase 3: the glyph morphs between states and
+                // pulses while executing (live work); both off under Reduce
+                // Motion, which keeps the instant swap.
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && isExecuting)
                 .accessibilityHidden(true)
             Text(status.label)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(theme.textPrimary)
+                .contentTransition(reduceMotion ? .identity : .opacity)
         }
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, FleetTheme.spacingXs)
@@ -39,6 +47,11 @@ public struct StatusPill: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isExecuting: Bool {
+        if case .executing = status { return true }
+        return false
+    }
 
     /// Hairline status-color stroke opacity (subtle definition on canvas).
     static let strokeOpacity: Double = 0.25

@@ -203,4 +203,119 @@ final class RefinementTourUITests: XCTestCase {
         shot("15-attachment-tray")
         app.terminate()
     }
+
+    // MARK: Phase 3 — themes, app icon, avatars, motion moments
+
+    private func selectTheme(_ app: XCUIApplication, _ name: String) {
+        let row = element(app, "fleet.settings.accent")
+        guard tapIfPresent(row) else { return }
+        _ = tapIfPresent(app.buttons[name].firstMatch, timeout: 5)
+        Thread.sleep(forTimeInterval: 0.6)
+    }
+
+    /// Per theme: the Settings Theme row, the home, and a conversation, in
+    /// the current appearance. Leaves the default (Fleet) applied.
+    func testTourThemes() throws {
+        for (index, name) in ["Fleet", "Violet", "Ocean", "Orchid", "Graphite"].enumerated() {
+            let id = "\(16 + index)-theme-\(name.lowercased())"
+            let settings = makeApp(["HERMES_FLEET_AUTO_NAV": "settings"])
+            settings.launch()
+            Thread.sleep(forTimeInterval: 2.0)
+            selectTheme(settings, name)
+            shot("\(id)-settings")
+            settings.terminate()
+
+            launchShot("fleet", "\(id)-home")
+
+            let chat = makeApp(["HERMES_FLEET_AUTO_NAV": "bot-detail", "HERMES_FLEET_LONG_CHAT_FIXTURE": "1"])
+            chat.launch()
+            if openDefaultSession(chat).exists {
+                Thread.sleep(forTimeInterval: 1.5)
+                shot("\(id)-chat")
+            }
+            chat.terminate()
+        }
+        let reset = makeApp(["HERMES_FLEET_AUTO_NAV": "settings"])
+        reset.launch()
+        Thread.sleep(forTimeInterval: 2.0)
+        selectTheme(reset, "Fleet")
+        reset.terminate()
+    }
+
+    func testTourAppIcon() throws {
+        let app = makeApp(["HERMES_FLEET_AUTO_NAV": "settings"])
+        app.launch()
+        Thread.sleep(forTimeInterval: 2.0)
+        guard tapIfPresent(element(app, "fleet.settings.app-icon")) else { shot("21-app-icon-unreached"); return }
+        shot("21-app-icon-menu")
+        guard tapIfPresent(element(app, "fleet.settings.app-icon.violet"), timeout: 5) else { return }
+        Thread.sleep(forTimeInterval: 1.0)
+        shot("22-app-icon-changed")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let ok = springboard.alerts.buttons["OK"].firstMatch
+        if ok.waitForExistence(timeout: 3) { ok.tap() }
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 1.5)
+        shot("23-app-icon-home-screen")
+        app.activate()
+        Thread.sleep(forTimeInterval: 1.5)
+        if tapIfPresent(element(app, "fleet.settings.app-icon")) {
+            _ = tapIfPresent(element(app, "fleet.settings.app-icon.standard"), timeout: 5)
+            if ok.waitForExistence(timeout: 3) { ok.tap() }
+        }
+        app.terminate()
+    }
+
+    func testTourPetPicker() throws {
+        let app = makeApp()
+        app.launch()
+        UITabNavigation.openBotsTab(app)
+        guard tapIfPresent(element(app, "fleet.roster.row.workstation#default"), timeout: 15) else { return }
+        shot("24-bots-avatars")
+        if app.buttons["Configuration"].firstMatch.exists { app.buttons["Configuration"].firstMatch.tap() }
+        guard tapIfPresent(element(app, "fleet.bot-detail.edit")) else { return }
+        guard tapIfPresent(element(app, "fleet.bot.avatar.pet")) else { return }
+        _ = element(app, "fleet.bot.pet.cell.spark-fox").waitForExistence(timeout: 15)
+        shot("25-pet-picker")
+        app.terminate()
+    }
+
+    func testTourApprovedMoment() throws {
+        let app = makeApp(["HERMES_FLEET_APPROVAL_DEMO": "1", "HERMES_FLEET_APPROVAL_BIOMETRIC": "success"])
+        app.launch()
+        UITabNavigation.openGatewaysTab(app)
+        _ = tapIfPresent(element(app, "fleet.gateways.row.workstation"))
+        UITabNavigation.openGatewayBots(app)
+        _ = tapIfPresent(element(app, "fleet.roster.row.workstation#default"))
+        guard tapIfPresent(element(app, "fleet.bot-detail.sessions.row.workstation.default.s1")) else { return }
+        let composer = app.textFields["fleet.conversation.composer"]
+        guard composer.waitForExistence(timeout: 10) else { return }
+        let deadline = Date().addingTimeInterval(15)
+        while !composer.isEnabled && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        composer.tap()
+        composer.typeText("hello approvals")
+        _ = tapIfPresent(element(app, "fleet.conversation.send"))
+        guard element(app, "approval.banner").waitForExistence(timeout: 15) else { return }
+        shot("26-approval-banner")
+        guard tapIfPresent(element(app, "approval.approve"), timeout: 5) else { return }
+        let once = app.buttons["Approve once"].firstMatch
+        if once.waitForExistence(timeout: 2) { once.tap() }
+        // The confirmation holds ~1.6 s; capture frames straight away
+        // (a waitForExistence round-trip can outlast it).
+        for frame in 0..<8 {
+            let screenshot = XCUIScreen.main.screenshot()
+            let seen = element(app, "approval.approved-moment").exists
+            let attachment = XCTAttachment(screenshot: screenshot)
+            attachment.name = "\(variant)-27-approved-frame\(frame)-\(seen)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if seen, let dir = ProcessInfo.processInfo.environment["REFINE_SHOTS_DIR"], !dir.isEmpty {
+                try? screenshot.pngRepresentation.write(
+                    to: URL(fileURLWithPath: dir).appendingPathComponent("\(variant)-27-approved-moment.png"))
+                break
+            }
+            print("approved-moment frame \(frame) seen=\(seen)")
+        }
+        app.terminate()
+    }
 }
