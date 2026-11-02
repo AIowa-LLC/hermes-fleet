@@ -40,7 +40,9 @@ struct QRFirstServerView: View {
             }
         }
         .tint(theme.highlight)
-        .preferredColorScheme(.dark)
+        // Refinement Phase 4: no forced dark scheme. The root Appearance
+        // preference won for the content but not for sheet chrome, so a light
+        // appearance showed white toolbar text on a light sheet.
         .pairingScanSheets(pairing: pairing, presented: $presentedSheet)
     }
 
@@ -54,11 +56,15 @@ struct QRFirstServerView: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("fleet.first-run.title")
 
-            Text("Your phone connects to the Hermes you already use. The link only starts a request; you approve it from your own chat or terminal.")
+            Text("Fleet connects your phone straight to the Hermes server you run. You approve every connection from your own chat or terminal.")
                 .font(FleetTheme.secondaryFont)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.first-run.intro")
+
+            // Refinement Phase 4: the trust statement sits above the steps,
+            // so it is read before anything is asked of the owner.
+            OnboardingTrustPoints(idPrefix: "fleet.first-run")
         }
     }
 

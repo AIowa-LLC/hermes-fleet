@@ -318,4 +318,29 @@ final class RefinementTourUITests: XCTestCase {
         }
         app.terminate()
     }
+
+    // MARK: Phase 4 — onboarding trust pass
+
+    func testTourOnboarding() throws {
+        let app = makeApp(["HERMES_FLEET_ZERO_GATEWAYS": "1", "HERMES_FLEET_ONBOARDING_SCENARIO": "success"])
+        app.launch()
+        guard element(app, "fleet.first-run.title").waitForExistence(timeout: 15) else { shot("28-first-run-unreached"); return }
+        shot("28-first-run-top")
+        app.swipeUp()
+        shot("29-first-run-bottom")
+        guard tapIfPresent(element(app, "fleet.first-run.advanced")) else { app.terminate(); return }
+        shot("30-other-ways")
+        guard tapIfPresent(element(app, "fleet.first-run.advanced.owner")) else { app.terminate(); return }
+        let address = app.textFields["fleet.onboarding.address"]
+        if address.waitForExistence(timeout: 10) {
+            shot("31-owner-address")
+            address.tap()
+            address.typeText("https://onboarding.fixture.test")
+            _ = tapIfPresent(app.buttons["fleet.onboarding.continue"])
+            if app.secureTextFields["fleet.onboarding.password"].waitForExistence(timeout: 10) {
+                shot("32-owner-sign-in")
+            }
+        }
+        app.terminate()
+    }
 }
