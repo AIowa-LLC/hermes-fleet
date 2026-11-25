@@ -172,6 +172,9 @@ public final class ConversationViewModel {
     public let route: Route
     /// The stored/list session id to resume, or nil to create a new conversation.
     public let sessionID: String?
+    /// #228: the `/new <title>` name for a fresh conversation's
+    /// `session.create` (nil for an existing chat or an untitled new one).
+    private let newChatTitle: String?
 
     /// r9 toolbelt: apply a `session.cwd.set` readback — refreshes the
     /// working-folder chip (and any derived header state) after a change.
@@ -589,6 +592,7 @@ public final class ConversationViewModel {
         cache: any CacheStoring,
         route: Route,
         sessionID: String?,
+        newChatTitle: String? = nil,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
         openTimeout: Duration = ConversationViewModel.defaultOpenTimeout,
@@ -601,6 +605,7 @@ public final class ConversationViewModel {
         self.cache = cache
         self.route = route
         self.sessionID = sessionID
+        self.newChatTitle = newChatTitle
         self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.openTimeout = openTimeout
@@ -864,7 +869,7 @@ public final class ConversationViewModel {
                     let modelParams = toolingViewModel?.createModelParams
                         ?? (model: nil as String?, provider: nil as String?)
                     let created = try await session.conversation.createSession(
-                        title: nil,
+                        title: newChatTitle,
                         profile: route.profileSlug.rawValue,
                         model: modelParams.model,
                         provider: modelParams.provider,
@@ -1268,8 +1273,9 @@ public final class ConversationViewModel {
     /// session (used by /new, /branch, /fork).
     public private(set) var commandNavigation: CommandNavigation?
     public enum CommandNavigation: Equatable, Sendable {
-        /// Push a fresh conversation (same route, new session id).
-        case newConversation(sessionID: String)
+        /// Push a fresh conversation (same route). It creates its own session
+        /// on open, like Fleet's New Chat; `title` rides on `session.create`.
+        case newConversation(title: String?)
         /// Open Fleet's native model picker.
         case modelPicker
         /// Open Fleet's native sessions list (Chats tab).
@@ -1338,25 +1344,15 @@ public final class ConversationViewModel {
     private func runNativeAction(_ action: FleetCommandAction, argument: String, sessionID sid: String) async -> Bool {
         switch action {
         case .new:
-            // A new chat must feel exactly like Fleet's own New Chat: create
-            // a genuinely new Hermes session (with Hermes' optional naming
-            // semantics via `title`), never submit "/new" as model text.
-            let title = argument.isEmpty ? nil : argument
-            do {
-                let modelParams = toolingViewModel?.createModelParams
-                    ?? (model: nil as String?, provider: nil as String?)
-                let created = try await session.conversation.createSession(
-                    title: title,
-                    profile: route.profileSlug.rawValue,
-                    model: modelParams.model,
-                    provider: modelParams.provider,
-                    cols: nil)
-                commandNavigation = .newConversation(sessionID: created.sessionID)
-                return true
-            } catch {
-                commandSuggestionError = "Could not start a new conversation: \(Self.nonSecret(error))"
-                return false
-    }
+            // A new chat must feel exactly like Fleet's own New Chat: push a
+            // fresh conversation that creates a genuinely new Hermes session
+            // in its own open (with Hermes' optional naming semantics via
+            // `title`), never submit "/new" as model text. #228: it carries
+            // no session id, so it never resumes one — a session that is gone
+            // from the gateway cannot dead-end the new chat, and its Retry
+            // can only create again.
+            commandNavigation = .newConversation(title: argument.isEmpty ? nil : argument)
+            return true
         case .steer:
             let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {

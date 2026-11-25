@@ -39,6 +39,9 @@ final class ConversationCommandRoutingTests: XCTestCase {
 
         // conversation
         var createdTitles: [String?] = []
+        var resumedSessionIDs: [String] = []
+        /// #228: stored sessions that no longer exist on the gateway.
+        var missingSessionIDs: Set<String> = []
         var submittedTexts: [String] = []
         var interruptCount = 0
         var conversation: any ConversationProviding { self }
@@ -50,7 +53,11 @@ final class ConversationCommandRoutingTests: XCTestCase {
             return ConversationSession(sessionID: "fresh-\(createdTitles.count)", profileName: profile)
         }
         func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
-            ConversationSession(sessionID: sessionID, profileName: "default")
+            resumedSessionIDs.append(sessionID)
+            if missingSessionIDs.contains(sessionID) {
+                throw ConversationError.sessionNotFound("session not found")
+            }
+            return ConversationSession(sessionID: sessionID, profileName: "default")
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             submittedTexts.append(text)
@@ -181,6 +188,24 @@ final class ConversationCommandRoutingTests: XCTestCase {
         return (session, viewModel)
     }
 
+    /// The conversation a `/new` push opens, built the way `ConversationView`
+    /// builds it: no session id, the command's title for `session.create`.
+    private func openPushedNewChat(
+        from viewModel: ConversationViewModel, session: RoutingSession
+    ) async -> ConversationViewModel? {
+        guard case .newConversation(let title) = viewModel.commandNavigation else { return nil }
+        let pushed = ConversationViewModel(
+            session: session,
+            cache: cache,
+            route: Route(
+                gatewayID: GatewayID(rawValue: "workstation"),
+                profileSlug: ProfileSlug(rawValue: "default")),
+            sessionID: nil,
+            newChatTitle: title)
+        await pushed.start()
+        return pushed
+    }
+
     // MARK: - Native actions
 
     func testSteerRoutesThroughToolingSeamNotBackend() async throws {
@@ -207,9 +232,13 @@ final class ConversationCommandRoutingTests: XCTestCase {
         let (session, viewModel) = try await makeFixture()
         let sent = await viewModel.send("/new")
         XCTAssertTrue(sent)
+        XCTAssertEqual(viewModel.commandNavigation, .newConversation(title: nil))
+        XCTAssertTrue(session.createdTitles.isEmpty,
+                      "the pushed new chat creates its own session")
+        let pushed = await openPushedNewChat(from: viewModel, session: session)
         XCTAssertEqual(session.createdTitles, [nil],
                        "bare /new creates an untitled session")
-        XCTAssertEqual(viewModel.commandNavigation, .newConversation(sessionID: "fresh-1"))
+        XCTAssertEqual(pushed?.hasOpenedSession, true)
         XCTAssertTrue(session.submittedTexts.isEmpty,
                       "/new must never submit model text")
     }
@@ -217,14 +246,56 @@ final class ConversationCommandRoutingTests: XCTestCase {
     func testNewWithArgumentNamesTheSession() async throws {
         let (session, viewModel) = try await makeFixture()
         _ = await viewModel.send("/new auth experiment")
+        XCTAssertEqual(viewModel.commandNavigation, .newConversation(title: "auth experiment"))
+        _ = await openPushedNewChat(from: viewModel, session: session)
         XCTAssertEqual(session.createdTitles, ["auth experiment"])
     }
 
     func testResetAliasResolvesToNew() async throws {
         let (session, viewModel) = try await makeFixture()
         _ = await viewModel.send("/reset")
-        XCTAssertEqual(session.createdTitles.count, 1,
+        XCTAssertEqual(viewModel.commandNavigation, .newConversation(title: nil),
                        "alias /reset resolves to the same native /new action")
+        _ = await openPushedNewChat(from: viewModel, session: session)
+        XCTAssertEqual(session.createdTitles.count, 1)
+    }
+
+    /// #228: `/new` after the current session is gone from the gateway
+    /// settles into a clean, empty conversation with a working composer — no
+    /// not-found banner, no endless loading, and Retry never reloads the
+    /// missing session.
+    func testNewAfterSessionIsGoneSettlesIntoCleanEmptyConversation() async throws {
+        let (session, viewModel) = try await makeFixture()
+        // The current session no longer exists on the gateway.
+        session.missingSessionIDs = ["s1"]
+        session.resumedSessionIDs = []
+
+        let sent = await viewModel.send("/new")
+        XCTAssertTrue(sent)
+        guard let pushed = await openPushedNewChat(from: viewModel, session: session) else {
+            return XCTFail("/new must push a fresh conversation")
+        }
+
+        XCTAssertEqual(pushed.phase, .ready, "settled, not failed or loading")
+        XCTAssertNil(pushed.errorMessage, "no error banner")
+        XCTAssertFalse(pushed.isHistoryHydrationInProgress, "no loading spinner")
+        XCTAssertFalse(pushed.showsHistoryLoadingPlaceholder)
+        XCTAssertFalse(pushed.isOpenTimedOut)
+        XCTAssertTrue(pushed.transcript.isEmpty, "a clean, empty conversation")
+        XCTAssertEqual(session.createdTitles, [nil])
+        XCTAssertTrue(session.resumedSessionIDs.isEmpty, "a new chat never resumes the missing session")
+
+        // The composer works: the phase enables it and a send reaches the
+        // new session.
+        let delivered = await pushed.send("hello")
+        XCTAssertTrue(delivered)
+        XCTAssertEqual(session.submittedTexts, ["hello"])
+
+        // Retry on this surface re-opens the NEW session, never the missing one.
+        await pushed.retryOpen()
+        XCTAssertFalse(session.resumedSessionIDs.contains("s1"))
+        XCTAssertNil(pushed.errorMessage)
+        XCTAssertEqual(pushed.phase, .ready)
     }
 
     func testTitleRoutesThroughRenameSeam() async throws {
