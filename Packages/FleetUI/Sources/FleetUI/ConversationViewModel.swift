@@ -845,8 +845,8 @@ public final class ConversationViewModel {
                 if let sessionID {
                     // t_8401d3c3: declare the client's last applied event id on
                     // every (re)subscribe so the resume point travels with the
-                    // subscription itself. #188: a too-long refusal falls back
-                    // to the omit-messages resume + paged transcript.
+                    // subscription itself. #230: a chat longer than one page
+                    // opens from the omit-messages skeleton + paged transcript.
                     let (resumed, paged) = try await resumeOpeningSession(
                         sessionID: sessionID, lastEventID: lastAppliedEventID)
                     guard isCurrent(token) else { return false }
@@ -903,41 +903,37 @@ public final class ConversationViewModel {
         return true
     }
 
-    /// #188: `session.resume` with the long-chat fallback. A 4130 refusal
-    /// (lineage over the reload limit) re-resumes with `omit_messages` and
-    /// reports `paged == true`; the caller applies paged mode only after its
-    /// fence check. Every other failure rethrows unchanged, so a chat that
-    /// opens today takes exactly the same path. Without a pager the 4130
-    /// rethrows and surfaces the long-chat open message.
+    /// #188 / #230: `session.resume` for the open. With a pager, the resume
+    /// always asks for the `omit_messages` skeleton (a few KB, no display
+    /// history), so a chat whose full frame runs to megabytes never races the
+    /// open watchdog. The skeleton's `message_count` then picks the transcript
+    /// source: more than one page → `paged == true` (newest page over REST,
+    /// "Load earlier" for the rest); otherwise the chat stays unpaged and the
+    /// empty projection is settled by the existing `session.history` fetch.
+    /// A gateway that ignores the flag returns its rows, which apply exactly
+    /// as before. The caller applies paged mode only after its fence check.
+    /// Without a pager the full resume is unchanged, and a 4130 rethrows and
+    /// surfaces the long-chat open message.
     private func resumeOpeningSession(
         sessionID: String,
         lastEventID: Int?
     ) async throws -> (session: ConversationSession, paged: Bool) {
-        do {
+        guard historyPager != nil else {
             let resumed = try await session.conversation.resumeSession(
                 sessionID: sessionID,
                 lastEventID: lastEventID,
                 profile: route.profileSlug.rawValue
             )
             return (resumed, false)
-        } catch ConversationError.sessionTooLongToReload(let count) where historyPager != nil {
-            do {
-                let resumed = try await session.conversation.resumeSession(
-                    sessionID: sessionID,
-                    lastEventID: lastEventID,
-                    profile: route.profileSlug.rawValue,
-                    omitMessages: true
-                )
-                return (resumed, true)
-            } catch ConversationError.notConnected {
-                throw ConversationError.notConnected
-            } catch {
-                // The omit resume is the only way to open this chat, so its
-                // failure is reported as the long-chat message, not the raw
-                // transport text.
-                throw ConversationError.sessionTooLongToReload(messageCount: count)
-            }
         }
+        let resumed = try await session.conversation.resumeSession(
+            sessionID: sessionID,
+            lastEventID: lastEventID,
+            profile: route.profileSlug.rawValue,
+            omitMessages: true
+        )
+        let paged = resumed.messages.isEmpty && resumed.messageCount > Self.pagedHistoryPageSize
+        return (resumed, paged)
     }
 
     /// Re-adopt the runtime session id after the transport reconnects. The

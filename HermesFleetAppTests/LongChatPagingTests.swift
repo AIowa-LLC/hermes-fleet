@@ -3,7 +3,8 @@ import FleetCore
 import FleetPersistence
 import FleetUI
 
-/// #188 hosted tests — the long-chat paged transcript in `ConversationViewModel`.
+/// #188 / #230 hosted tests — the long-chat paged transcript in
+/// `ConversationViewModel`.
 ///
 /// Everything is synthetic: a 25,000-row lineage served by a fake pager, and a
 /// fake session that refuses the full resume with 4130 and honors
@@ -74,6 +75,7 @@ final class LongChatPagingTests: XCTestCase {
             .success(ConversationSession(sessionID: "s-1", messageCount: 25_000, messages: [], profileName: "default"))
         var resumeOmitFlags: [Bool] = []
         var historyCallCount = 0
+        var historyMessages: [SessionMessage] = []
         var replayOutcomes: [ReplayOutcome] = [.nothingToReplay]
         var submittedTexts: [String] = []
 
@@ -132,7 +134,7 @@ final class LongChatPagingTests: XCTestCase {
         // SessionHistoryProviding: the paged path must never reach these.
         func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
             historyCallCount += 1
-            return SessionHistory(sessionID: sessionID, count: 0, messages: [])
+            return SessionHistory(sessionID: sessionID, count: historyMessages.count, messages: historyMessages)
         }
         func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
             SessionStatus.parse(output: "Session ID: \(sessionID)")
@@ -162,8 +164,8 @@ final class LongChatPagingTests: XCTestCase {
         )
     }
 
-    /// A long chat opened through the 4130 → omit_messages fallback, with the
-    /// newest page loaded.
+    /// A long chat opened from the omit_messages skeleton, with the newest
+    /// page loaded.
     private func openLongChat(lineage: Int = 25_000) async throws -> (LongChatSession, SyntheticLineagePager, ConversationViewModel) {
         let pager = SyntheticLineagePager(count: lineage)
         let session = LongChatSession(pager: pager)
@@ -199,10 +201,10 @@ final class LongChatPagingTests: XCTestCase {
 
     // MARK: - Open path
 
-    func testFourThirtyResumeReopensWithOmitMessagesAndLoadsLatestPageInOrder() async throws {
+    func testLongChatOpensFromOmitSkeletonAndLoadsLatestPageInOrder() async throws {
         let (session, pager, viewModel) = try await openLongChat()
 
-        XCTAssertEqual(session.resumeOmitFlags, [false, true], "full resume refused, then omit_messages re-resume")
+        XCTAssertEqual(session.resumeOmitFlags, [true], "one omit_messages resume; the refused full frame is never requested")
         XCTAssertTrue(viewModel.isPagedHistory)
         XCTAssertEqual(pager.requests.first?.offset, 0)
         XCTAssertEqual(pager.requests.first?.limit, 200)
@@ -294,7 +296,7 @@ final class LongChatPagingTests: XCTestCase {
 
         await viewModel.reconnect()
 
-        XCTAssertEqual(session.resumeOmitFlags, [false, true, false, true])
+        XCTAssertEqual(session.resumeOmitFlags, [true, true])
         XCTAssertGreaterThan(pager.requests.count, requestsBefore,
                              "omit_messages fallback must refresh the newest page even with no replay rows")
         XCTAssertEqual(rowIDs(viewModel), Array(24_803...25_002))
@@ -345,10 +347,10 @@ final class LongChatPagingTests: XCTestCase {
         XCTAssertEqual(session.submittedTexts, ["still works here"])
     }
 
-    func testOmitResumeFailureSurfacesLongChatOpenMessageWithCount() async throws {
+    func testTooLongRefusalOfTheSkeletonSurfacesLongChatOpenMessageWithCount() async throws {
         let pager = SyntheticLineagePager(count: 25_000)
         let session = LongChatSession(pager: pager)
-        session.omitResume = .failure(.rpcFailed("transport closed"))
+        session.omitResume = .failure(.sessionTooLongToReload(messageCount: 25_000))
         let viewModel = try await makeFixture(session: session)
 
         await viewModel.start()
@@ -362,12 +364,111 @@ final class LongChatPagingTests: XCTestCase {
         XCTAssertFalse(viewModel.isPagedHistory)
     }
 
+    func testWithoutPagerFullResumeIsUnchangedAndTooLongRefusalSurfaces() async throws {
+        let session = LongChatSession(pager: nil)
+        let viewModel = try await makeFixture(session: session)
+
+        await viewModel.start()
+
+        XCTAssertEqual(session.resumeOmitFlags, [false], "no pager: the full resume is unchanged, no omit_messages")
+        guard case .failed(let message) = viewModel.phase else {
+            return XCTFail("expected a failed open, got \(viewModel.phase)")
+        }
+        XCTAssertEqual(
+            message,
+            "This chat is too long to open on this gateway (25000 messages). Update Hermes on the gateway, or start a new chat with this bot.")
+        XCTAssertFalse(viewModel.isPagedHistory)
+    }
+
+    // MARK: - #230 mid-size chats
+
+    /// #230 acceptance: a ~990-row chat (whose full resume frame runs to ~4 MB)
+    /// opens from the skeleton plus the newest REST page — the full frame is
+    /// never requested, the open watchdog never fires, first content paints
+    /// well inside 3 s, and "Load earlier" reaches every row.
+    func testMidSizeChatOpensPagedWithoutFullFrameOrTimeout() async throws {
+        let pager = SyntheticLineagePager(count: 990)
+        let session = LongChatSession(pager: pager)
+        // The full frame is the multi-MB path that timed out; reaching it fails.
+        session.fullResume = .failure(.requestTimedOut(method: "session.resume"))
+        session.omitResume = .success(ConversationSession(
+            sessionID: "s-1", messageCount: 990, messages: [], profileName: "default"))
+        let viewModel = try await makeFixture(session: session)
+
+        let openedAt = ContinuousClock.now
+        await viewModel.start()
+        let painted = await eventually(timeout: .seconds(3)) { !viewModel.transcript.isEmpty }
+        let elapsed = ContinuousClock.now - openedAt
+
+        XCTAssertTrue(painted, "first content paints")
+        XCTAssertLessThan(elapsed, .seconds(3))
+        XCTAssertEqual(session.resumeOmitFlags, [true], "one skeleton resume, never the full frame")
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertFalse(viewModel.isOpenTimedOut)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertTrue(viewModel.isPagedHistory, "the existing #188 paged UI drives the open")
+        XCTAssertTrue(viewModel.hasOlderHistory, "Load earlier is offered")
+        XCTAssertEqual(rowIDs(viewModel), Array(791...990), "newest page, oldest to newest")
+        XCTAssertEqual(session.historyCallCount, 0, "session.history is never used for a paged open")
+
+        await loadEverything(viewModel)
+        XCTAssertFalse(viewModel.hasOlderHistory)
+        XCTAssertEqual(rowIDs(viewModel), Array(1...990), "Load earlier reaches every row once, in order")
+    }
+
     // MARK: - Normal chats
 
-    func testNormalChatNeverTouchesThePager() async throws {
+    /// #230: a chat that fits one page keeps a single resume and never pages.
+    /// The skeleton carries no rows, so the existing `session.history` fetch
+    /// settles the transcript.
+    func testSmallChatKeepsSingleResumeAndNeverTouchesThePager() async throws {
         let pager = SyntheticLineagePager(count: 25_000)
         let session = LongChatSession(pager: pager)
-        session.fullResume = .success(ConversationSession(
+        session.omitResume = .success(ConversationSession(
+            sessionID: "s-1", messageCount: 3, messages: [], profileName: "default"))
+        session.historyMessages = [
+            SessionMessage(role: .user, text: "one", rowID: "1"),
+            SessionMessage(role: .assistant, text: "two", rowID: "2"),
+            SessionMessage(role: .user, text: "three", rowID: "3"),
+        ]
+        let viewModel = try await makeFixture(session: session)
+
+        await viewModel.start()
+        let settled = await eventually { viewModel.transcript.count == 3 }
+        await viewModel.loadOlderHistory()
+
+        XCTAssertTrue(settled)
+        XCTAssertEqual(session.resumeOmitFlags, [true], "exactly one resume")
+        XCTAssertEqual(session.historyCallCount, 1)
+        XCTAssertTrue(pager.requests.isEmpty, "the pager is never used for a small chat")
+        XCTAssertFalse(viewModel.isPagedHistory)
+        XCTAssertFalse(viewModel.hasOlderHistory)
+        XCTAssertNil(viewModel.pagedHistoryNotice)
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["one", "two", "three"])
+    }
+
+    /// A chat of exactly one page is still a small chat.
+    func testChatOfExactlyOnePageStaysUnpaged() async throws {
+        let pager = SyntheticLineagePager(count: 200)
+        let session = LongChatSession(pager: pager)
+        session.omitResume = .success(ConversationSession(
+            sessionID: "s-1", messageCount: 200, messages: [], profileName: "default"))
+        let viewModel = try await makeFixture(session: session)
+
+        await viewModel.start()
+        let fetched = await eventually { session.historyCallCount == 1 }
+
+        XCTAssertTrue(fetched)
+        XCTAssertFalse(viewModel.isPagedHistory)
+        XCTAssertTrue(pager.requests.isEmpty)
+    }
+
+    /// A gateway that ignores `omit_messages` answers with the rows; they apply
+    /// exactly as a full resume always did.
+    func testGatewayIgnoringOmitMessagesAppliesRowsUnpaged() async throws {
+        let pager = SyntheticLineagePager(count: 25_000)
+        let session = LongChatSession(pager: pager)
+        session.omitResume = .success(ConversationSession(
             sessionID: "s-1",
             messageCount: 3,
             messages: [
@@ -381,8 +482,9 @@ final class LongChatPagingTests: XCTestCase {
         await viewModel.start()
         await viewModel.loadOlderHistory()
 
-        XCTAssertEqual(session.resumeOmitFlags, [false], "no omit_messages on a chat that opens today")
+        XCTAssertEqual(session.resumeOmitFlags, [true])
         XCTAssertTrue(pager.requests.isEmpty, "the pager is never used for a normal chat")
+        XCTAssertEqual(session.historyCallCount, 0)
         XCTAssertFalse(viewModel.isPagedHistory)
         XCTAssertFalse(viewModel.hasOlderHistory)
         XCTAssertEqual(viewModel.transcript.map(\.text), ["one", "two", "three"])
