@@ -475,9 +475,10 @@ struct ConversationDestination: View {
     let environment: AppEnvironment
     let route: Route
     let sessionID: String?
+    var newChatTitle: String? = nil
 
     var body: some View {
-        ConversationView(environment: environment, route: route, sessionID: sessionID)
+        ConversationView(environment: environment, route: route, sessionID: sessionID, newChatTitle: newChatTitle)
             .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
     }
 }

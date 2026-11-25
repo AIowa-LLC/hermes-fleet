@@ -106,6 +106,8 @@ public struct ConversationView: View {
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
+    /// #228: the `/new <title>` name when this is a command-pushed new chat.
+    private let newChatTitle: String?
 
     /// D03 (design acceptance finding): a conversation opened through the
     /// canonical Bot Chat path must be TITLED exactly "Bot Chat" — the title
@@ -145,7 +147,7 @@ public struct ConversationView: View {
     @State private var forkTargetSessionID: String?
     /// Slash parity: pending command-driven navigation (new chat / model
     /// picker / sessions list) and composer prefill adoption, each fired once.
-    @State private var newChatTargetSessionID: String?
+    @State private var pendingNewChat: PendingNewChat?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingPhotoPicker = false
@@ -177,10 +179,11 @@ public struct ConversationView: View {
     @State private var findTargetRowID: String?
     @FocusState private var findFieldFocused: Bool
 
-    public init(environment: AppEnvironment, route: Route, sessionID: String?) {
+    public init(environment: AppEnvironment, route: Route, sessionID: String?, newChatTitle: String? = nil) {
         self.environment = environment
         self.route = route
         self.sessionID = sessionID
+        self.newChatTitle = newChatTitle
     }
 
     /// B87 follow-up: whether this route's gateway is registered right now.
@@ -212,6 +215,11 @@ public struct ConversationView: View {
     private enum PendingAddPresentation {
         case photo
         case file
+    }
+
+    /// #228: a `/new` push — always a fresh conversation (no session id).
+    private struct PendingNewChat {
+        let title: String?
     }
 
     private var openTrigger: OpenTrigger {
@@ -252,7 +260,8 @@ public struct ConversationView: View {
         .toolbar(viewModel == nil ? .visible : .hidden, for: .navigationBar)
         .task(id: openTrigger) {
             if viewModel == nil {
-                viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
+                viewModel = environment.makeConversationViewModel(
+                    route: route, sessionID: sessionID, newChatTitle: newChatTitle)
                 attemptedOpenTrigger = openTrigger
                 restoreDraftIfNeeded()
             }
@@ -504,8 +513,8 @@ public struct ConversationView: View {
         .onChange(of: model.commandNavigation) { _, navigation in
             guard let navigation else { return }
             switch navigation {
-            case .newConversation(let sessionID):
-                newChatTargetSessionID = sessionID
+            case .newConversation(let title):
+                pendingNewChat = PendingNewChat(title: title)
             case .modelPicker:
                 showingModelPicker = true
             case .sessionsList:
@@ -514,7 +523,8 @@ public struct ConversationView: View {
             model.consumeCommandNavigation()
         }
         .navigationDestination(isPresented: newChatBinding) {
-            ConversationDestination(environment: environment, route: route, sessionID: newChatTargetSessionID)
+            ConversationDestination(environment: environment, route: route, sessionID: nil,
+                                    newChatTitle: pendingNewChat?.title)
         }
         // (Toolbar intentionally empty: the former principal StatusPill and
         // the trailing timeline/latest items now live in ConversationHeader and
@@ -586,9 +596,9 @@ public struct ConversationView: View {
     /// again.
     private var newChatBinding: Binding<Bool> {
         Binding(
-            get: { newChatTargetSessionID != nil },
+            get: { pendingNewChat != nil },
             set: { shown in
-                if !shown { newChatTargetSessionID = nil }
+                if !shown { pendingNewChat = nil }
             }
         )
     }
@@ -821,7 +831,8 @@ enum ConversationHeaderChips {
         viewModel?.teardown()
         draftRestored = false
         reopenGeneration += 1
-        viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
+        viewModel = environment.makeConversationViewModel(
+            route: route, sessionID: sessionID, newChatTitle: newChatTitle)
         restoreDraftIfNeeded()
     }
 
