@@ -3535,13 +3535,16 @@ public final class AppEnvironment {
     /// has no conversation session wired — the screen renders an unavailable
     /// state, fail closed). R10-T4: the shared voice engine rides along
     /// (fail-closed default inside the VM when nil).
-    public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
+    public func makeConversationViewModel(
+        route: Route, sessionID: String?, newChatTitle: String? = nil
+    ) -> ConversationViewModel? {
         guard let session = conversationSession(for: route.gatewayID) else { return nil }
         let model = ConversationViewModel(
             session: session,
             cache: cache,
             route: route,
             sessionID: sessionID,
+            newChatTitle: newChatTitle,
             biometrics: biometrics,
             voice: voiceEngineFactory?(),
             prepareForegroundRecovery: { [weak self] in
