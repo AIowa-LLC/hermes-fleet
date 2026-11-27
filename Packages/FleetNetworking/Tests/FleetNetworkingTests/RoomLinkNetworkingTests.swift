@@ -12,22 +12,34 @@ final class RoomLinkNetworkingTests: XCTestCase {
 
     // MARK: helpers
 
-    /// Async-safe request capture (NSLock is banned in async contexts on
-    /// this toolchain). Returns JSON strings (Sendable) — parsed at the
-    /// assertion site.
-    actor Captured {
-        var framesByMethod: [String: [String]] = [:]
+    /// Request capture, recorded synchronously on the server's receive path
+    /// before the reply frame is returned, so a frame is always visible by the
+    /// time the client sees its response. (An earlier actor version recorded
+    /// from a detached `Task`, which could still be pending when the test read
+    /// the frames back on a busy runner.) Same lock-guarded pattern as
+    /// `ParamCapture` in RosterClientTests. Returns JSON strings (Sendable),
+    /// parsed at the assertion site.
+    final class Captured: @unchecked Sendable {
+        private let lock = NSLock()
+        private var framesByMethod: [String: [String]] = [:]
+
         func record(frame: String) {
             guard let data = frame.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let method = obj["method"] as? String else { return }
+            lock.lock()
             framesByMethod[method, default: []].append(frame)
+            lock.unlock()
         }
-        nonisolated func frames(of method: String) async -> [String] {
-            await framesInternal(of: method)
+
+        func frames(of method: String) async -> [String] {
+            snapshot(of: method)
         }
-        private func framesInternal(of method: String) -> [String] {
-            framesByMethod[method] ?? []
+
+        private func snapshot(of method: String) -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return framesByMethod[method] ?? []
         }
     }
 
@@ -83,7 +95,7 @@ final class RoomLinkNetworkingTests: XCTestCase {
         let script = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
             onText: { frame in
-                Task { await captured.record(frame: frame) }
+                captured.record(frame: frame)
                 guard let (id, method) = Self.extractRequest(frame) else { return [] }
                 var frames: [String] = []
                 handler(id, method) { resultObject in
