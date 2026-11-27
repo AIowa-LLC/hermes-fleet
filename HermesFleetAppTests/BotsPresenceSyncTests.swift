@@ -532,6 +532,13 @@ final class BotsPresenceSyncTests: XCTestCase {
             workstationOutcome: .loaded(profileCount: 1),
             archOutcome: .loaded(profileCount: 0), bots: [bot]))
         let (environment, _) = await makeEnvironment(roster: roster)
+        // Establish the loaded outcome before the connection watch starts (same
+        // as testAppearanceTriggerDoesNothingWhenOutcomeAlreadyLoaded). Without
+        // it, the watch's first tick sees no observation, treats the gateway as
+        // stale, and queues a repair refresh that races the connect's own one.
+        // That second refresh can start while the injected stale refresh below
+        // is suspended, and its newer generation drops the injected outcome.
+        await environment.refreshRoster()
 
         let refreshesBeforeConnect = roster.refreshCount
         await environment.connect(to: workstation)
