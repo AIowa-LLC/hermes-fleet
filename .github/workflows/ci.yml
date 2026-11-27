@@ -40,7 +40,17 @@ jobs:
           test "$actual_xcode" = $'Xcode 27.0\nBuild version 27A266a'
           test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "27.0"
       - name: Install tools (xcodegen, gitleaks)
-        run: brew install xcodegen gitleaks
+        # xcodegen is pinned: the committed project was generated with 2.46.0,
+        # and Homebrew's 2.48.0 writes extra scheme keys that trip the drift gate.
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+        run: |
+          brew install gitleaks
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen-dist"
+          echo "$RUNNER_TEMP/xcodegen-dist/xcodegen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/xcodegen-dist/xcodegen/bin/xcodegen" --version
       - name: Static phase
         run: bash scripts/c1_static.sh
       - name: CI gate policy guard

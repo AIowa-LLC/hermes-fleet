@@ -501,8 +501,15 @@ public final class ConversationViewModel {
     /// #188: a stream gap reported an oversized (refused) inbound frame. When
     /// an authoritative refetch then fails, the chat pages instead.
     @ObservationIgnored private var oversizedFrameSeen = false
+    /// #230: paged mode was entered from the omit-messages skeleton and no
+    /// REST page has been fetched yet. While true, a paging failure falls
+    /// back to `session.history` (the pre-#230 path) instead of failing.
+    @ObservationIgnored private var pagedProbeFallbackAllowed = false
     /// #188: page size for both the newest page and older pages.
     static let pagedHistoryPageSize = 200
+    /// #230: no `session.history` fallback at or above the gateway's default
+    /// `sessions.max_resume_messages`; that frame would be refused anyway.
+    static let pagedProbeFallbackLimit = 20_000
     /// P0-8: reasoning/thinking deltas that arrive BEFORE this turn's
     /// `message.start` (live wire order: reasoning streams first). Buffered
     /// here instead of attaching to the PREVIOUS turn's completed assistant
@@ -850,12 +857,14 @@ public final class ConversationViewModel {
                 if let sessionID {
                     // t_8401d3c3: declare the client's last applied event id on
                     // every (re)subscribe so the resume point travels with the
-                    // subscription itself. #188: a too-long refusal falls back
-                    // to the omit-messages resume + paged transcript.
+                    // subscription itself. #230: every chat opens from the
+                    // omit-messages skeleton and the first REST page.
                     let (resumed, paged) = try await resumeOpeningSession(
                         sessionID: sessionID, lastEventID: lastAppliedEventID)
                     guard isCurrent(token) else { return false }
-                    if paged { enterPagedHistory() }
+                    if paged {
+                        enterPagedHistory(fromSkeleton: true, skeletonMessageCount: resumed.messageCount)
+                    }
                     settleRefreshArmed = false
                     openedSessionID = resumed.sessionID
                     openedStoredSessionID = Self.durableSessionID(
@@ -908,41 +917,39 @@ public final class ConversationViewModel {
         return true
     }
 
-    /// #188: `session.resume` with the long-chat fallback. A 4130 refusal
-    /// (lineage over the reload limit) re-resumes with `omit_messages` and
-    /// reports `paged == true`; the caller applies paged mode only after its
-    /// fence check. Every other failure rethrows unchanged, so a chat that
-    /// opens today takes exactly the same path. Without a pager the 4130
-    /// rethrows and surfaces the long-chat open message.
+    /// #188 / #230: `session.resume` for the open. With a pager, the resume
+    /// always asks for the `omit_messages` skeleton (a few KB, no display
+    /// history), so a chat whose full frame runs to megabytes never races the
+    /// open watchdog. A skeleton without rows always opens paged
+    /// (`paged == true`): the first REST page decides whether older rows exist
+    /// ("Load earlier"). The skeleton's `message_count` is not trusted for that
+    /// decision, because Hermes counts only the newest compression segment
+    /// there. If that first page fails, the chat falls back to
+    /// `session.history` (see `refetchHistoryOnce`). A gateway that ignores the
+    /// flag returns its rows, which apply exactly as before. The caller applies
+    /// paged mode only after its fence check.
+    /// Without a pager the full resume is unchanged, and a 4130 rethrows and
+    /// surfaces the long-chat open message.
     private func resumeOpeningSession(
         sessionID: String,
         lastEventID: Int?
     ) async throws -> (session: ConversationSession, paged: Bool) {
-        do {
+        guard historyPager != nil else {
             let resumed = try await session.conversation.resumeSession(
                 sessionID: sessionID,
                 lastEventID: lastEventID,
                 profile: route.profileSlug.rawValue
             )
             return (resumed, false)
-        } catch ConversationError.sessionTooLongToReload(let count) where historyPager != nil {
-            do {
-                let resumed = try await session.conversation.resumeSession(
-                    sessionID: sessionID,
-                    lastEventID: lastEventID,
-                    profile: route.profileSlug.rawValue,
-                    omitMessages: true
-                )
-                return (resumed, true)
-            } catch ConversationError.notConnected {
-                throw ConversationError.notConnected
-            } catch {
-                // The omit resume is the only way to open this chat, so its
-                // failure is reported as the long-chat message, not the raw
-                // transport text.
-                throw ConversationError.sessionTooLongToReload(messageCount: count)
-            }
         }
+        let resumed = try await session.conversation.resumeSession(
+            sessionID: sessionID,
+            lastEventID: lastEventID,
+            profile: route.profileSlug.rawValue,
+            omitMessages: true
+        )
+        let paged = resumed.messages.isEmpty
+        return (resumed, paged)
     }
 
     /// Re-adopt the runtime session id after the transport reconnects. The
@@ -983,7 +990,9 @@ public final class ConversationViewModel {
                 runtimeResumeTargetSessionID = resumed.sessionID
             }
             if runtimeIDChanged { lastAppliedEventID = nil }
-            if paged && !isPagedHistory { enterPagedHistory() }
+            if paged && !isPagedHistory {
+                enterPagedHistory(fromSkeleton: true, skeletonMessageCount: resumed.messageCount)
+            }
             // Adopt the new runtime identity before the actor hop below. The
             // existing event stream remains live, and `apply(_:)` filters by
             // this ID; updating first prevents new-runtime events from being
@@ -1086,8 +1095,12 @@ public final class ConversationViewModel {
 
     /// #188: switch the transcript to paged loading. Resets the paging cursor
     /// and the older-page state; the caller's next authoritative refetch
-    /// loads the newest page through the pager.
-    private func enterPagedHistory() {
+    /// loads the newest page through the pager. #230: `fromSkeleton` marks an
+    /// open from the omit-messages skeleton. Its long-chat notice waits for the
+    /// first page to prove older rows exist, and a paging failure may fall back
+    /// to `session.history` unless the skeleton reports at least
+    /// `pagedProbeFallbackLimit` rows.
+    private func enterPagedHistory(fromSkeleton: Bool = false, skeletonMessageCount: Int = 0) {
         guard historyPager != nil else { return }
         isPagedHistory = true
         pagedNextOffset = 0
@@ -1096,7 +1109,23 @@ public final class ConversationViewModel {
         hasOlderHistory = false
         olderHistoryError = nil
         oversizedFrameSeen = false
-        pagedHistoryNotice = Self.pagedHistoryNoticeCopy
+        // #230: a skeleton open shows the long-chat notice only once the
+        // first page proves older rows exist (see refetchHistoryOnce).
+        pagedHistoryNotice = fromSkeleton ? nil : Self.pagedHistoryNoticeCopy
+        pagedProbeFallbackAllowed = fromSkeleton && skeletonMessageCount < Self.pagedProbeFallbackLimit
+    }
+
+    /// #230: leave paged mode after the skeleton's first REST page failed,
+    /// so the next authoritative refetch reads `session.history` as before.
+    private func leavePagedHistory() {
+        isPagedHistory = false
+        pagedProbeFallbackAllowed = false
+        pagedNextOffset = 0
+        pagedOlderPageCount = 0
+        pagedGeneration &+= 1
+        hasOlderHistory = false
+        olderHistoryError = nil
+        pagedHistoryNotice = nil
     }
 
     /// #188: the session's durable id for the REST path. Mirrors
@@ -3029,6 +3058,8 @@ public final class ConversationViewModel {
             // #188: paged mode reads the newest page over REST, never the
             // whole-lineage session.history frame.
             let fetched = try await fetchAuthoritativeSnapshot(sessionID: sessionID)
+            // #230: a page arrived, so the skeleton probe is settled.
+            if fetched.latestPage != nil { pagedProbeFallbackAllowed = false }
             let messages = fetched.messages
             if Task.isCancelled { return .cancelled }
             guard isCurrent(token) else { return .superseded }
@@ -3087,6 +3118,11 @@ public final class ConversationViewModel {
                         pagedNextOffset = page.returned
                         hasOlderHistory = page.hasOlder
                     }
+                    // #230: the long-chat notice appears only for a chat that
+                    // really has older rows.
+                    if page.hasOlder, pagedHistoryNotice == nil {
+                        pagedHistoryNotice = Self.pagedHistoryNoticeCopy
+                    }
                 }
             } else if hydratedFromCache {
                 // H1 flash-free swap (see applyOpenedSession): preserve row
@@ -3121,6 +3157,16 @@ public final class ConversationViewModel {
         } catch {
             if Task.isCancelled || error is CancellationError { return .cancelled }
             guard isCurrent(token) else { return .superseded }
+            // #230: the skeleton's first page failed (route missing, dashboard
+            // unreachable, unpersisted session…). Fall back to the pre-#230
+            // `session.history` load instead of leaving the chat without history.
+            if isPagedHistory, pagedProbeFallbackAllowed, error is SessionHistoryPagingError {
+                leavePagedHistory()
+                return await refetchHistoryOnce(
+                    sessionID: sessionID, fencedBy: token,
+                    originRevision: originRevision, originWasEmpty: originWasEmpty,
+                    allowDuringStream: allowDuringStream)
+            }
             // #188: a chat whose full history cannot cross the frame cap pages
             // from now on. The refetch repeats through the pager.
             if !isPagedHistory, oversizedFrameSeen, historyPager != nil {
