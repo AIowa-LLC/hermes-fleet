@@ -35,8 +35,17 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
     private var pendingTexts: [String] = []
     private var isSynthesizing = false
     private var speechBridge: SpeechCompletionBridge?
+    /// The best installed voice for the device language (premium or
+    /// enhanced when the user downloaded one), picked once.
+    private let replyVoice: AVSpeechSynthesisVoice?
 
-    public init() {}
+    // Audio-session state. Hands-free voice mode holds the session active
+    // between turns; otherwise it is released once capture and speech end.
+    private var holdsConversationSession = false
+
+    public init() {
+        replyVoice = Self.bestReplyVoice()
+    }
 
     // MARK: - Sync state helpers (caller-side lock discipline lives HERE)
 
@@ -134,6 +143,17 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
         _isSpeaking = false
     }
 
+    private func setConversationHold(_ hold: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        holdsConversationSession = hold
+    }
+
+    /// True when nothing needs the audio session any more.
+    private func sessionIsIdle() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !captureActive && !isSynthesizing && !holdsConversationSession
+    }
+
     private func retainBridge(_ bridge: SpeechCompletionBridge) {
         lock.lock(); defer { lock.unlock() }
         speechBridge = bridge // held until the next utterance replaces it
@@ -191,7 +211,10 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
 
     public func transcribe() async throws -> VoiceTranscript? {
         guard tryBeginCapture() else { throw VoiceError.alreadyListening }
-        defer { endCapture() }
+        defer {
+            endCapture()
+            releaseSessionIfIdle()
+        }
 
         let locale = Locale.current
         guard let recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(),
@@ -199,17 +222,11 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
             throw VoiceError.recognizerUnavailable
         }
 
-        let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(
-                .playAndRecord, mode: .measurement,
-                options: [.duckOthers, .defaultToSpeaker]
-            )
-            try session.setActive(true, options: [])
+            try activateSession(for: .capture)
         } catch {
             throw VoiceError.captureFailed("audio session: \(Self.nonSecret(error))")
         }
-        defer { try? session.setActive(false, options: [.notifyOthersOnDeactivation]) }
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
@@ -284,7 +301,11 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
 
     public func speak(text: String) async throws {
         if enqueueSpeech(text) {
+            // Route replies through the shared session (AirPods, car audio)
+            // instead of whatever category the last capture left behind.
+            try? activateSession(for: .speech)
             await drainSpeechQueue()
+            releaseSessionIfIdle()
         }
     }
 
@@ -303,6 +324,10 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
     private func speakAndWait(_ text: String) async -> Bool {
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = replyVoice
+        // A short breath between sentences so chunked replies do not run
+        // together.
+        utterance.postUtteranceDelay = 0.08
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let bridge = SpeechCompletionBridge { finished in
                 continuation.resume(returning: finished)
@@ -321,6 +346,67 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
     public var isSpeaking: Bool {
         lock.lock(); defer { lock.unlock() }
         return _isSpeaking
+    }
+
+    // MARK: - Hands-free conversation session
+
+    public func beginConversation() async {
+        setConversationHold(true)
+        try? activateSession(for: .speech)
+    }
+
+    public func endConversation() async {
+        setConversationHold(false)
+        releaseSessionIfIdle()
+    }
+
+    // MARK: - Audio session
+
+    private enum SessionUse { case capture, speech }
+
+    /// One play-and-record category for both directions, so a hands-free
+    /// turn never tears the route down: Bluetooth HFP lets AirPods and car
+    /// microphones capture, A2DP keeps spoken replies in full quality, and
+    /// other audio (music, navigation) is ducked rather than stopped.
+    /// Capture uses the measurement mode the recognizer prefers.
+    private func activateSession(for use: SessionUse) throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: use == .capture ? .measurement : .default,
+            options: [.duckOthers, .defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+        )
+        try session.setActive(true, options: [])
+    }
+
+    private func releaseSessionIfIdle() {
+        guard sessionIsIdle() else { return }
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    // MARK: - Voice choice
+
+    /// The highest-quality installed voice for the device language: premium,
+    /// then enhanced, then the default. Novelty and Personal Voice entries
+    /// are skipped. Nil falls back to the system default voice.
+    private static func bestReplyVoice() -> AVSpeechSynthesisVoice? {
+        let language = AVSpeechSynthesisVoice.currentLanguageCode()
+        let base = language.split(separator: "-").first.map(String.init) ?? language
+        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { voice in
+            !voice.voiceTraits.contains(.isNoveltyVoice)
+                && !voice.voiceTraits.contains(.isPersonalVoice)
+                && (voice.language == language || voice.language.hasPrefix(base + "-"))
+        }
+        func score(_ voice: AVSpeechSynthesisVoice) -> Int {
+            let quality: Int
+            switch voice.quality {
+            case .premium: quality = 3
+            case .enhanced: quality = 2
+            default: quality = 1
+            }
+            return quality * 2 + (voice.language == language ? 1 : 0)
+        }
+        return candidates.max { score($0) < score($1) } ?? AVSpeechSynthesisVoice(language: language)
     }
 
     private static func nonSecret(_ error: Error) -> String {

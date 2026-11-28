@@ -40,6 +40,12 @@
 	<string>Hermes Fleet transcribes your voice on-device so you can speak prompts instead of typing. Only the recognized text is sent to your gateway.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hermes Fleet uses the microphone to transcribe your spoken prompts on this device.</string>
+	<!-- Hands-free voice mode keeps listening and speaking with the
+	     screen locked (and in the car) while a voice conversation is on. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

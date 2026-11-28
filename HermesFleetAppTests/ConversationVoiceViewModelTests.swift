@@ -241,7 +241,7 @@ final class ConversationVoiceViewModelTests: XCTestCase {
 
     // MARK: - TTS
 
-    func testVoiceModeSpeaksDeltasAndCompleteExactlyOnce() async {
+    func testVoiceModeSpeaksWholeReplyExactlyOnceWhenNoSentenceEnded() async {
         let voice = ScriptedVoice()
         let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
         viewModel.isVoiceModeEnabled = true
@@ -251,9 +251,44 @@ final class ConversationVoiceViewModelTests: XCTestCase {
         session.push(.messageDelta(sessionID: "s-1", text: "fleet", rendered: nil))
         session.push(.messageComplete(sessionID: "s-1", text: "Hello fleet", status: nil, error: nil))
         await flush()
-        // Chunked speak: both deltas spoken; the complete text (a duplicate of
-        // the concatenated deltas) must NOT be spoken again.
-        XCTAssertEqual(voiceSeam.speakCalls, ["Hello ", "fleet"])
+        // Word fragments are never spoken on their own: the reply is spoken
+        // once, as a whole phrase, when it completes.
+        XCTAssertEqual(voiceSeam.speakCalls, ["Hello fleet"])
+    }
+
+    func testVoiceModeSpeaksStreamedSentencesThenTailExactlyOnce() async {
+        let voice = ScriptedVoice()
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+        viewModel.isVoiceModeEnabled = true
+        await viewModel.send("hi")
+        session.push(.messageStart(sessionID: "s-1"))
+        session.push(.messageDelta(sessionID: "s-1", text: "All four gate", rendered: nil))
+        session.push(.messageDelta(sessionID: "s-1", text: "ways are up. Two bots", rendered: nil))
+        session.push(.messageDelta(sessionID: "s-1", text: " are busy", rendered: nil))
+        session.push(.messageComplete(
+            sessionID: "s-1", text: "All four gateways are up. Two bots are busy",
+            status: nil, error: nil))
+        await flush()
+        XCTAssertEqual(voiceSeam.speakCalls, ["All four gateways are up.", "Two bots are busy"])
+    }
+
+    func testVoiceModeNeverSpeaksMarkdownOrCode() async {
+        let voice = ScriptedVoice()
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+        viewModel.isVoiceModeEnabled = true
+        await viewModel.send("hi")
+        session.push(.messageComplete(
+            sessionID: "s-1",
+            text: "**Done.** Run this:\n```\nhermes fleet pair\n```\nThen check [the docs](https://example.test/docs).",
+            status: nil, error: nil))
+        await flush()
+        let spoken = voiceSeam.speakCalls.joined(separator: " ")
+        XCTAssertFalse(spoken.contains("*"), "spoke: \(spoken)")
+        XCTAssertFalse(spoken.contains("`"), "spoke: \(spoken)")
+        XCTAssertFalse(spoken.contains("hermes fleet pair"), "code blocks are not read aloud: \(spoken)")
+        XCTAssertFalse(spoken.contains("https"), "URLs are not read aloud: \(spoken)")
+        XCTAssertTrue(spoken.contains("Done."), "spoke: \(spoken)")
+        XCTAssertTrue(spoken.contains("the docs"), "spoke: \(spoken)")
     }
 
     func testNewUserTurnCutsSpeech() async {
@@ -279,6 +314,108 @@ final class ConversationVoiceViewModelTests: XCTestCase {
         await flush()
         XCTAssertEqual(voiceSeam.speakCalls, [], "voice mode OFF ⇒ never speaks")
         XCTAssertEqual(voiceSeam.stopSpeakCalls, 0)
+    }
+
+    // MARK: - Hands-free voice mode
+
+    private func waitUntil(
+        _ condition: @MainActor () -> Bool, timeout: TimeInterval = 3
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    func testHandsFreeSendsWhatItHearsSpeaksReplyThenListensAgain() async {
+        let voice = ScriptedVoice()
+        voice.scriptedTranscripts = [VoiceTranscript(text: "how is the fleet", isFinal: true)]
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+
+        await viewModel.startHandsFree()
+        XCTAssertTrue(viewModel.isHandsFreeActive)
+        XCTAssertTrue(viewModel.isVoiceModeEnabled, "hands-free speaks replies")
+        await waitUntil { session.submittedTexts == ["how is the fleet"] }
+        XCTAssertEqual(session.submittedTexts, ["how is the fleet"], "heard text is sent without review")
+        XCTAssertEqual(viewModel.handsFreePhase, .thinking)
+
+        // The scripted engine hears nothing next, so make the second listen
+        // observable before the reply lands.
+        session.push(.messageStart(sessionID: "s-1"))
+        session.push(.messageDelta(sessionID: "s-1", text: "All good. ", rendered: nil))
+        session.push(.messageComplete(sessionID: "s-1", text: "All good.", status: nil, error: nil))
+        await waitUntil { voiceSeam.transcribeCalls >= 2 }
+        XCTAssertEqual(voiceSeam.speakCalls, ["All good."])
+        XCTAssertGreaterThanOrEqual(voiceSeam.transcribeCalls, 2, "listens again after speaking")
+        await viewModel.endHandsFree()
+    }
+
+    func testHandsFreePausesAfterRepeatedSilenceAndSaysWhy() async {
+        let voice = ScriptedVoice() // no scripted transcripts: hears nothing
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+
+        await viewModel.startHandsFree()
+        await waitUntil { !viewModel.isHandsFreeActive }
+        XCTAssertFalse(viewModel.isHandsFreeActive)
+        XCTAssertEqual(voiceSeam.transcribeCalls, ConversationViewModel.handsFreeSilenceLimit)
+        XCTAssertEqual(session.submittedTexts, [])
+        XCTAssertNotNil(viewModel.voiceError, "pausing is never silent")
+        XCTAssertFalse(viewModel.isVoiceModeEnabled, "reply speech restored to its earlier setting")
+    }
+
+    func testEndingHandsFreeRestoresReplySpeechSetting() async {
+        let voice = ScriptedVoice()
+        voice.scriptedTranscripts = [VoiceTranscript(text: "status", isFinal: true)]
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+        viewModel.isVoiceModeEnabled = true
+
+        await viewModel.startHandsFree()
+        await waitUntil { session.submittedTexts == ["status"] }
+        await viewModel.endHandsFree()
+        XCTAssertFalse(viewModel.isHandsFreeActive)
+        XCTAssertEqual(viewModel.handsFreePhase, .off)
+        XCTAssertTrue(viewModel.isVoiceModeEnabled, "was on before hands-free, stays on")
+        XCTAssertGreaterThanOrEqual(voiceSeam.stopSpeakCalls, 1, "ending cuts any speech")
+    }
+
+    func testHandsFreeTapWhileSpeakingCutsReplyAndListens() async {
+        let voice = ScriptedVoice()
+        voice.scriptedTranscripts = [
+            VoiceTranscript(text: "tell me a story", isFinal: true),
+            VoiceTranscript(text: "stop", isFinal: true),
+        ]
+        let (session, voiceSeam, viewModel) = await makeFixture(voice: voice)
+
+        await viewModel.startHandsFree()
+        await waitUntil { session.submittedTexts == ["tell me a story"] }
+        session.push(.messageStart(sessionID: "s-1"))
+        session.push(.messageDelta(sessionID: "s-1", text: "Once upon a time. ", rendered: nil))
+        await waitUntil { viewModel.handsFreePhase == .speaking }
+        XCTAssertEqual(viewModel.handsFreePhase, .speaking)
+
+        let cutsBefore = voiceSeam.stopSpeakCalls
+        await viewModel.handsFreeTap()
+        XCTAssertGreaterThan(voiceSeam.stopSpeakCalls, cutsBefore, "tap cuts the spoken reply")
+        await waitUntil { voiceSeam.transcribeCalls >= 2 }
+        XCTAssertGreaterThanOrEqual(voiceSeam.transcribeCalls, 2, "tap starts listening right away")
+        await viewModel.endHandsFree()
+    }
+
+    func testHandsFreeNeedsAnEngineAndSaysSo() async {
+        let (_, _, viewModel) = await makeFixture(voice: nil)
+        await viewModel.startHandsFree()
+        XCTAssertFalse(viewModel.isHandsFreeActive)
+        XCTAssertEqual(viewModel.voiceError, VoiceError.unsupported.description)
+    }
+
+    func testHandsFreeDeniedNeverListens() async {
+        let voice = ScriptedVoice()
+        voice.authStatus = .denied
+        let (_, voiceSeam, viewModel) = await makeFixture(voice: voice)
+        await viewModel.startHandsFree()
+        XCTAssertFalse(viewModel.isHandsFreeActive)
+        XCTAssertTrue(viewModel.isVoiceDenied)
+        XCTAssertEqual(voiceSeam.transcribeCalls, 0)
     }
 
     // MARK: - Failures / fail-closed

@@ -107,8 +107,16 @@ struct ConversationComposer: View {
             // review before any submit (review-first; never auto-sent unless
             // the user opted into submit-on-silence).
             if let transcript = model.latestVoiceTranscript,
-               !model.isListening {
+               !model.isListening, !model.isHandsFreeActive {
                 transcriptReviewChip(model, transcript: transcript)
+            }
+            // Hands-free voice mode: phase plus one big tap target.
+            if model.isHandsFreeActive {
+                HandsFreeVoiceBar(
+                    phase: model.handsFreePhase,
+                    onTap: { Task { await model.handsFreeTap() } },
+                    onEnd: { Task { await model.endHandsFree() } }
+                )
             }
             // Dogfood r6 (G1): ONE floating composer pill (ChatGPT
             // anatomy) — +, field, mic, and send/stop live INSIDE the
@@ -163,6 +171,14 @@ struct ConversationComposer: View {
                     }
                     .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
                     .accessibilityIdentifier("fleet.conversation.mic")
+                    // Long press: start the hands-free back-and-forth.
+                    .contextMenu {
+                        if !model.isHandsFreeActive {
+                            Button("Start Hands-Free Voice", systemImage: "waveform") {
+                                Task { await model.startHandsFree() }
+                            }
+                        }
+                    }
                 }
 
                 if model.phase == .streaming || model.isStreaming {

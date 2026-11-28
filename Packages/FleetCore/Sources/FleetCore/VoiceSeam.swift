@@ -85,6 +85,21 @@ public protocol VoiceTranscribing: Sendable {
     func stopSpeaking() async
     /// True while an utterance is speaking.
     var isSpeaking: Bool { get }
+    /// Hands-free voice mode is starting: keep the audio session active
+    /// between listening and speaking (so the conversation keeps running with
+    /// the screen locked, and AirPods or the car stay routed) until
+    /// `endConversation()`.
+    func beginConversation() async
+    /// Hands-free voice mode ended: release the audio session once nothing
+    /// is listening or speaking.
+    func endConversation() async
+}
+
+public extension VoiceTranscribing {
+    /// Default: engines without session management (test doubles, the
+    /// fail-closed default) need no conversation bracketing.
+    func beginConversation() async {}
+    func endConversation() async {}
 }
 
 /// Fail-closed default: every call surfaces an honest error instead of
