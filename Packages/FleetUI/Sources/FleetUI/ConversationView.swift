@@ -460,6 +460,23 @@ public struct ConversationView: View {
                 )
             }
             .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+            if model.isVoiceAvailable {
+                Button {
+                    Task {
+                        if model.isHandsFreeActive {
+                            await model.endHandsFree()
+                        } else {
+                            await model.startHandsFree()
+                        }
+                    }
+                } label: {
+                    Label(
+                        model.isHandsFreeActive ? "End Hands-Free Voice" : "Hands-Free Voice",
+                        systemImage: "waveform"
+                    )
+                }
+                .accessibilityIdentifier("fleet.conversation.handsFree.toggle")
+            }
             Button("Cancel", role: .cancel) {}
         }
         .onChange(of: showingAddActions) { _, isPresented in

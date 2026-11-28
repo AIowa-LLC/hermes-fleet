@@ -213,6 +213,8 @@ Settings is a top-level destination for appearance and accent pickers, app secur
 
 Voice input and spoken replies are implemented on the iOS device. Recognized text is submitted through the normal conversation path; the client does not invent a remote-audio gateway protocol when one is not available.
 
+Hands-free voice mode (conversation menu, or long-press the mic) runs a back-and-forth loop: listen, send what was heard, speak the reply, listen again. Replies are spoken a whole sentence at a time with markdown, code blocks and URLs left out, in the best installed voice for the device language. Tap the hands-free bar while listening to send right away, or while speaking to cut in. Hands-free pauses with a banner after three listens that hear nothing. The audio session uses Bluetooth routes (AirPods, car audio) and stays active for the whole hands-free conversation, with the `audio` background mode so it can continue with the screen locked.
+
 Speech-recognition behavior can vary by locale and platform capability.
 
 ## Security and privacy behavior

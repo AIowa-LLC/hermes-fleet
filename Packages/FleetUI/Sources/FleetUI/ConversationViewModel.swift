@@ -438,6 +438,37 @@ public final class ConversationViewModel {
     /// Default OFF — review-first. A PARTIAL (manual-stop) transcript is
     /// NEVER auto-submitted.
     public var isSubmitOnSilenceEnabled = false
+
+    /// Hands-free voice mode: where the listen, send, speak loop stands.
+    public enum HandsFreePhase: Equatable, Sendable {
+        /// Hands-free is off.
+        case off
+        /// Capturing the user's next turn (on-device recognition).
+        case listening
+        /// The turn was sent; waiting for the reply to start.
+        case thinking
+        /// The reply is being spoken. A tap cuts in.
+        case speaking
+    }
+    /// Hands-free voice mode loops listen, send, speak, listen again until
+    /// the user ends it. Replies are spoken in whole sentences.
+    public private(set) var handsFreePhase: HandsFreePhase = .off
+    /// True while hands-free voice mode is running.
+    public var isHandsFreeActive: Bool { handsFreePhase != .off }
+    /// Consecutive listens that heard nothing; hands-free pauses at the limit
+    /// instead of listening forever.
+    private var handsFreeSilentTurns = 0
+    static let handsFreeSilenceLimit = 3
+    /// Reply speech setting to restore when hands-free ends.
+    private var voiceModeBeforeHandsFree = false
+    /// The hands-free listen or wait-for-speech step. `nonisolated(unsafe)`:
+    /// only canceled from `deinit`; all creation happens on the main actor.
+    nonisolated(unsafe) private var handsFreeTask: Task<Void, Never>?
+    /// Cuts streamed reply text into whole sentences for speech.
+    private var speechChunker = SentenceChunker()
+    /// Speech chunks handed to a Task but not yet in `speechQueue`.
+    private var pendingSpeechTasks = 0
+
     /// Non-secret voice error banner text (never silent).
     public private(set) var voiceError: String?
     /// The mic capture task. `nonisolated(unsafe)`: only canceled from
@@ -687,6 +718,7 @@ public final class ConversationViewModel {
         gapRecoveryTask?.cancel()
         statusWatcher?.cancel()
         micTask?.cancel()
+        handsFreeTask?.cancel()
         readAloudCompletionTask?.cancel()
         slashSuggestionTask?.cancel()
         openWatchdog?.cancel()
@@ -1274,6 +1306,7 @@ public final class ConversationViewModel {
         if isVoiceModeEnabled {
             await voice.stopSpeaking()
             await speechQueue.drain()
+            speechChunker.reset()
         }
         guard let sid = openedSessionID,
               !isStreaming,
@@ -2091,6 +2124,10 @@ public final class ConversationViewModel {
     /// `latestVoiceTranscript` for composer review — and auto-submits ONLY
     /// when the user opted into submit-on-silence.
     public func toggleMic() async {
+        if isHandsFreeActive {
+            await handsFreeTap()
+            return
+        }
         guard isVoiceAvailable else {
             voiceError = VoiceError.unsupported.description
             return
@@ -2142,9 +2179,14 @@ public final class ConversationViewModel {
             voiceError = VoiceError.unsupported.description
             return
         }
+        if !enabled && isHandsFreeActive {
+            voiceModeBeforeHandsFree = false
+            await endHandsFree()
+        }
         isVoiceModeEnabled = enabled
         voiceError = nil
         if !enabled {
+            speechChunker.reset()
             readAloudCompletionTask?.cancel()
             readAloudCompletionTask = nil
             await voice.stopSpeaking()
@@ -2168,13 +2210,189 @@ public final class ConversationViewModel {
     /// Chunks are NOT trimmed (trimming would concatenate "Hello "+"fleet"
     /// into "Hellofleet"); whitespace-only chunks are skipped.
     private func speakAssistant(_ text: String) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Speech never reads markdown aloud (no "asterisk", no code blocks).
+        let spoken = SpokenText.plain(fromMarkdown: text)
+        guard !spoken.isEmpty else { return }
         let voice = self.voice
+        if handsFreePhase == .thinking {
+            handsFreePhase = .speaking
+        }
+        pendingSpeechTasks += 1
         Task {
             await speechQueue.enqueue {
-                try? await voice.speak(text: text)
+                try? await voice.speak(text: spoken)
+            }
+            self.pendingSpeechTasks -= 1
+        }
+    }
+
+    /// Speak streamed reply text sentence by sentence: each delta feeds the
+    /// chunker and only completed sentences are spoken.
+    private func speakStreamedText(_ text: String) {
+        for segment in speechChunker.append(text) {
+            speakAssistant(segment)
+            spokenThisTurn = true
+        }
+    }
+
+    /// End of a reply: speak what the stream left unspoken. When no sentence
+    /// was spoken yet, the complete text is authoritative and is spoken once,
+    /// sentence by sentence; otherwise only the unspoken tail is.
+    private func speakReplyCompletion(_ text: String) {
+        if spokenThisTurn {
+            if let tail = speechChunker.flush() {
+                speakAssistant(tail)
+            }
+            return
+        }
+        speechChunker.reset()
+        guard !text.isEmpty else { return }
+        var whole = SentenceChunker()
+        for segment in whole.append(text) {
+            speakAssistant(segment)
+        }
+        if let tail = whole.flush() {
+            speakAssistant(tail)
+        }
+    }
+
+    // MARK: Hands-free voice mode
+
+    /// Start hands-free voice mode: listen, send what was heard, speak the
+    /// reply, then listen again. Asks for mic and speech access first and
+    /// turns reply speech on for the duration.
+    public func startHandsFree() async {
+        guard isVoiceAvailable, voiceCanSpeak else {
+            voiceError = VoiceError.unsupported.description
+            return
+        }
+        guard !isHandsFreeActive else { return }
+        if isListening {
+            // A manual capture is in flight: let it finish first (its text
+            // lands for review as usual).
+            await voice.stopTranscribing()
+            await micTask?.value
+        }
+        let status = await voice.requestAuthorization()
+        isVoiceDenied = (status == .denied)
+        guard status == .authorized else { return }
+        voiceError = nil
+        voiceModeBeforeHandsFree = isVoiceModeEnabled
+        isVoiceModeEnabled = true
+        handsFreeSilentTurns = 0
+        handsFreePhase = .listening
+        await voice.beginConversation()
+        beginHandsFreeListening()
+    }
+
+    /// End hands-free voice mode: stop listening and speaking, restore the
+    /// reply-speech setting, and release the audio session.
+    public func endHandsFree() async {
+        guard isHandsFreeActive else { return }
+        handsFreePhase = .off
+        handsFreeTask?.cancel()
+        handsFreeTask = nil
+        if isListening {
+            await voice.stopTranscribing()
+        }
+        await voice.stopSpeaking()
+        await speechQueue.drain()
+        speechChunker.reset()
+        isVoiceModeEnabled = voiceModeBeforeHandsFree
+        await voice.endConversation()
+    }
+
+    /// The hands-free tap target. Listening: "I'm done talking", so what was
+    /// heard is sent. Speaking: cut the reply (and stop the turn if it is
+    /// still streaming), then listen. Thinking: nothing to cut yet.
+    public func handsFreeTap() async {
+        switch handsFreePhase {
+        case .off, .thinking:
+            return
+        case .listening:
+            await voice.stopTranscribing()
+        case .speaking:
+            handsFreeTask?.cancel()
+            handsFreeTask = nil
+            await voice.stopSpeaking()
+            await speechQueue.drain()
+            speechChunker.reset()
+            if isStreaming {
+                await interrupt()
+            }
+            guard isHandsFreeActive else { return }
+            handsFreeSilentTurns = 0
+            beginHandsFreeListening()
+        }
+    }
+
+    private func beginHandsFreeListening() {
+        handsFreeTask?.cancel()
+        handsFreePhase = .listening
+        isListening = true
+        let voice = self.voice
+        handsFreeTask = Task { [weak self] in
+            let transcript: VoiceTranscript?
+            do {
+                transcript = try await voice.transcribe()
+            } catch is CancellationError {
+                self?.isListening = false
+                return
+            } catch let error as VoiceError {
+                self?.isListening = false
+                await self?.pauseHandsFree(Redaction.safeText(error.description))
+                return
+            } catch {
+                self?.isListening = false
+                await self?.pauseHandsFree(VoiceError.captureFailed(Self.nonSecret(error)).description)
+                return
+            }
+            guard let self else { return }
+            self.isListening = false
+            guard self.handsFreePhase == .listening, !Task.isCancelled else { return }
+            let text = transcript?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else {
+                self.handsFreeSilentTurns += 1
+                if self.handsFreeSilentTurns >= Self.handsFreeSilenceLimit {
+                    await self.pauseHandsFree("Hands-free paused because nothing was heard.")
+                } else {
+                    self.beginHandsFreeListening()
+                }
+                return
+            }
+            self.handsFreeSilentTurns = 0
+            self.handsFreePhase = .thinking
+            let sent = await self.send(text)
+            if !sent {
+                await self.pauseHandsFree("Hands-free paused because the message could not be sent.")
             }
         }
+    }
+
+    /// After a reply completes: wait until every queued sentence has been
+    /// spoken, then listen for the next turn.
+    private func continueHandsFreeAfterReply() {
+        guard handsFreePhase == .thinking || handsFreePhase == .speaking else { return }
+        handsFreeTask?.cancel()
+        handsFreeTask = Task { [weak self] in
+            // Let sentence Tasks reach the queue before checking it.
+            try? await Task.sleep(for: .milliseconds(150))
+            while !Task.isCancelled {
+                guard let model = self, model.isHandsFreeActive else { return }
+                if model.pendingSpeechTasks == 0, await model.speechQueue.isIdle {
+                    guard !Task.isCancelled, model.handsFreePhase != .listening else { return }
+                    model.beginHandsFreeListening()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+        }
+    }
+
+    /// Stop hands-free and say why (never silent).
+    private func pauseHandsFree(_ message: String) async {
+        await endHandsFree()
+        voiceError = message
     }
 
     // MARK: Stage 1 — assistant-reply footer actions (read aloud)
@@ -2456,6 +2674,11 @@ public final class ConversationViewModel {
     public func teardown() {
         openWatchdog?.cancel()
         openWatchdog = nil
+        // Leaving the conversation ends hands-free voice (the mic must not
+        // keep listening for a screen that is gone).
+        if isHandsFreeActive {
+            Task { await endHandsFree() }
+        }
         readAloudCompletionTask?.cancel()
         readAloudCompletionTask = nil
         statusWatcher?.cancel()
@@ -3289,15 +3512,14 @@ public final class ConversationViewModel {
             isStreaming = true
             phase = .streaming
             spokenThisTurn = false
+            speechChunker.reset()
 
         case .messageDelta(_, let text, _, _):
             appendToAssistant(text)
-            if isVoiceModeEnabled {
-                // R10-T4: chunked TTS — speak each streaming delta as it
-                // lands (the desktop speaks streamed chunks; here chunks are
-                // local utterances).
-                speakAssistant(text)
-                spokenThisTurn = true
+            if isVoiceModeEnabled && handsFreePhase != .listening {
+                // Speak the reply as it streams, one whole sentence at a
+                // time (never word fragments, never markdown symbols).
+                speakStreamedText(text)
             }
             if !isStreaming {
                 isStreaming = true
@@ -3307,10 +3529,10 @@ public final class ConversationViewModel {
         case .messageInterim(_, let text, let alreadyStreamed, _):
             if !alreadyStreamed {
                 appendToAssistant(text)
-                if isVoiceModeEnabled {
-                    // Not streamed as a delta — speak it as its own chunk.
-                    speakAssistant(text)
-                    spokenThisTurn = true
+                if isVoiceModeEnabled && handsFreePhase != .listening {
+                    // Not streamed as a delta: feed it through the same
+                    // sentence chunker.
+                    speakStreamedText(text)
                 }
             }
 
@@ -3321,13 +3543,15 @@ public final class ConversationViewModel {
                 allRows[idx].isStreaming = false
                 allRows[idx].isFailed = isError
             }
-            if isVoiceModeEnabled && !spokenThisTurn && !isError && !text.isEmpty {
-                // No deltas were spoken (turn arrived as one complete frame) —
-                // speak the full text EXACTLY ONCE (never in addition to the
-                // already-spoken chunks, which concatenate to the same text).
-                speakAssistant(text)
+            if isVoiceModeEnabled && !isError && handsFreePhase != .listening {
+                // Exactly once: the unspoken tail after streamed sentences,
+                // or the whole complete text when nothing was spoken yet.
+                speakReplyCompletion(text)
+            } else {
+                speechChunker.reset()
             }
             spokenThisTurn = false
+            continueHandsFreeAfterReply()
             isStreaming = false
             turnStartedAt = nil
             phase = .ready
@@ -4213,5 +4437,10 @@ actor SpeechQueue {
     /// after the cut.
     func drain() {
         pending.removeAll()
+    }
+
+    /// True when nothing is speaking or waiting to speak.
+    var isIdle: Bool {
+        !isDraining && pending.isEmpty
     }
 }
